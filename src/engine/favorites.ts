@@ -3,11 +3,9 @@ const STORAGE_KEY = 'insulation-visualiser.favorites.v1';
 export interface Favorites {
   /** Starred material ids. */
   materials: string[];
-  /** Starred category ids (from MATERIAL_CATEGORIES), pinned to the top of the picker. */
-  categories: string[];
 }
 
-const EMPTY: Favorites = { materials: [], categories: [] };
+const EMPTY: Favorites = { materials: [] };
 
 export function loadFavorites(): Favorites {
   try {
@@ -16,7 +14,6 @@ export function loadFavorites(): Favorites {
     const parsed = JSON.parse(raw);
     return {
       materials: Array.isArray(parsed.materials) ? parsed.materials : [],
-      categories: Array.isArray(parsed.categories) ? parsed.categories : [],
     };
   } catch {
     return { ...EMPTY };

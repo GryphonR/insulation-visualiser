@@ -29,7 +29,7 @@ Pushing to `main` builds and deploys to GitHub Pages via `.github/workflows/depl
   - `favorites.ts` starred materials and categories (for `MaterialPickerModal`), saved to `localStorage`
 - `src/ui/` – React components and SVG charts.
   - `Builder.tsx` the layer editor, reused both in the single-wall view and inside `StackupModal.tsx`
-  - `MaterialPickerModal.tsx` the material picker: categories on the left (favourited ones pinned to the top), that category's materials on the right, a star on every category and material to favourite it
+  - `MaterialPickerModal.tsx` the material picker: categories on the left, that category's materials on the right, a star on each material to favourite it (favourites get their own category, shown first)
   - `ComparePage.tsx` the side-by-side comparison screen: pick up to four build-ups from the library, they all run under one shared day, and the wall sections and overlay charts update together off one clock
 
 ## Modes

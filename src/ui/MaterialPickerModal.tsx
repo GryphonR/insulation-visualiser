@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { MAT, MATERIAL_GROUPS } from '../engine/data';
 import type { Material } from '../engine/data';
 import { useFavorites } from './useFavorites';
@@ -34,16 +34,9 @@ function matLine(m: Material): string {
 }
 
 export function MaterialPickerModal({ value, title, onSelect, onClose }: Props) {
-  const { fav, toggleMaterial, toggleCategory } = useFavorites();
+  const { fav, toggleMaterial } = useFavorites();
   const hasFavMaterials = fav.materials.length > 0;
   const [cat, setCat] = useState(() => (hasFavMaterials ? FAV_CAT : MAT[value]?.cat ?? 'common'));
-
-  const orderedGroups = useMemo(() => {
-    const starred = MATERIAL_GROUPS.filter((g) => fav.categories.includes(g.cat));
-    const rest = MATERIAL_GROUPS.filter((g) => !fav.categories.includes(g.cat));
-    return [...starred, ...rest];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fav.categories]);
 
   const items: Material[] =
     cat === FAV_CAT
@@ -68,26 +61,14 @@ export function MaterialPickerModal({ value, title, onSelect, onClose }: Props) 
         <div className="picker-body">
           <nav className="picker-cats" aria-label="Material categories">
             {hasFavMaterials && (
-              <div className="picker-cat-row">
-                <button type="button" className={cat === FAV_CAT ? 'picker-cat on' : 'picker-cat'} onClick={() => setCat(FAV_CAT)}>
-                  <span>★ Favourites</span><span className="picker-count">{fav.materials.length}</span>
-                </button>
-              </div>
+              <button type="button" className={cat === FAV_CAT ? 'picker-cat on' : 'picker-cat'} onClick={() => setCat(FAV_CAT)}>
+                <span>★ Favourites</span><span className="picker-count">{fav.materials.length}</span>
+              </button>
             )}
-            {orderedGroups.map((g) => (
-              <div key={g.cat} className="picker-cat-row">
-                <button type="button" className={cat === g.cat ? 'picker-cat on' : 'picker-cat'} onClick={() => setCat(g.cat)}>
-                  <span>{g.label}</span><span className="picker-count">{g.items.length}</span>
-                </button>
-                <button
-                  type="button"
-                  className="icon-btn small"
-                  aria-label={fav.categories.includes(g.cat) ? `Unfavourite ${g.label}` : `Favourite ${g.label}`}
-                  onClick={() => toggleCategory(g.cat)}
-                >
-                  <StarIcon filled={fav.categories.includes(g.cat)} />
-                </button>
-              </div>
+            {MATERIAL_GROUPS.map((g) => (
+              <button key={g.cat} type="button" className={cat === g.cat ? 'picker-cat on' : 'picker-cat'} onClick={() => setCat(g.cat)}>
+                <span>{g.label}</span><span className="picker-count">{g.items.length}</span>
+              </button>
             ))}
           </nav>
 
