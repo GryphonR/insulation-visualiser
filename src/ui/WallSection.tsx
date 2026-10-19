@@ -83,6 +83,18 @@ export function WallSection({ res, frame }: { res: ScenarioResult; frame: number
     }
   });
 
+  // Where the flux changes sign between neighbouring faces, heat either piles up
+  // (flows in from both sides: converge) or drains away (flows out both ways: diverge).
+  const flips: Array<{ x: number; converge: boolean }> = [];
+  for (let j = 0; j + 1 < ff.length; j++) {
+    const qa = ff[j];
+    const qb = ff[j + 1];
+    if (qa * qb < 0) {
+      const mm = fixed.faceX[j] + ((fixed.faceX[j + 1] - fixed.faceX[j]) * qa) / (qa - qb);
+      flips.push({ x: xP(mm), converge: qa > 0 });
+    }
+  }
+
   const saY = yP(tsa);
   const tinY = yP(tin);
   const profile = sim.px.map((mm, j) => xP(mm).toFixed(1) + ',' + yP(prof[j]).toFixed(1)).join(' ');
@@ -130,6 +142,13 @@ export function WallSection({ res, frame }: { res: ScenarioResult; frame: number
         </g>
       ))}
       <rect x={X0} y={44} width={X1 - X0} height={132} fill="none" stroke="#14212b" strokeWidth={1.2} />
+      {flips.map((p, i) => (
+        <g key={i}>
+          <line x1={p.x} x2={p.x} y1={58} y2={176} stroke="#fff" strokeWidth={4.5} opacity={0.75} />
+          <line x1={p.x} x2={p.x} y1={58} y2={176} stroke="#b3261e" strokeWidth={2} strokeDasharray="6 3" />
+          <text x={p.x} y={208} className="svt-mid" fill="#b3261e">{p.converge ? 'flow converges' : 'flow diverges'}</text>
+        </g>
+      ))}
       {sim.lay.slice(1).map((l, i) => (
         <line key={i} x1={xP(l.x0)} x2={xP(l.x0)} y1={44} y2={360} stroke="#14212b" strokeDasharray="2 3" opacity={0.45} />
       ))}
