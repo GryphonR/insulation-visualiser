@@ -26,7 +26,7 @@ export interface ChartSpec {
   yOf: (v: number) => number;
 }
 
-interface SeriesIn {
+export interface SeriesIn {
   name: string;
   arr: ArrayLike<number>;
   col: string;
@@ -34,9 +34,18 @@ interface SeriesIn {
   dash?: string;
 }
 
-function make(
-  spec: { title: string; sub: string; alt: string; note: string; series: SeriesIn[]; zero?: boolean; area?: boolean },
-): ChartSpec {
+export interface ChartInput {
+  title: string;
+  sub: string;
+  alt: string;
+  note: string;
+  series: SeriesIn[];
+  zero?: boolean;
+  area?: boolean;
+}
+
+/** Builds a 24h line/area chart spec from one or more named series, each already sampled at every frame. */
+export function buildChart(spec: ChartInput): ChartSpec {
   let mn = Infinity;
   let mx = -Infinity;
   spec.series.forEach((s) => {
@@ -89,7 +98,7 @@ export function buildCharts(res: ScenarioResult): ChartSpec[] {
   const cut = Math.max(sim.qsmax - sim.qsmin, 1e-6);
   const cutPct = Math.round((1 - (sim.qmax - sim.qmin) / cut) * 100);
   return [
-    make({
+    buildChart({
       title: 'Temperatures',
       sub: 'Outside drivers against what the wall faces see',
       alt: 'Line chart of air, sol-air, outer face, inner face and room temperature over 24 hours',
@@ -102,7 +111,7 @@ export function buildCharts(res: ScenarioResult): ChartSpec[] {
       ],
       note: `Inner face swings ${sim.timin.toFixed(1)} to ${sim.timax.toFixed(1)} °C while the sol-air temperature outside swings ${saLo.toFixed(1)} to ${saHi.toFixed(1)} °C.`,
     }),
-    make({
+    buildChart({
       title: 'Heat flow into the room',
       sub: 'W/m². Above zero the wall is warming the room.',
       alt: 'Line chart comparing simulated heat flow into the room with a steady-state U-value estimate over 24 hours',
@@ -113,7 +122,7 @@ export function buildCharts(res: ScenarioResult): ChartSpec[] {
       ],
       note: `Steady-state calculation: ${sgn(sim.qsmin, 1)} to ${sgn(sim.qsmax, 1)} W/m². Simulated: ${sgn(sim.qmin, 1)} to ${sgn(sim.qmax, 1)} W/m². ${res.params.free ? 'In a free-floating room the room temperature moves too, so this is not a like-for-like comparison; the wall alone delays heat by about ' + sim.lag.toFixed(1) + ' h.' : cutPct >= 0 ? `The swing is cut by ${cutPct}% and arrives about ${sim.lag.toFixed(1)} h later.` : `The swing is ${-cutPct}% larger and arrives about ${sim.lag.toFixed(1)} h later.`}`,
     }),
-    make({
+    buildChart({
       title: 'Sunshine on this face',
       sub: `W/m² striking the surface, ${sim.solar.toFixed(1)} kWh/m² over the day`,
       alt: 'Area chart of solar irradiance on the selected face over 24 hours',

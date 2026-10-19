@@ -8,6 +8,9 @@ interface Props {
   onChange: (layers: LayerInput[]) => void;
   onPreset: (id: string) => void;
   nextId: () => number;
+  onSaveToLibrary?: () => void;
+  /** Set when embedded somewhere that already has its own heading (e.g. a modal). */
+  bare?: boolean;
 }
 
 const Icon = ({ d, stroke = '#14212b' }: { d: string; stroke?: string }) => (
@@ -16,7 +19,7 @@ const Icon = ({ d, stroke = '#14212b' }: { d: string; stroke?: string }) => (
   </svg>
 );
 
-export function Builder({ layers, onChange, onPreset, nextId }: Props) {
+export function Builder({ layers, onChange, onPreset, nextId, onSaveToLibrary, bare }: Props) {
   const edit = (fn: (ls: LayerInput[]) => void) => {
     const ls = layers.map((l) => ({ ...l }));
     fn(ls);
@@ -25,8 +28,15 @@ export function Builder({ layers, onChange, onPreset, nextId }: Props) {
   const total = layers.reduce((s, l) => s + l.t, 0);
 
   return (
-    <section className="card panel">
-      <h2><span className="step">1</span>Build the wall</h2>
+    <section className={bare ? 'stack-10' : 'card panel'}>
+      {!bare && (
+        <div className="row-between">
+          <h2><span className="step">1</span>Build the wall</h2>
+          {onSaveToLibrary && (
+            <button type="button" className="btn-link" onClick={onSaveToLibrary}>+ Save to library</button>
+          )}
+        </div>
+      )}
 
       <Field label="Start from a preset">
         <select className="select" value="" onChange={(e) => e.target.value && onPreset(e.target.value)}>
