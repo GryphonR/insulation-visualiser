@@ -141,7 +141,9 @@ p { margin: 0; }
 .lib-row .chip.on { color: #fff; }
 
 /* Compare grid */
-.compare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 16px; }
+/* Never more than 2 wall diagrams per row, however wide the window — beyond that they get too small to read. */
+.compare-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+@media (min-width: 760px) { .compare-grid { grid-template-columns: repeat(2, 1fr); } }
 .compare-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .compare-card-head { display: flex; align-items: center; gap: 8px; }
 .compare-card-head h3 { font-size: 15px; }

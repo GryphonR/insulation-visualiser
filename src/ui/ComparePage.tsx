@@ -43,7 +43,7 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
   const [env, setEnv] = useState<Scenario>(DEFAULT_ENV);
   const [modal, setModal] = useState<null | { draft?: StackupDraft; slot: number | null }>(null);
   const [confirmDelete, setConfirmDelete] = useState<null | { stackup: Stackup; slot: number }>(null);
-  const { frame, scrub } = useClock();
+  const { frame, playing, setPlaying, scrub } = useClock();
 
   const set = (patch: Partial<Scenario>) => setEnv((s) => ({ ...s, ...patch }));
 
@@ -150,9 +150,16 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
         <div className="section-head">
           <div>
             <h2><span className="step">1</span>Heat moving through each wall</h2>
-            <p className="muted small">Pick a build-up for each column below. They all run under the one day set above, off one shared clock.</p>
+            <p className="muted small">Pick a build-up for each column below. They all run under the one day set above. Press play or drag the clock.</p>
           </div>
           <div className="player">
+            <button type="button" className="play" onClick={() => setPlaying((p) => !p)} aria-label={playing ? 'Pause' : 'Play'}>
+              {playing ? (
+                <svg width={18} height={18} viewBox="0 0 18 18" aria-hidden="true"><path d="M4.5 3h3.2v12H4.5zM10.3 3h3.2v12h-3.2z" fill="#fff" /></svg>
+              ) : (
+                <svg width={18} height={18} viewBox="0 0 18 18" aria-hidden="true"><path d="M5 3.2v11.6L15 9z" fill="#fff" /></svg>
+              )}
+            </button>
             <input type="range" aria-label="Time of day" min={0} max={143} step={1} value={f} onChange={(e) => scrub(Number(e.target.value))} />
             <span className="mono clock">{pad2(Math.floor(f / FRAMES_PER_HOUR))}:{pad2((f % FRAMES_PER_HOUR) * 10)}</span>
           </div>
