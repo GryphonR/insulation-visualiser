@@ -272,8 +272,8 @@ export function simulate(P: SimParams) {
   const M = 2 * N + 1;
   const pmin = new Float64Array(M).fill(1e9);
   const pmax = new Float64Array(M).fill(-1e9);
-  let tlo = Math.min(...Array.from(tinK));
-  let thi = Math.max(...Array.from(tinK));
+  let extLo = Math.min(...Array.from(tinK));
+  let extHi = Math.max(...Array.from(tinK));
   for (let f = 0; f < 144; f++) {
     const pr = fr.prof[f];
     for (let j = 0; j < M; j++) {
@@ -282,15 +282,22 @@ export function simulate(P: SimParams) {
     }
     const ct = fr.cellT[f];
     for (let i = 0; i < N; i++) {
-      if (ct[i] < tlo) tlo = ct[i];
-      if (ct[i] > thi) thi = ct[i];
+      if (ct[i] < extLo) extLo = ct[i];
+      if (ct[i] > extHi) extHi = ct[i];
     }
   }
-  if (thi - tlo < 4) {
-    const mid = (thi + tlo) / 2;
-    tlo = mid - 2;
-    thi = mid + 2;
-  }
+
+  // Colour scale: anchored on the room reference temperature so the same
+  // colour always means the same thing relative to the room, in every
+  // scenario and at every time of day. The midpoint of the scale (cream) is
+  // the room reference; blue is always colder than the room, red always
+  // warmer. The scale is symmetric around that reference so it is not
+  // skewed by, say, a much larger swing on one side.
+  let roomRef = 0;
+  for (let f = 0; f < 144; f++) roomRef += fr.tin[f] / 144;
+  let half = Math.max(extHi - roomRef, roomRef - extLo, 2);
+  const tlo = roomRef - half;
+  const thi = roomRef + half;
 
   // Metrics from the first harmonic of the daily cycle.
   const hs = harmonic(fr.tsa.subarray(0, 144));
@@ -357,7 +364,7 @@ export function simulate(P: SimParams) {
   }
 
   return {
-    N, cells, lay, total, U, Rtot, Rsi, fr, px, pmin, pmax, tlo, thi,
+    N, cells, lay, total, U, Rtot, Rsi, fr, px, pmin, pmax, tlo, thi, roomRef,
     decr, lag, hs, hq, gain, loss, solar, qmin, qmax, qsmin, qsmax, qss, timin, timax,
     kin, ktot, faceFlux, fmax,
   };

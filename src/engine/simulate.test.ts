@@ -95,6 +95,19 @@ describe('free-floating room', () => {
   });
 });
 
+describe('colour scale anchoring', () => {
+  it('centres the colour scale on the room reference temperature', () => {
+    const r = simulate(wall('solid', { tmean: 28, swing: 14 })); // a hot day, well above room temp
+    expect((r.tlo + r.thi) / 2).toBeCloseTo(r.roomRef, 6);
+    expect(r.roomRef).toBeCloseTo(21, 0.6);
+  });
+
+  it('keeps the room reference as the midpoint even when the day runs colder than the room', () => {
+    const r = simulate(wall('solid', { tmean: -5, swing: 6 })); // a cold day
+    expect((r.tlo + r.thi) / 2).toBeCloseTo(r.roomRef, 6);
+  });
+});
+
 describe('heating schedule', () => {
   it('switches the room between comfort and setback temperatures', () => {
     const r = runScenario(scenario({ heat: 'schedule', comfort: 21, setback: 16 }));

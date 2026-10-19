@@ -112,10 +112,15 @@ export default function App() {
 
               <div className="cbar">
                 <span className="mono">{res.sim.tlo.toFixed(0)} °C</span>
-                <div className="cbar-grad" />
+                <div className="cbar-grad">
+                  <div className="cbar-room" style={{ left: '50%' }}>
+                    <span className="mono cbar-room-label">{res.sim.roomRef.toFixed(0)} °C room</span>
+                  </div>
+                </div>
                 <span className="mono">{res.sim.thi.toFixed(0)} °C</span>
               </div>
               <p className="small muted">
+                Colour is anchored to the room's own temperature (marked on the scale): blue is always colder than the room, red always warmer, cream about the same — so the same colour means the same thing whichever scenario you compare.
                 Arrows show the heat flow through each slice of the wall: pointing right means heading into the room, thicker means more. Full scale is {Math.round(res.sim.fmax)} W/m². Where arrows differ between layers, heat is being stored or released.
               </p>
             </section>
