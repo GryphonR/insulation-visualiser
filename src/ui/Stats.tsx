@@ -29,16 +29,6 @@ export function buildTiles(res: ScenarioResult): Tile[] {
       label: 'Net heat flow, 24 h', value: sgn(sim.gain - sim.loss, 0), unit: 'Wh/m²',
       note: `${sim.gain.toFixed(0)} Wh/m² gained, ${sim.loss.toFixed(0)} Wh/m² lost. Positive means into the room.`,
     },
-    {
-      label: 'vs. steady-state (no mass)', value: sgn(sim.gainSS - sim.lossSS, 0), unit: 'Wh/m²',
-      note:
-        `U-value × (sol-air − room) at the same temperatures each step, with no thermal mass: `
-        + `${sim.gainSS.toFixed(0)} Wh/m² gained, ${sim.lossSS.toFixed(0)} Wh/m² lost. `
-        + (Math.abs((sim.gain - sim.loss) - (sim.gainSS - sim.lossSS)) < 0.05 * (sim.gainSS + sim.lossSS + 1)
-          ? 'The daily net is almost the same either way — mass does not change how much heat passes through over a full cycle, only when: less flows at the peak, more keeps flowing after it.'
-          : 'The totals differ because the cycle has not fully settled, or because a schedule or free-floating room keeps shifting the reference day to day.')
-        + (free ? ' In free-floating mode this uses the same room swing the simulation found, so it isolates the effect of mass alone.' : ''),
-    },
   ];
   if (free) {
     let lo = Infinity;
