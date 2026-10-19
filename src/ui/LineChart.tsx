@@ -16,8 +16,8 @@ export function LineChart({ spec, frame }: { spec: ChartSpec; frame: number }) {
         <p className="muted">{spec.sub}</p>
       </div>
       <div className="legend">
-        {spec.series.map((s) => (
-          <span key={s.name} className="legend-item">
+        {spec.series.map((s, i) => (
+          <span key={i} className="legend-item">
             <span style={legendSwatch(s.dash, s.col)} />
             {s.name}
           </span>
@@ -37,9 +37,9 @@ export function LineChart({ spec, frame }: { spec: ChartSpec; frame: number }) {
           </g>
         ))}
         {spec.area && <polygon points={spec.area} fill="#f2a900" opacity={0.28} />}
-        {spec.series.map((s) => (
+        {spec.series.map((s, i) => (
           <polyline
-            key={s.name}
+            key={i}
             points={s.points}
             fill="none"
             stroke={s.col}
@@ -50,8 +50,8 @@ export function LineChart({ spec, frame }: { spec: ChartSpec; frame: number }) {
           />
         ))}
         <line x1={cx} x2={cx} y1={CHART.PT} y2={CHART.PB} stroke="#14212b" strokeWidth={1.2} />
-        {spec.series.map((s) => (
-          <circle key={s.name} cx={cx} cy={spec.yOf(s.arr[frame])} r={4.5} fill={s.col} stroke="#fff" strokeWidth={1.5} />
+        {spec.series.map((s, i) => (
+          <circle key={i} cx={cx} cy={spec.yOf(s.arr[frame])} r={4.5} fill={s.col} stroke="#fff" strokeWidth={1.5} />
         ))}
         <text x={298} y={218} className="svt-mid">solar time, hours</text>
       </svg>
