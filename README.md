@@ -6,10 +6,16 @@ Visualises how heat moves through a building's insulation build-up over a 24-hou
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
+npm run dev      # http://localhost:5173/insulation-visualiser/
 npm test         # engine unit tests
 npm run build    # typecheck + production build
 ```
+
+Vite's `base` is set to `/insulation-visualiser/` (see `vite.config.ts`) so built asset URLs resolve correctly as a GitHub Pages project page; the dev server serves from under that same path, not the bare root.
+
+## Deployment
+
+Pushing to `main` builds and deploys to GitHub Pages via `.github/workflows/deploy.yml` (Actions, not a `gh-pages` branch). Live at `https://<owner>.github.io/insulation-visualiser/`.
 
 ## Layout
 
