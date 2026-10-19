@@ -15,6 +15,7 @@ import { useClock } from './useClock';
 
 const COLORS = ['#0b63b5', '#c75b00', '#2d7a4d', '#a23b72'];
 const MAX_COMPARE = 4;
+const NEW_OPTION = '__new__';
 
 const DEFAULT_ENV: Scenario = {
   layers: [],
@@ -23,7 +24,7 @@ const DEFAULT_ENV: Scenario = {
   floor: 16, elA: 12, glA: 2, rest: 20, ach: 3, gains: 150, glaz: 'std', mass: 'med',
 };
 
-const DEFAULT_SELECTION = ['preset:cavity_old', 'preset:cavity_new'];
+const DEFAULT_SLOTS = ['preset:cavity_old', 'preset:cavity_new'];
 
 interface Props {
   customStackups: Stackup[];
@@ -32,20 +33,43 @@ interface Props {
 
 export function ComparePage({ customStackups, setCustomStackups }: Props) {
   const library = useMemo(() => [...BUILTIN_STACKUPS, ...customStackups], [customStackups]);
-  const [selected, setSelected] = useState<string[]>(() => {
+  const findStackup = (id: string) => library.find((s) => s.id === id);
+
+  const [slots, setSlots] = useState<string[]>(() => {
     const ids = new Set(library.map((s) => s.id));
-    const def = DEFAULT_SELECTION.filter((id) => ids.has(id));
+    const def = DEFAULT_SLOTS.filter((id) => ids.has(id));
     return def.length ? def : library.slice(0, 2).map((s) => s.id);
   });
   const [env, setEnv] = useState<Scenario>(DEFAULT_ENV);
-  const [modal, setModal] = useState<null | { draft?: StackupDraft }>(null);
-  const [confirmDelete, setConfirmDelete] = useState<Stackup | null>(null);
+  const [modal, setModal] = useState<null | { draft?: StackupDraft; slot: number | null }>(null);
+  const [confirmDelete, setConfirmDelete] = useState<null | { stackup: Stackup; slot: number }>(null);
   const { frame, scrub } = useClock();
 
   const set = (patch: Partial<Scenario>) => setEnv((s) => ({ ...s, ...patch }));
 
-  const toggle = (id: string) => {
-    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length < MAX_COMPARE ? [...s, id] : s));
+  const pickForSlot = (slot: number, value: string) => {
+    if (value === NEW_OPTION) {
+      setModal({ slot });
+      return;
+    }
+    setSlots((prev) => prev.map((id, i) => (i === slot ? value : id)));
+  };
+
+  const editSlot = (slot: number, s: Stackup) => {
+    setModal({
+      slot,
+      draft: { id: s.builtin ? undefined : s.id, name: s.builtin ? `${s.name} (copy)` : s.name, layers: s.layers, orient: s.orient },
+    });
+  };
+
+  const addColumn = () => {
+    if (slots.length >= MAX_COMPARE) return;
+    const unused = library.find((s) => !slots.includes(s.id));
+    setSlots((prev) => [...prev, (unused ?? library[0]).id]);
+  };
+
+  const removeColumn = (slot: number) => {
+    setSlots((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== slot) : prev));
   };
 
   // A throwaway single-layer run, only to drive the "set the day" summary text
@@ -57,137 +81,114 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
 
   const results = useMemo(
     () =>
-      selected
-        .map((id) => library.find((s) => s.id === id))
-        .filter((s): s is Stackup => !!s)
-        .map((s, i) => ({
-          stackup: s,
-          color: COLORS[i % COLORS.length],
-          res: runScenario({ ...env, layers: layersFromTuples(s.layers) }),
-        })),
-    [selected, env, library],
+      slots.map((id, i) => {
+        const s = findStackup(id);
+        if (!s) return null;
+        return { stackup: s, color: COLORS[i % COLORS.length], res: runScenario({ ...env, layers: layersFromTuples(s.layers) }) };
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [slots, env, library],
   );
 
   const f = clamp(frame, 0, 143);
+  const valid = results.filter((r): r is NonNullable<typeof r> => !!r);
 
   const tempChart = useMemo(
     () =>
-      results.length
+      valid.length
         ? buildChart({
             title: 'Inner face temperature',
             sub: 'Compare how each build-up tempers the day',
             alt: 'Line chart comparing inner face temperature across build-ups over 24 hours',
-            series: results.map((r) => ({ name: r.stackup.name, arr: r.res.sim.fr.tsIn, col: r.color, sw: 2.5 })),
+            series: valid.map((r) => ({ name: r.stackup.name, arr: r.res.sim.fr.tsIn, col: r.color, sw: 2.5 })),
             note: 'A flatter, more delayed line means more effective thermal mass and insulation together.',
           })
         : null,
-    [results],
+    [valid],
   );
 
   const flowChart = useMemo(
     () =>
-      results.length
+      valid.length
         ? buildChart({
             title: 'Heat flow into the room',
             sub: 'W/m². Above zero the wall is warming the room.',
             alt: 'Line chart comparing heat flow into the room across build-ups over 24 hours',
             zero: true,
-            series: results.map((r) => ({ name: r.stackup.name, arr: r.res.sim.fr.q, col: r.color, sw: 2.5 })),
+            series: valid.map((r) => ({ name: r.stackup.name, arr: r.res.sim.fr.q, col: r.color, sw: 2.5 })),
             note: 'Smaller peaks and a flatter line mean the room feels less of the outside swing.',
           })
         : null,
-    [results],
+    [valid],
   );
 
   const saveStackup = (draft: StackupDraft) => {
+    const slot = modal?.slot ?? null;
     if (draft.id) {
       setCustomStackups((prev) => prev.map((s) => (s.id === draft.id ? { ...s, name: draft.name, layers: draft.layers, orient: draft.orient } : s)));
+      if (slot !== null) setSlots((prev) => prev.map((id, i) => (i === slot ? draft.id! : id)));
     } else {
       const id = `custom:${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       setCustomStackups((prev) => [...prev, { id, name: draft.name, layers: draft.layers, orient: draft.orient }]);
-      setSelected((prev) => (prev.length < MAX_COMPARE ? [...prev, id] : prev));
+      if (slot !== null) setSlots((prev) => prev.map((sid, i) => (i === slot ? id : sid)));
     }
     setModal(null);
   };
 
-  const doDelete = (s: Stackup) => {
-    setCustomStackups((prev) => prev.filter((x) => x.id !== s.id));
-    setSelected((prev) => prev.filter((id) => id !== s.id));
+  const doDelete = (stackup: Stackup, slot: number) => {
+    setCustomStackups((prev) => prev.filter((x) => x.id !== stackup.id));
+    const fallback = library.find((s) => s.id !== stackup.id)?.id ?? stackup.id;
+    setSlots((prev) => prev.map((id, i) => (i === slot && id === stackup.id ? fallback : id)));
     setConfirmDelete(null);
   };
 
   return (
-    <div className="cols">
-      <aside className="side">
-        <EnvironmentPanel sc={env} res={envProbe} set={set} />
-      </aside>
+    <div className="compare-page">
+      <EnvironmentPanel sc={env} res={envProbe} set={set} wide />
 
-      <main className="main">
-        <section className="card panel">
-          <div className="row-between">
-            <h2><span className="step">1</span>Choose build-ups to compare</h2>
-            <button type="button" className="btn-link" onClick={() => setModal({})}>+ New build-up</button>
+      <section className="card panel">
+        <div className="section-head">
+          <div>
+            <h2><span className="step">1</span>Heat moving through each wall</h2>
+            <p className="muted small">Pick a build-up for each column below. They all run under the one day set above, off one shared clock.</p>
           </div>
-          <p className="small muted">Pick up to {MAX_COMPARE}. They all run under the same day, set on the left.</p>
-          <div className="lib-list">
-            {library.map((s) => {
-              const idx = selected.indexOf(s.id);
-              const on = idx >= 0;
-              const color = on ? COLORS[idx % COLORS.length] : undefined;
-              return (
-                <div key={s.id} className="lib-row">
-                  <button
-                    type="button"
-                    className={on ? 'chip on' : 'chip'}
-                    aria-pressed={on}
-                    disabled={!on && selected.length >= MAX_COMPARE}
-                    style={on ? { background: color, borderColor: color } : undefined}
-                    onClick={() => toggle(s.id)}
-                  >
-                    {s.name}{s.orient === 'roof' ? ' (roof)' : ''}
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-btn small"
-                    aria-label={s.builtin ? `Customize a copy of ${s.name}` : `Edit ${s.name}`}
-                    onClick={() => setModal({ draft: { id: s.builtin ? undefined : s.id, name: s.builtin ? `${s.name} (copy)` : s.name, layers: s.layers, orient: s.orient } })}
-                  >
-                    <svg width={14} height={14} viewBox="0 0 16 16" aria-hidden="true"><path d="M11 2.5 13.5 5 5 13.5 2 14l.5-3L11 2.5Z" fill="none" stroke="#14212b" strokeWidth={1.4} strokeLinejoin="round" /></svg>
-                  </button>
-                  {!s.builtin && (
-                    <button type="button" className="icon-btn small" aria-label={`Delete ${s.name}`} onClick={() => setConfirmDelete(s)}>
+          <div className="player">
+            <input type="range" aria-label="Time of day" min={0} max={143} step={1} value={f} onChange={(e) => scrub(Number(e.target.value))} />
+            <span className="mono clock">{pad2(Math.floor(f / FRAMES_PER_HOUR))}:{pad2((f % FRAMES_PER_HOUR) * 10)}</span>
+          </div>
+        </div>
+
+        <div className="compare-grid">
+          {slots.map((id, i) => {
+            const s = findStackup(id);
+            const r = results[i];
+            const color = COLORS[i % COLORS.length];
+            return (
+              <div key={i} className="compare-card">
+                <div className="compare-card-head">
+                  <span className="dot" style={{ background: color }} />
+                  <select className="select grow" aria-label={`Build-up for column ${i + 1}`} value={id} onChange={(e) => pickForSlot(i, e.target.value)}>
+                    <option value={NEW_OPTION}>+ New build-up…</option>
+                    {library.map((o) => <option key={o.id} value={o.id}>{o.name}{o.orient === 'roof' ? ' (roof)' : ''}</option>)}
+                  </select>
+                  {s && (
+                    <button type="button" className="icon-btn small" aria-label={s.builtin ? `Customize a copy of ${s.name}` : `Edit ${s.name}`} onClick={() => editSlot(i, s)}>
+                      <svg width={14} height={14} viewBox="0 0 16 16" aria-hidden="true"><path d="M11 2.5 13.5 5 5 13.5 2 14l.5-3L11 2.5Z" fill="none" stroke="#14212b" strokeWidth={1.4} strokeLinejoin="round" /></svg>
+                    </button>
+                  )}
+                  {s && !s.builtin && (
+                    <button type="button" className="icon-btn small" aria-label={`Delete ${s.name}`} onClick={() => setConfirmDelete({ stackup: s, slot: i })}>
                       <svg width={14} height={14} viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4 12 12M12 4 4 12" fill="none" stroke="#a02828" strokeWidth={1.6} strokeLinecap="round" /></svg>
                     </button>
                   )}
+                  {slots.length > 1 && (
+                    <button type="button" className="icon-btn small" aria-label={`Remove column ${i + 1}`} onClick={() => removeColumn(i)}>
+                      <svg width={14} height={14} viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10" fill="none" stroke="#51606c" strokeWidth={1.6} strokeLinecap="round" /></svg>
+                    </button>
+                  )}
                 </div>
-              );
-            })}
-          </div>
-        </section>
-
-        {results.length === 0 ? (
-          <section className="card panel"><p className="muted">Select at least one build-up above to see a comparison.</p></section>
-        ) : (
-          <>
-            <section className="card panel">
-              <div className="section-head">
-                <div>
-                  <h2>Heat moving through each wall</h2>
-                  <p className="muted small">Every build-up runs the same day, side by side. Drag the clock to compare them at any hour.</p>
-                </div>
-                <div className="player">
-                  <input type="range" aria-label="Time of day" min={0} max={143} step={1} value={f} onChange={(e) => scrub(Number(e.target.value))} />
-                  <span className="mono clock">{pad2(Math.floor(f / FRAMES_PER_HOUR))}:{pad2((f % FRAMES_PER_HOUR) * 10)}</span>
-                </div>
-              </div>
-
-              <div className="compare-grid">
-                {results.map((r) => (
-                  <div key={r.stackup.id} className="compare-card">
-                    <div className="compare-card-head">
-                      <span className="dot" style={{ background: r.color }} />
-                      <h3>{r.stackup.name}</h3>
-                    </div>
+                {r && (
+                  <>
                     <div className="mini-stats">
                       <span><b className="mono">{r.res.sim.U.toFixed(2)}</b> W/m²K U-value</span>
                       <span><b className="mono">{r.res.sim.decr.toFixed(2)}</b> decrement</span>
@@ -195,18 +196,24 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
                       <span><b className="mono">{sgn(r.res.sim.gain - r.res.sim.loss, 0)}</b> Wh/m² net</span>
                     </div>
                     <WallSection res={r.res} frame={f} />
-                  </div>
-                ))}
+                  </>
+                )}
               </div>
-            </section>
+            );
+          })}
+        </div>
 
-            <section aria-label="Comparison charts" className="charts">
-              {tempChart && <LineChart spec={tempChart} frame={f} />}
-              {flowChart && <LineChart spec={flowChart} frame={f} />}
-            </section>
-          </>
+        {slots.length < MAX_COMPARE && (
+          <button type="button" className="btn-link" onClick={addColumn}>+ Add a build-up to compare</button>
         )}
-      </main>
+      </section>
+
+      {valid.length > 0 && (
+        <section aria-label="Comparison charts" className="charts">
+          {tempChart && <LineChart spec={tempChart} frame={f} />}
+          {flowChart && <LineChart spec={flowChart} frame={f} />}
+        </section>
+      )}
 
       {modal && (
         <StackupModal
@@ -221,11 +228,11 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
         <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setConfirmDelete(null); }}>
           <div className="modal modal-small" role="dialog" aria-modal="true" aria-label="Confirm delete">
             <div className="modal-body">
-              <p>Delete “{confirmDelete.name}” from your library? This can't be undone.</p>
+              <p>Delete “{confirmDelete.stackup.name}” from your library? This can't be undone.</p>
             </div>
             <div className="modal-actions">
               <button type="button" className="btn-secondary" onClick={() => setConfirmDelete(null)}>Cancel</button>
-              <button type="button" className="btn-danger" onClick={() => doDelete(confirmDelete)}>Delete</button>
+              <button type="button" className="btn-danger" onClick={() => doDelete(confirmDelete.stackup, confirmDelete.slot)}>Delete</button>
             </div>
           </div>
         </div>

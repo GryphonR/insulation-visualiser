@@ -8,6 +8,8 @@ interface Props {
   sc: Scenario;
   res: ScenarioResult;
   set: (patch: Partial<Scenario>) => void;
+  /** Lays groups out as a wide responsive grid instead of a narrow stack (for the comparison screen). */
+  wide?: boolean;
 }
 
 const HEAT_MODES: Array<{ id: HeatMode; label: string }> = [
@@ -18,7 +20,7 @@ const HEAT_MODES: Array<{ id: HeatMode; label: string }> = [
 
 const HOURS = Array.from({ length: 24 }, (_, i) => ({ id: i, name: `${pad2(i)}:00` }));
 
-export function EnvironmentPanel({ sc, res, set }: Props) {
+export function EnvironmentPanel({ sc, res, set, wide }: Props) {
   const { params, sim } = res;
   const sel = (label: string, key: 'on1' | 'off1' | 'on2' | 'off2') => (
     <label className="field small muted">
@@ -30,8 +32,8 @@ export function EnvironmentPanel({ sc, res, set }: Props) {
   );
 
   return (
-    <section className="card panel">
-      <h2><span className="step">2</span>Set the day</h2>
+    <section className={wide ? 'card panel env-wide' : 'card panel'}>
+      <h2 className={wide ? 'env-span' : undefined}><span className="step">2</span>Set the day</h2>
 
       <Field label="Location">
         <select className="select" value={sc.loc} onChange={(e) => set({ loc: e.target.value })}>
@@ -63,7 +65,7 @@ export function EnvironmentPanel({ sc, res, set }: Props) {
         <ChipGroup label="Outer surface colour" items={COLOURS} value={sc.colour} onPick={(colour) => set({ colour })} text={(c) => c.label} />
       </div>
 
-      <div className="stack-10">
+      <div className={wide ? 'stack-10 env-span' : 'stack-10'}>
         <Eyebrow>Internal heating</Eyebrow>
         <ChipGroup label="Heating mode" items={HEAT_MODES} value={sc.heat} onPick={(heat) => set({ heat: heat as HeatMode })} text={(m) => m.label} />
 
@@ -106,7 +108,7 @@ export function EnvironmentPanel({ sc, res, set }: Props) {
         )}
       </div>
 
-      <p className="small muted">
+      <p className={wide ? 'small muted env-span' : 'small muted'}>
         Mean air {params.tmean.toFixed(1)} °C, swinging ±{(params.swing / 2).toFixed(1)} K around it, peaking at 15:00.{' '}
         {sim.solar.toFixed(1)} kWh/m² of sun lands on this face; the outer surface absorbs {Math.round(params.alpha * 100)}% of it.
         Times are solar time (add one hour in BST).
