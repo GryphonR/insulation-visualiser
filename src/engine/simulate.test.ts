@@ -95,6 +95,21 @@ describe('free-floating room', () => {
   });
 });
 
+describe('steady-state comparison totals', () => {
+  it('nets to the same daily total as the simulated flow when no mass delays anything', () => {
+    // No sun absorbed and no swing: sol-air is constant, so the simulated and
+    // steady-state totals should coincide once the transient has died out.
+    const r = simulate(wall('cavity_new', { alpha: 0, swing: 0 }));
+    expect(r.gainSS - r.lossSS).toBeCloseTo(r.gain - r.loss, 0);
+  });
+
+  it('is damped relative to the steady-state swing for a heavy wall on a swinging day', () => {
+    const r = simulate(wall('solid'));
+    // Thermal mass should narrow the gain/loss split versus the mass-free comparison.
+    expect(r.gain + r.loss).toBeLessThan(r.gainSS + r.lossSS);
+  });
+});
+
 describe('colour scale anchoring', () => {
   it('centres the colour scale on the room reference temperature', () => {
     const r = simulate(wall('solid', { tmean: 28, swing: 14 })); // a hot day, well above room temp

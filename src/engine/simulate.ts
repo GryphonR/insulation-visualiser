@@ -306,6 +306,10 @@ export function simulate(P: SimParams) {
   const lag = lagHours(hs, hq);
   let gain = 0;
   let loss = 0;
+  // Steady-state comparison: what U x (sol-air - room) would give for the
+  // same 24 h of outdoor and room temperatures, with no thermal mass at all.
+  let gainSS = 0;
+  let lossSS = 0;
   let solar = 0;
   let qmin = 1e9;
   let qmax = -1e9;
@@ -319,6 +323,8 @@ export function simulate(P: SimParams) {
     if (f < 144) {
       if (fr.q[f] > 0) gain += fr.q[f] / FRAMES_PER_HOUR;
       else loss -= fr.q[f] / FRAMES_PER_HOUR;
+      if (qss[f] > 0) gainSS += qss[f] / FRAMES_PER_HOUR;
+      else lossSS -= qss[f] / FRAMES_PER_HOUR;
       solar += fr.I[f] / FRAMES_PER_HOUR / 1000;
       qmin = Math.min(qmin, fr.q[f]);
       qmax = Math.max(qmax, fr.q[f]);
@@ -365,7 +371,7 @@ export function simulate(P: SimParams) {
 
   return {
     N, cells, lay, total, U, Rtot, Rsi, fr, px, pmin, pmax, tlo, thi, roomRef,
-    decr, lag, hs, hq, gain, loss, solar, qmin, qmax, qsmin, qsmax, qss, timin, timax,
+    decr, lag, hs, hq, gain, loss, gainSS, lossSS, solar, qmin, qmax, qsmin, qsmax, qss, timin, timax,
     kin, ktot, faceFlux, fmax,
   };
 }
