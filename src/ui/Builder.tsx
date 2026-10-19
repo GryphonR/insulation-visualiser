@@ -1,21 +1,9 @@
-import { MAT, MATERIAL_GROUPS, PRESETS } from '../engine/data';
+import { useState } from 'react';
+import { MAT, PRESETS } from '../engine/data';
 import type { LayerInput } from '../engine/simulate';
 import { clamp, fgFor } from '../lib/util';
 import { Field } from './controls';
-
-/** A material <select>, grouped into <optgroup>s (common build-up materials first). */
-function MaterialSelect({ value, onChange, label, className }: { value: string; onChange: (id: string) => void; label: string; className?: string }) {
-  return (
-    <select className={className ?? 'select'} aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
-      {value === '' && <option value="">+ Choose a material…</option>}
-      {MATERIAL_GROUPS.map((g) => (
-        <optgroup key={g.cat} label={g.label}>
-          {g.items.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-        </optgroup>
-      ))}
-    </select>
-  );
-}
+import { MaterialPickerModal } from './MaterialPickerModal';
 
 interface Props {
   layers: LayerInput[];
@@ -33,13 +21,35 @@ const Icon = ({ d, stroke = '#14212b' }: { d: string; stroke?: string }) => (
   </svg>
 );
 
+const ChevronDown = () => (
+  <svg width={14} height={14} viewBox="0 0 16 16" aria-hidden="true" className="material-btn-chevron">
+    <path d="M4 6 8 10 12 6" fill="none" stroke="#51606c" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+/** Index into `layers`, or 'add' for the "add a layer" slot — whichever opened the picker. */
+type PickerTarget = number | 'add' | null;
+
 export function Builder({ layers, onChange, onPreset, nextId, onSaveToLibrary, bare }: Props) {
+  const [picker, setPicker] = useState<PickerTarget>(null);
+
   const edit = (fn: (ls: LayerInput[]) => void) => {
     const ls = layers.map((l) => ({ ...l }));
     fn(ls);
     onChange(ls);
   };
   const total = layers.reduce((s, l) => s + l.t, 0);
+
+  const applyPick = (id: string) => {
+    const nm = MAT[id];
+    if (!nm) return;
+    if (picker === 'add') {
+      edit((ls) => { ls.push({ id: nextId(), mat: nm.id, t: nm.t }); });
+    } else if (typeof picker === 'number') {
+      const i = picker;
+      edit((ls) => { ls[i].mat = nm.id; ls[i].t = clamp(ls[i].t, nm.min, nm.max); });
+    }
+  };
 
   return (
     <section className={bare ? 'stack-10' : 'card panel'}>
@@ -69,15 +79,10 @@ export function Builder({ layers, onChange, onPreset, nextId, onSaveToLibrary, b
             <div key={L.id} className="layer">
               <div className="layer-top">
                 <span className="badge" style={{ background: m.col, color: fgFor(m.col) }}>{i + 1}</span>
-                <MaterialSelect
-                  className="select grow"
-                  label={`Material for layer ${i + 1}`}
-                  value={L.mat}
-                  onChange={(id) => {
-                    const nm = MAT[id];
-                    edit((ls) => { ls[i].mat = nm.id; ls[i].t = clamp(ls[i].t, nm.min, nm.max); });
-                  }}
-                />
+                <button type="button" className="select grow material-btn" aria-label={`Material for layer ${i + 1}: ${m.name}`} onClick={() => setPicker(i)}>
+                  <span className="material-btn-name">{m.name}</span>
+                  <ChevronDown />
+                </button>
                 <button type="button" className="icon-btn" aria-label={`Move layer ${i + 1} towards outside`} disabled={i === 0}
                   onClick={() => edit((ls) => { [ls[i - 1], ls[i]] = [ls[i], ls[i - 1]]; })}>
                   <Icon d="M3.5 10 8 5.5 12.5 10" />
@@ -107,14 +112,10 @@ export function Builder({ layers, onChange, onPreset, nextId, onSaveToLibrary, b
       <div className="eyebrow">INSIDE ↑</div>
 
       <Field label="Add a layer (inside face)">
-        <MaterialSelect
-          label="Add a layer (inside face)"
-          value=""
-          onChange={(id) => {
-            const m = MAT[id];
-            if (m) edit((ls) => { ls.push({ id: nextId(), mat: m.id, t: m.t }); });
-          }}
-        />
+        <button type="button" className="select material-btn" onClick={() => setPicker('add')}>
+          <span className="material-btn-name muted">+ Choose a material…</span>
+          <ChevronDown />
+        </button>
       </Field>
 
       <div className="stack-6">
@@ -129,6 +130,15 @@ export function Builder({ layers, onChange, onPreset, nextId, onSaveToLibrary, b
         </div>
         <div className="row-between small muted"><span>Outside</span><span>Inside</span></div>
       </div>
+
+      {picker !== null && (
+        <MaterialPickerModal
+          value={picker === 'add' ? '' : layers[picker].mat}
+          title={picker === 'add' ? 'Add a layer' : `Material for layer ${(picker as number) + 1}`}
+          onClose={() => setPicker(null)}
+          onSelect={applyPick}
+        />
+      )}
     </section>
   );
 }

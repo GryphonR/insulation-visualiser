@@ -20,8 +20,10 @@ npm run build    # typecheck + production build
   - `scenario.ts` turns the user's choices into simulation parameters
   - `library.ts` the build-up library: built-in presets plus custom stackups saved to `localStorage`
   - `materials-extra.ts` ~260 additional materials (conductivity, density, specific heat) generated from a pasted reference table by `scripts/gen-materials.py`; regenerate it from `scripts/materials.tsv` if that table changes, don't hand-edit the generated file
+  - `favorites.ts` starred materials and categories (for `MaterialPickerModal`), saved to `localStorage`
 - `src/ui/` – React components and SVG charts.
   - `Builder.tsx` the layer editor, reused both in the single-wall view and inside `StackupModal.tsx`
+  - `MaterialPickerModal.tsx` the material picker: categories on the left (favourited ones pinned to the top), that category's materials on the right, a star on every category and material to favourite it
   - `ComparePage.tsx` the side-by-side comparison screen: pick up to four build-ups from the library, they all run under one shared day, and the wall sections and overlay charts update together off one clock
 
 ## Modes
