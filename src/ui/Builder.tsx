@@ -1,7 +1,21 @@
-import { MAT, MATERIALS, PRESETS } from '../engine/data';
+import { MAT, MATERIAL_GROUPS, PRESETS } from '../engine/data';
 import type { LayerInput } from '../engine/simulate';
 import { clamp, fgFor } from '../lib/util';
 import { Field } from './controls';
+
+/** A material <select>, grouped into <optgroup>s (common build-up materials first). */
+function MaterialSelect({ value, onChange, label, className }: { value: string; onChange: (id: string) => void; label: string; className?: string }) {
+  return (
+    <select className={className ?? 'select'} aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
+      {value === '' && <option value="">+ Choose a material…</option>}
+      {MATERIAL_GROUPS.map((g) => (
+        <optgroup key={g.cat} label={g.label}>
+          {g.items.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
 
 interface Props {
   layers: LayerInput[];
@@ -55,17 +69,15 @@ export function Builder({ layers, onChange, onPreset, nextId, onSaveToLibrary, b
             <div key={L.id} className="layer">
               <div className="layer-top">
                 <span className="badge" style={{ background: m.col, color: fgFor(m.col) }}>{i + 1}</span>
-                <select
+                <MaterialSelect
                   className="select grow"
-                  aria-label={`Material for layer ${i + 1}`}
+                  label={`Material for layer ${i + 1}`}
                   value={L.mat}
-                  onChange={(e) => {
-                    const nm = MAT[e.target.value];
+                  onChange={(id) => {
+                    const nm = MAT[id];
                     edit((ls) => { ls[i].mat = nm.id; ls[i].t = clamp(ls[i].t, nm.min, nm.max); });
                   }}
-                >
-                  {MATERIALS.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-                </select>
+                />
                 <button type="button" className="icon-btn" aria-label={`Move layer ${i + 1} towards outside`} disabled={i === 0}
                   onClick={() => edit((ls) => { [ls[i - 1], ls[i]] = [ls[i], ls[i - 1]]; })}>
                   <Icon d="M3.5 10 8 5.5 12.5 10" />
@@ -95,13 +107,14 @@ export function Builder({ layers, onChange, onPreset, nextId, onSaveToLibrary, b
       <div className="eyebrow">INSIDE ↑</div>
 
       <Field label="Add a layer (inside face)">
-        <select className="select" value="" onChange={(e) => {
-          const m = MAT[e.target.value];
-          if (m) edit((ls) => { ls.push({ id: nextId(), mat: m.id, t: m.t }); });
-        }}>
-          <option value="">+ Choose a material…</option>
-          {MATERIALS.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-        </select>
+        <MaterialSelect
+          label="Add a layer (inside face)"
+          value=""
+          onChange={(id) => {
+            const m = MAT[id];
+            if (m) edit((ls) => { ls.push({ id: nextId(), mat: m.id, t: m.t }); });
+          }}
+        />
       </Field>
 
       <div className="stack-6">

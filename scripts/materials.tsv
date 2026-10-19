@@ -1,0 +1,257 @@
+1 cm Vertical Air layer (e.g. Wall)	0.067	1.2	1010
+2 cm Vertical Air layer (e.g. Wall)	0.109	1.2	1010
+4 cm Vertical Air layer (e.g. Wall)	0.218	1.2	1010
+6 cm Vertical Air layer (e.g. Wall)	0.327	1.2	1010
+8 cm Vertical Air layer (e.g. Wall)	0.437	1.2	1010
+10 cm Vertical Air layer (e.g. Wall)	0.546	1.2	1010
+15 cm Vertical Air layer (e.g. Wall)	0.818	1.2	1010
+20 cm Vertical Air layer (e.g. Wall)	1.091	1.2	1010
+25 cm Vertical Air layer (e.g. Wall)	1.364	1.2	1010
+30 cm Vertical Air layer (e.g. Wall)	1.637	1.2	1010
+1 cm Horizontal Air layer Upward heat-flux	0.067	1.2	1010
+2 cm Horizontal Air layer Upward heat-flux	0.121	1.2	1010
+4 cm Horizontal Air layer Upward heat-flux	0.246	1.2	1010
+6 cm Horizontal Air layer Upward heat-flux	0.369	1.2	1010
+8 cm Horizontal Air layer Upward heat-flux	0.493	1.2	1010
+10 cm Horizontal Air layer Upward heat-flux	0.616	1.2	1010
+15 cm Horizontal Air layer Upward heat-flux	0.923	1.2	1010
+20 cm Horizontal Air layer Upward heat-flux	1.231	1.2	1010
+25 cm Horizontal Air layer Upward heat-flux	1.539	1.2	1010
+30 cm Horizontal Air layer Upward heat-flux	1.847	1.2	1010
+1 cm Horizontal Air layer Downward heat-flux	0.067	1.2	1010
+2 cm Horizontal Air layer Downward heat-flux	0.109	1.2	1010
+4 cm Horizontal Air layer Downward heat-flux	0.193	1.2	1010
+6 cm Horizontal Air layer Downward heat-flux	0.277	1.2	1010
+8 cm Horizontal Air layer Downward heat-flux	0.366	1.2	1010
+10 cm Horizontal Air layer Downward heat-flux	0.454	1.2	1010
+15 cm Horizontal Air layer Downward heat-flux	0.672	1.2	1010
+20 cm Horizontal Air layer Downward heat-flux	0.890	1.2	1010
+25 cm Horizontal Air layer Downward heat-flux	1.107	1.2	1010
+30 cm Horizontal Air layer Downward heat-flux	1.323	1.2	1010
+Aerated concrete	0.100	300	1370
+Aerated concrete	0.140	500	1290
+Aerated concrete	0.270	900	1180
+AGEPAN  THD Static      40/60/80 mm	0.050	230	2100
+AGEPAN  THD Static 	0.050	230	2100
+Agepan DWD protect	0.090	565	2100
+AGEPAN OSB 3 PUR EN 300	0.130	600	2100
+AGEPAN OSB 4 PUR EN 300	0.130	600	2100
+AGEPAN UDP N+F   22/25/32 mm	0.063	270	2100
+Aluminium	237.000	2700	888
+Aluminium alloy	160.000	2800	880
+Anhydrite screed	0.700	2200	1300
+Asbestos board	0.36	700	1050
+Asphalt	0.700	2100	1000
+Bitumen felt/sheet	0.230	1100	1000
+Bitumen pure	0.170	1050	1000
+Brass	120.000	8400	380
+Brick 1500 kg/m³	0.400	1500	850
+Brick 700 kg/m³	0.170	700	850
+Brickwork	0.320	1300	840
+Brickwork	0.500	1700	830
+Brickwork	0.730	2200	820
+Brick-work	0.160	800	920
+Butadiene	0.250	980	1000
+Butyl, (isobutene), solid/hot melt	0.240	1200	1400
+Carpet, textile floor	0.060	200	1300
+Cement lime plaster	0.700	1600	1100
+Cement mortar	1.400	2000	800
+Cement screed	1.330	2000	1080
+Cement, sand	1.000	1800	1000
+Cement-bonded particleboard	0.230	1200	1500
+Cement-lime mortar	0.800	1800	1100
+Chipboard (wood)	0.081	300	2500
+Chipboard (wood)	0.100	500	2500
+Chipboard (wood)	0.140	800	2500
+Clay/Silt	1.500	2000	1500
+Clinker brick (holes<=15%); std.mortar	0.800	1900	1000
+Clinker brick (holes>15%); std.mortar	0.730	1700	1000
+Coloured Rendering Mortar	0.780	1600	1000
+Concrete (crushed stone aggregates)	0.980	1600	1080
+Concrete (crushed stone aggregates)	1.710	2300	1080
+Concrete (EPS aggregates)	0.190	450	1320
+Concrete (EPS aggregates)	0.250	600	1240
+Concrete (EPS aggregates)	0.350	850	1180
+Concrete (expanded shale aggregates)	0.430	1100	1140
+Concrete (expanded shale aggregates)	0.670	1700	1090
+Concrete (light gravel aggregates)	0.240	1100	1140
+Concrete (light gravel aggregates)	0.390	1200	1060
+Concrete (light gravel aggregates)	0.400	1400	1110
+Concrete (light gravel aggregates)	0.890	1800	1040
+Concrete 1800kg/m³	1.150	1800	1000
+Concrete 2000kg/m³	1.350	2000	1000
+Concrete 2200kg/m³	1.650	2200	1000
+Concrete 2400kg/m³	2.000	2400	1000
+Concrete hollow brickwork - lightweight	0.440	800	1190
+Concrete hollow brickwork - medium	0.620	1400	1110
+Concrete hollow stone (unfilled)	0.600	800	1190
+Concrete hollow stone (unfilled)	1.200	1400	1110
+Concrete reinforced	2.300	2300	1000
+Concrete reinforced 1%	2.300	2300	1000
+Concrete reinforced 2%	2.500	2500	1000
+Copper	380.000	8900	380
+Cork Board	0.042	170	1670
+CrNi-Steel (X12CrNi18,8)	15.000	7800	500
+EPDM (Ethylenpropylendien, monomer)	0.250	1500	1000
+Expanded clay mortar	0.400	1000	1150
+Ext. rendering	0.870	1800	1100
+Fibreboard, MDF (250 kg/m³)	0.070	250	1700
+Fibreboard, MDF (400 kg/m³)	0.100	400	1700
+Fibreboard, MDF (600 kg/m³)	0.140	600	1700
+Fibreboard, MDF (800 kg/m³)	0.180	800	1700
+Foam glass	0.041	100	1000
+Foam glass 2	0.059	180	1000
+General Purpose Plaster 1	0.490	1300	1000
+General Purpose Plaster 2	0.780	1600	1000
+General Purpose Plaster 3	1.050	1800	1000
+Glass (Soda-Lime Silica Float Glass)	0.937	2500	880
+Glass (quartz glass)	1.380	2200	1050
+Glass wool	0.032	35	1030
+Glass wool	0.035	50	1030
+Gold	316.000	19260	129
+Gypsum (1200)	0.430	1200	1000
+Gypsum (1500)	0.560	1500	1000
+Gypsum (600)	0.180	600	1000
+Gypsum (900)	0.300	900	1000
+Gypsum fibre board	0.400	1125	1000
+Gypsum insulating plaster	0.180	600	1000
+Gypsum light plaster	0.180	600	1000
+Gypsum plaster board	0.210	900	960
+Gypsum plasterboard	0.250	900	1000
+Gypsum wall board	0.190	600	1000
+Gypsum wall board	0.370	1000	1000
+Gypsum wall board	0.550	1400	1000
+Gypsum, sand	0.800	1600	1000
+Hollow brick <17cm; Std. mortar	0.280	650	1000
+Hollow brick <17cm; thin-bed mortar/PUR	0.420	1000	1000
+Hollow brick >30cm; Light mortar	0.089	575	1000
+Hollow brick >30cm; thin-bed mortar/PUR	0.130	825	1000
+Hollow brick 17-38 cm; Light mortar	0.230	675	1000
+Hollow brick 17-38 cm; Light mortar	0.320	975	1000
+Hollow brick 17-38 cm; Std. mortar	0.240	675	1000
+Hollow brick 17-38 cm; Std. mortar	0.577	1450	1000
+Hollow brick 17-38 cm; thin-bed mortar/PUR	0.220	675	1000
+Hollow brick 17-38 cm; thin-bed mortar/PUR	0.350	1150	1000
+Hollow brick concrete filled <=30cm; thin-bed mortar/PUR	0.640	1640	1000
+Hollow brick concrete filled <=30cm; thin-bed mortar/PUR	0.829	1810	1000
+Hollow brick old (until 1980); Std. mortar	0.450	1000	1000
+Hollow brick stone-wool filled <=30cm; thin-bed mortar/PUR	0.090	750	1000
+Hollow brickwork	0.420	800	880
+Hollow brickwork	0.580	1400	850
+Ice at -10°C	2.300	920	2000
+Insulation (XPS)	0.039	35	1450
+Insulation cork (DK-P)	0.050	140	1670
+Iron, cast	50.000	7500	450
+Isover Akustic EP 3	0.040	150	1000
+Isover Clima 34	0.034	70	1000
+Isover TP 1	0.039	12	840
+Isover Uniroll Classic	0.038	14	1030
+Kingspan AlphaCore Pad	0.020	180
+Kingspan AlphaCore Pure	0.020	180
+Kingspan Kooltherm K106 Cavity Board	0.019	55	1400
+Kingspan Kooltherm K108 Cavity Board	0.019	38.6	1400
+Kingspan Kooltherm K112 Framing Board	0.019	38.6	1400
+Kingspan Kooltherm K5 External Wall Board	0.021	38.1	1400
+Kingspan K-Roc Framing Slab	0.036	30	1400
+Kingspan K-Roc Rainscreen Slab	0.034	45	1400
+Kingspan K-Roc Rainscreen Board	0.021	43.9	1400
+Kingspan Thermawall TW50	0.022	33	1400
+Kingspan Thermawall TW55	0.022	35	1400
+Lead	35.000	11300	130
+Light mortar	0.370	900	1170
+Light mortar	0.520	1200	1130
+Light mortar	0.800	1500	1100
+Lightweight concrete (expanded clay aggregates)	0.140	450	1320
+Lightweight concrete (expanded clay aggregates)	0.310	900	1170
+Lightweight concrete (expanded clay aggregates)	0.550	1400	1110
+Lightweight Plaster	0.120	350	1000
+Lightweight Plaster	0.590	1300	1000
+Lime, sand	0.800	1600	1000
+Lime-cement mortar (for masonry)	1.050	1800	1000
+Lime Hemp Plaster	0.180	300	1300
+Limestone, hard	1.700	2200	1000
+Linoleum	0.170	1200	1400
+Marble	3.500	2800	1000
+Masonry brick <25% holes; std.mortar	0.590	1400	1000
+Molybdenum	138.000	10200	251
+Mortar	0.930	950	800
+Natural stone porous, e.g. lava	0.550	1600	1000
+Natural stone, crystalline rock	3.500	2800	1000
+Natural stone, sedimentary rock	2.300	2600	1000
+One Coat Mortar	0.490	1300	1000
+One Coat Mortar	1.050	1800	1000
+OSB Board	0.130	600	1700
+Particleboard (300 kg/m³)	0.100	300	1700
+Particleboard (600 kg/m³)	0.140	600	1700
+Particleboard (900 kg/m³)	0.180	900	1700
+Perlite (loose)	0.060	100	900
+Perlite board	0.060	180	900
+Perlite insulation mortar	0.190	600	1240
+Perlite insulation plaster	0.230	700	1210
+Plaster	0.700	1400	1000
+Plastic	0.250	1700	1400
+Plywood (1000 kg/m³)	0.240	1000	1600
+Plywood (300 kg/m³)	0.090	300	1600
+Plywood (700 kg/m³)	0.170	700	1600
+Polyacetate	0.300	1410	1400
+Polyamide 6.6 with 25 % glass fibre	0.300	1450	1600
+Polycarbonates	0.200	1200	1200
+Polyester resin	0.190	1400	1200
+Polystyrene Board EPS 030	0.030	20	1450
+Polystyrene Board EPS 035	0.035	20	1450
+Polystyrene Board EPS 041	0.041	20	1450
+Polystyrene Board EPS W15	0.041	15	1450
+Polystyrene Board EPS W20	0.038	20	1450
+Polystyrene Board EPS W25	0.036	25	1450
+Polystyrene Board EPS W30	0.035	30	1450
+Polystyrene Board EPS-F	0.040	17	1450
+Polystyrene Beads - Blown in cavity Wall	0.035	15	1450
+Polyurethane (PU)	0.250	1200	1800
+Polyurethane (PU) foam	0.050	70	1500
+Polyvinylchloride (PVC)	0.170	1390	900
+Polyvinylchloride (PVC) flexible, with 40 % softener	0.140	1200	1000
+PU (Polyurethane)	0.250	1200	1800
+PVC (polyvinyl chloride)	0.170	1390	960
+Quartz glass	1.400	2200	750
+Reinforced concrete (1%)	2.300	2300	1000
+Reinforced concrete (2%)	2.500	2400	1000
+Rock wool - Roll	0.034	60	1030
+Rock wool - Batt	0.040	160	1030
+Roof tile (clay)	1.000	2000	800
+Roof tile (concrete)	1.500	2100	1000
+Rubber	0.170	1200	1400
+Sand/Gravel	2.000	2000	1000
+Sandstone (silica)	2.300	2600	1000
+Silica gel (dessicant)	0.130	720	1000
+Silicone foam	0.120	750	1000
+Silicone, filled	0.500	1450	1000
+Silicone, pure	0.350	1200	1000
+Snow freshly fallen <30mm	0.050	100	2000
+Snow, compacted (<200mm)	0.600	500	2000
+Soda lime glass (float glass)	1.000	2500	750
+Stainless steel	17.000	7900	460
+Steel	50.000	7800	450
+Therma fleece Sheeps Wool	0.035	31	1800
+Tiles, clay	1.000	2000	800
+Tiles, concrete	1.500	2100	1000
+Tiles, cork	0.065	400	1500
+Timber (500 kg/m³)	0.130	500	1600
+Timber (700 kg/m³)	0.180	700	1600
+Thermalite Expanded Concrete Block	0.220	730	1000
+Underlay, cellular	0.100	270	1400
+Underlay, felt	0.050	120	1300
+Underlay, wool	0.060	200	1300
+Water at 10°C	0.600	1000	4190
+Wood 500 kg/m³	0.130	500	1600
+Wood 700 kg/m³	0.180	700	1600
+Wood fibre insulation board	0.039	150	2500
+Wood Wool- Celenit board	0.065	278	1810
+Wood wool layer 10mm (WW)	0.100	600	1470
+Wood wool layer 7mm (WW)	0.125	600	1470
+XPS 029	0.029	35	1450
+XPS 031	0.031	35	1450
+XPS 033	0.033	35	1450
+XPS 035	0.035	35	1450
+XPS 037	0.037	35	1450
+XPS 039	0.039	35	1450
+Zinc	121.000	7100	387

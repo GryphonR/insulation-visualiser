@@ -19,6 +19,7 @@ npm run build    # typecheck + production build
   - `simulate.ts` 1-D transient conduction (finite volume, backward Euler) plus the optional lumped room
   - `scenario.ts` turns the user's choices into simulation parameters
   - `library.ts` the build-up library: built-in presets plus custom stackups saved to `localStorage`
+  - `materials-extra.ts` ~260 additional materials (conductivity, density, specific heat) generated from a pasted reference table by `scripts/gen-materials.py`; regenerate it from `scripts/materials.tsv` if that table changes, don't hand-edit the generated file
 - `src/ui/` – React components and SVG charts.
   - `Builder.tsx` the layer editor, reused both in the single-wall view and inside `StackupModal.tsx`
   - `ComparePage.tsx` the side-by-side comparison screen: pick up to four build-ups from the library, they all run under one shared day, and the wall sections and overlay charts update together off one clock

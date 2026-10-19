@@ -1,3 +1,5 @@
+import { EXTRA_MATERIALS, MATERIAL_CATEGORIES as EXTRA_CATEGORIES } from './materials-extra';
+
 export interface Material {
   id: string;
   name: string;
@@ -15,30 +17,48 @@ export interface Material {
   min: number;
   max: number;
   step: number;
+  /** Loose grouping for the material dropdown (an optgroup label, via MATERIAL_CATEGORIES). */
+  cat?: string;
 }
 
-export const MATERIALS: Material[] = [
-  { id: 'brick', name: 'Facing brick', k: 0.77, rho: 1800, cp: 840, col: '#b5563c', t: 102, min: 50, max: 440, step: 1 },
-  { id: 'stone', name: 'Limestone', k: 1.7, rho: 2200, cp: 900, col: '#cdbf9c', t: 150, min: 50, max: 500, step: 10 },
-  { id: 'earth', name: 'Rammed earth', k: 1.1, rho: 1900, cp: 1000, col: '#9c7a58', t: 300, min: 100, max: 600, step: 10 },
-  { id: 'conc', name: 'Dense concrete', k: 2.3, rho: 2300, cp: 1000, col: '#7d858b', t: 150, min: 50, max: 400, step: 10 },
-  { id: 'dblock', name: 'Dense concrete block', k: 1.13, rho: 2000, cp: 1000, col: '#9aa1a6', t: 100, min: 75, max: 215, step: 1 },
-  { id: 'aac', name: 'Aerated block', k: 0.15, rho: 500, cp: 1000, col: '#bfc7c0', t: 100, min: 75, max: 300, step: 5 },
-  { id: 'render', name: 'Cement render', k: 1.0, rho: 1800, cp: 1000, col: '#d8d2c6', t: 15, min: 8, max: 40, step: 1 },
-  { id: 'lime', name: 'Lime / gypsum plaster', k: 0.8, rho: 1600, cp: 1000, col: '#e6ddd0', t: 13, min: 8, max: 40, step: 1 },
-  { id: 'pb', name: 'Plasterboard', k: 0.21, rho: 700, cp: 1000, col: '#e9e9e4', t: 12.5, min: 9, max: 30, step: 0.5 },
-  { id: 'ply', name: 'OSB / plywood', k: 0.13, rho: 650, cp: 1700, col: '#c79a5b', t: 11, min: 6, max: 25, step: 1 },
-  { id: 'timber', name: 'Softwood timber', k: 0.13, rho: 520, cp: 1600, col: '#a67c4e', t: 20, min: 10, max: 150, step: 5 },
-  { id: 'cavity', name: 'Air cavity', R: 0.18, rho: 1.2, cp: 1000, col: '#dcecf3', t: 50, min: 25, max: 150, step: 5 },
-  { id: 'pir', name: 'PIR / PUR board', k: 0.022, rho: 30, cp: 1400, col: '#f0cf3f', t: 100, min: 20, max: 250, step: 5 },
-  { id: 'eps', name: 'EPS (expanded polystyrene)', k: 0.036, rho: 20, cp: 1450, col: '#e6e9ee', t: 100, min: 20, max: 250, step: 5 },
-  { id: 'mw', name: 'Mineral wool', k: 0.037, rho: 30, cp: 1030, col: '#caa86a', t: 100, min: 25, max: 300, step: 5 },
-  { id: 'wf', name: 'Wood fibre board', k: 0.042, rho: 160, cp: 2100, col: '#c9a77d', t: 80, min: 20, max: 200, step: 5 },
-  { id: 'cel', name: 'Cellulose', k: 0.039, rho: 50, cp: 1600, col: '#a7a79a', t: 150, min: 50, max: 300, step: 10 },
-  { id: 'hemp', name: 'Hempcrete', k: 0.09, rho: 330, cp: 1550, col: '#9db08a', t: 300, min: 100, max: 450, step: 10 },
+const CURATED_MATERIALS: Material[] = [
+  { id: 'brick', name: 'Facing brick', k: 0.77, rho: 1800, cp: 840, col: '#b5563c', t: 102, min: 50, max: 440, step: 1, cat: 'common' },
+  { id: 'stone', name: 'Limestone', k: 1.7, rho: 2200, cp: 900, col: '#cdbf9c', t: 150, min: 50, max: 500, step: 10, cat: 'common' },
+  { id: 'earth', name: 'Rammed earth', k: 1.1, rho: 1900, cp: 1000, col: '#9c7a58', t: 300, min: 100, max: 600, step: 10, cat: 'common' },
+  { id: 'conc', name: 'Dense concrete', k: 2.3, rho: 2300, cp: 1000, col: '#7d858b', t: 150, min: 50, max: 400, step: 10, cat: 'common' },
+  { id: 'dblock', name: 'Dense concrete block', k: 1.13, rho: 2000, cp: 1000, col: '#9aa1a6', t: 100, min: 75, max: 215, step: 1, cat: 'common' },
+  { id: 'aac', name: 'Aerated block', k: 0.15, rho: 500, cp: 1000, col: '#bfc7c0', t: 100, min: 75, max: 300, step: 5, cat: 'common' },
+  { id: 'render', name: 'Cement render', k: 1.0, rho: 1800, cp: 1000, col: '#d8d2c6', t: 15, min: 8, max: 40, step: 1, cat: 'common' },
+  { id: 'lime', name: 'Lime / gypsum plaster', k: 0.8, rho: 1600, cp: 1000, col: '#e6ddd0', t: 13, min: 8, max: 40, step: 1, cat: 'common' },
+  { id: 'pb', name: 'Plasterboard', k: 0.21, rho: 700, cp: 1000, col: '#e9e9e4', t: 12.5, min: 9, max: 30, step: 0.5, cat: 'common' },
+  { id: 'ply', name: 'OSB / plywood', k: 0.13, rho: 650, cp: 1700, col: '#c79a5b', t: 11, min: 6, max: 25, step: 1, cat: 'common' },
+  { id: 'timber', name: 'Softwood timber', k: 0.13, rho: 520, cp: 1600, col: '#a67c4e', t: 20, min: 10, max: 150, step: 5, cat: 'common' },
+  { id: 'cavity', name: 'Air cavity', R: 0.18, rho: 1.2, cp: 1000, col: '#dcecf3', t: 50, min: 25, max: 150, step: 5, cat: 'common' },
+  { id: 'pir', name: 'PIR / PUR board', k: 0.022, rho: 30, cp: 1400, col: '#f0cf3f', t: 100, min: 20, max: 250, step: 5, cat: 'common' },
+  { id: 'eps', name: 'EPS (expanded polystyrene)', k: 0.036, rho: 20, cp: 1450, col: '#e6e9ee', t: 100, min: 20, max: 250, step: 5, cat: 'common' },
+  { id: 'mw', name: 'Mineral wool', k: 0.037, rho: 30, cp: 1030, col: '#caa86a', t: 100, min: 25, max: 300, step: 5, cat: 'common' },
+  { id: 'wf', name: 'Wood fibre board', k: 0.042, rho: 160, cp: 2100, col: '#c9a77d', t: 80, min: 20, max: 200, step: 5, cat: 'common' },
+  { id: 'cel', name: 'Cellulose', k: 0.039, rho: 50, cp: 1600, col: '#a7a79a', t: 150, min: 50, max: 300, step: 10, cat: 'common' },
+  { id: 'hemp', name: 'Hempcrete', k: 0.09, rho: 330, cp: 1550, col: '#9db08a', t: 300, min: 100, max: 450, step: 10, cat: 'common' },
 ];
 
+export const MATERIALS: Material[] = [...CURATED_MATERIALS, ...EXTRA_MATERIALS];
+
 export const MAT: Record<string, Material> = Object.fromEntries(MATERIALS.map((m) => [m.id, m]));
+
+/** Category id -> dropdown group label, in display order (the common/curated set first). */
+export const MATERIAL_CATEGORIES: Record<string, string> = { common: 'Common build-up materials', ...EXTRA_CATEGORIES };
+
+export interface MaterialGroup {
+  cat: string;
+  label: string;
+  items: Material[];
+}
+
+/** MATERIALS grouped by `cat`, in MATERIAL_CATEGORIES order, for <optgroup>-based dropdowns. */
+export const MATERIAL_GROUPS: MaterialGroup[] = Object.keys(MATERIAL_CATEGORIES)
+  .map((cat) => ({ cat, label: MATERIAL_CATEGORIES[cat], items: MATERIALS.filter((m) => (m.cat ?? 'common') === cat) }))
+  .filter((g) => g.items.length > 0);
 
 export interface Preset {
   id: string;
