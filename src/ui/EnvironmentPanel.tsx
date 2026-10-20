@@ -35,7 +35,7 @@ export function EnvironmentPanel({ sc, params, solar, set, wide }: Props) {
 
   return (
     <section className={wide ? 'card panel env-wide' : 'card panel'}>
-      <h2 className={wide ? 'env-span' : undefined}><span className="step">2</span>Set the day</h2>
+      <h2 className={wide ? 'env-span' : undefined}>Set the day</h2>
 
       <Field label="Location">
         <select className="select" value={sc.loc} onChange={(e) => set({ loc: e.target.value })}>

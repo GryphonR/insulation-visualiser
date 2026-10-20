@@ -30,6 +30,9 @@ export function LineChart({ spec, frame }: { spec: ChartSpec; frame: number }) {
             <text x={CHART.PL - 6} y={t.y + 4} className="svt-end">{t.label}</text>
           </g>
         ))}
+        {spec.ticksYR?.map((t) => (
+          <text key={t.label} x={CHART.PR + 6} y={t.y + 4} className="svt">{t.label}</text>
+        ))}
         {spec.ticksX.map((t) => (
           <g key={t.label}>
             <line x1={t.x} x2={t.x} y1={CHART.PT} y2={CHART.PB} className="grid-v" />
@@ -51,7 +54,7 @@ export function LineChart({ spec, frame }: { spec: ChartSpec; frame: number }) {
         ))}
         <line x1={cx} x2={cx} y1={CHART.PT} y2={CHART.PB} stroke="#14212b" strokeWidth={1.2} />
         {spec.series.map((s, i) => (
-          <circle key={i} cx={cx} cy={spec.yOf(s.arr[frame])} r={4.5} fill={s.col} stroke="#fff" strokeWidth={1.5} />
+          <circle key={i} cx={cx} cy={s.yOf(s.arr[frame])} r={4.5} fill={s.col} stroke="#fff" strokeWidth={1.5} />
         ))}
         <text x={298} y={218} className="svt-mid">solar time, hours</text>
       </svg>

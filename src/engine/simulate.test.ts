@@ -42,6 +42,40 @@ describe('steady state', () => {
   });
 });
 
+describe('ventilated gap', () => {
+  const roofLayers = (gap: string) =>
+    [['conc', 20], [gap, 40], ['mw', 150], ['pb', 12.5]].map(([mat, t], i) => ({ id: i, mat: mat as string, t: t as number }));
+  const roof = (gap: string, over: Partial<SimParams> = {}) => wall('roofl', { layers: roofLayers(gap), ...over });
+
+  it('reproduces its own U-value in steady state', () => {
+    const r = simulate(roof('vgap', { alpha: 0, swing: 0 }));
+    for (let f = 0; f < 144; f += 12) expect(r.fr.q[f]).toBeCloseTo(r.U * (20 - 21), 2);
+  });
+
+  it('gives a higher U-value than a sealed gap', () => {
+    const sealed = simulate(roof('cavity', { alpha: 0, swing: 0 }));
+    const vent = simulate(roof('vgap', { alpha: 0, swing: 0 }));
+    expect(vent.U).toBeGreaterThan(sealed.U);
+  });
+
+  it('passes less solar heat to the insulation than a sealed gap', () => {
+    const sealed = simulate(roof('cavity'));
+    const vent = simulate(roof('vgap'));
+    expect(vent.qmax).toBeLessThan(sealed.qmax);
+  });
+});
+
+describe('low-emissivity gaps', () => {
+  const U = (gap: string) =>
+    simulate(wall('roofl', { layers: [['conc', 20], [gap, 40], ['mw', 150], ['pb', 12.5]].map(([mat, t], i) => ({ id: i, mat: mat as string, t: t as number })), alpha: 0, swing: 0 })).U;
+
+  it('lowers U-value with a foil face, and more with two', () => {
+    expect(U('cavity_le1')).toBeLessThan(U('cavity'));
+    expect(U('cavity_le2')).toBeLessThan(U('cavity_le1'));
+    expect(U('vgap_le1')).toBeLessThan(U('vgap'));
+  });
+});
+
 describe('energy balance', () => {
   it('daily mean flux equals U x mean(sol-air minus room) once the cycle has settled', () => {
     const r = simulate(wall('retro'));

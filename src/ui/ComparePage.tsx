@@ -141,7 +141,7 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
       <section className="card panel">
         <div className="section-head">
           <div>
-            <h2><span className="step">1</span>Heat moving through each wall</h2>
+            <h2>Heat moving through each wall</h2>
             <p className="muted small">Pick a build-up for each column below. They all run under the one day set above. Press play or drag the clock.</p>
           </div>
           <Player frame={f} playing={playing} setPlaying={setPlaying} scrub={scrub} />
@@ -181,7 +181,7 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
                     <div className="mini-stats">
                       <span><b className="mono">{r.res.sim.U.toFixed(2)}</b> W/m²K U-value</span>
                       <span><b className="mono">{r.res.sim.decr.toFixed(2)}</b> decrement</span>
-                      <span><b className="mono">{r.res.sim.lag.toFixed(1)}</b> h lag</span>
+                      <span><b className="mono">{r.res.sim.lag.toFixed(1)}</b> h delay</span>
                       <span><b className="mono">{sgn(r.res.sim.gain - r.res.sim.loss, 0)}</b> Wh/m² net</span>
                     </div>
                     <WallSection res={r.res} frame={f} />

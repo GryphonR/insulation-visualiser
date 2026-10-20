@@ -149,6 +149,9 @@ for r in rows:
         mn, mx, step = t, t, 1
     else:
         mn, default_t, mx, step = THICK[cat]
+        # Roof and floor tiles are thin units, not 50 mm+ masonry.
+        if re.search(r'roof tile|^tiles, (clay|concrete)', name, re.I):
+            mn, default_t, mx, step = 10, 15, 100, 1
         t = default_t
 
     out.append({

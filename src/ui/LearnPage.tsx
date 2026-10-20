@@ -7,13 +7,14 @@ interface Section {
 }
 
 const SECTIONS: Section[] = [
+  { id: 'planning', title: 'Planning your insulation', group: 'Overview' },
   { id: 'what', title: 'What this tool does', group: 'Overview' },
   { id: 'how-to-use', title: 'Using it in four steps', group: 'Overview' },
   { id: 'heat', title: 'Heat and temperature', group: 'The ideas' },
   { id: 'conduction', title: 'Conduction and R-values', group: 'The ideas' },
   { id: 'u-value', title: 'The U-value', group: 'The ideas' },
   { id: 'mass', title: 'Thermal mass', group: 'The ideas' },
-  { id: 'dynamic', title: 'Decrement and time lag', group: 'The ideas' },
+  { id: 'dynamic', title: 'Decrement factor and delay', group: 'The ideas' },
   { id: 'sun', title: 'Sun, and sol-air temperature', group: 'The ideas' },
   { id: 'inner-face', title: 'The inner face and comfort', group: 'The ideas' },
   { id: 'rooms', title: 'Heating modes', group: 'The ideas' },
@@ -70,7 +71,7 @@ function LagFigure() {
         <polyline points={line(70, 15)} fill="none" stroke="#c75b00" strokeWidth={2.5} />
         <polyline points={line(21, 21)} fill="none" stroke="#0b63b5" strokeWidth={3} />
         <line x1={x(15)} x2={x(21)} y1={mid - 70} y2={mid - 70} stroke="#51606c" strokeWidth={1.2} strokeDasharray="3 3" />
-        <text x={(x(15) + x(21)) / 2} y={mid - 76} className="svt-mid">time lag</text>
+        <text x={(x(15) + x(21)) / 2} y={mid - 76} className="svt-mid">decrement delay</text>
         <line x1={x(21) + 14} x2={x(21) + 14} y1={mid - 70} y2={mid - 21} stroke="#51606c" strokeWidth={1.2} strokeDasharray="3 3" />
         <text x={x(21) + 20} y={mid - 42} className="svt">damped</text>
         <text x={x(15) - 8} y={mid - 74} className="svt-end" fill="#c75b00" style={{ fill: '#c75b00' }}>outside</text>
@@ -117,6 +118,24 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
 
       <article className="learn-body card">
         {/* ------------------------------------------------------------ OVERVIEW */}
+        <section id="planning" className="learn-section">
+          <h2>Planning your insulation</h2>
+          <p>
+            The usual starting point is the <b>U-value</b>: the heat that leaks through each square metre of wall for every degree of difference between inside and outside. A lower U-value means less heat lost in winter, so lower heating bills. It is the right first number to look at, and it is what building regulations ask for.
+          </p>
+          <p>
+            But the U-value describes a wall on a day when nothing changes. Real homes live through daily swings: cool nights, sunny afternoons, walls that warm up and cool down. How a wall handles those swings affects how the home <em>feels</em> as well as what it costs.
+          </p>
+          <ul>
+            <li><b>Comfort:</b> a wall that passes big swings through to the inside makes rooms overheat on sunny afternoons and cool quickly in the evening. A wall that damps and delays the swings keeps the inner surface and the room air steadier.</li>
+            <li><b>Running cost:</b> the larger the swings in heat flow, the harder the heating or cooling has to work to hold the room steady, and the more capacity it needs. Two walls with the same net heat loss over a day can ask very different things of the system, and the one with bigger swings may use more energy.</li>
+            <li><b>Slow heating systems:</b> swings matter most with systems that respond slowly, such as wet underfloor heating, which takes hours to warm up or cool down and so can't correct a sudden gain or loss. Heat pumps running low-temperature emitters also work best at a steady, modest output. Pushing them to chase swings means higher flow temperatures and lower efficiency. A fast-responding system, such as a conventional boiler with radiators, can cope with swings more easily.</li>
+          </ul>
+          <p>
+            So when you plan, look at the U-value for how much heat the wall keeps in, then at the <b>decrement factor</b>, <b>decrement delay</b> and <b>inner face temperatures</b> for how steady it keeps the room. Light, well-insulated walls can have an excellent U-value and still swing noticeably with the sun, while adding thermal mass on the room side can calm them. The simulator lets you test that for yourself. Each idea is explained in <button type="button" className="inline-link" onClick={() => jump('u-value')}>The U-value</button>, <button type="button" className="inline-link" onClick={() => jump('dynamic')}>Decrement factor and delay</button> and <button type="button" className="inline-link" onClick={() => jump('outputs')}>Reading the results</button>.
+          </p>
+        </section>
+
         <section id="what" className="learn-section">
           <h2>What this tool does</h2>
           <p>
@@ -128,7 +147,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
           <p>It calculates:</p>
           <ul>
             <li><b>Steady-state performance:</b> the U-value and total thermal resistance of your build-up.</li>
-            <li><b>Dynamic performance:</b> how much of the outside temperature swing reaches the inside (the decrement factor) and how long it takes (the time lag).</li>
+            <li><b>Dynamic performance:</b> how much of the outside temperature swing reaches the inside (the decrement factor) and how long it takes (the decrement delay).</li>
             <li><b>Temperatures:</b> the temperature in every slice of every layer, plus the surface temperatures on the outer and inner faces, over the day.</li>
             <li><b>Heat flow:</b> how much heat enters or leaves the room through the wall, compared with what a simple U-value calculation would predict.</li>
             <li><b>Sun:</b> how much solar radiation lands on a wall facing north, east, south or west, or on a flat roof, for a UK location and month.</li>
@@ -222,7 +241,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
         </section>
 
         <section id="dynamic" className="learn-section">
-          <h2>Decrement and time lag</h2>
+          <h2>Decrement factor and delay</h2>
           <p>
             When the outside temperature rises and falls over a day, a wall with thermal mass does two things to that rhythm. It makes the swing <b>smaller</b> and it makes it <b>arrive later</b>. Engineers give these two effects names:
           </p>
@@ -231,7 +250,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
               <b>Decrement factor</b> (between 0 and 1): the fraction of the outside heat swing that still shows up at the inner face. 0.3 means only 30% gets through. Lower is better in summer.
             </li>
             <li>
-              <b>Time lag</b> (in hours): the delay between the outside peak and the peak of heat flow at the inner face. A lag of 8 hours means the heat from a 3 pm peak arrives at 11 pm.
+              <b>Decrement delay</b> (in hours): the delay between the outside peak and the peak of heat flow at the inner face. You will also see this called "time lag". A decrement delay of 8 hours means the heat from a 3 pm peak arrives at 11 pm.
             </li>
           </ul>
           <LagFigure />
@@ -306,7 +325,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
             <tbody>
               <tr><td>U-value</td><td>Steady-state heat loss per square metre per degree. Lower is better insulated.</td></tr>
               <tr><td>Decrement factor</td><td>Share of the outside heat swing reaching the inner face. Lower damps more.</td></tr>
-              <tr><td>Time lag</td><td>Hours between the outside peak and the inner heat-flow peak.</td></tr>
+              <tr><td>Decrement delay</td><td>Hours between the outside peak and the inner heat-flow peak.</td></tr>
               <tr><td>Inner thermal mass</td><td>Heat storage on the room side of the main insulation, kJ/m²K. Whole-wall mass is shown beneath.</td></tr>
               <tr><td>Inner face</td><td>The lowest and highest inner surface temperature over the day.</td></tr>
               <tr><td>Net heat flow, 24 h</td><td>Heat gained minus heat lost through the wall over the day. Positive means a net gain to the room.</td></tr>
@@ -324,6 +343,13 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
             <li><b>Sunshine on this face:</b> the solar radiation reaching the wall.</li>
             <li><b>Heat map:</b> temperature through the depth of the wall (vertical) against time (horizontal), so you can see the heat wave travel inwards.</li>
           </ul>
+          <h3>Why the swings matter, not just the net</h3>
+          <p>
+            Two walls can have the same net heat flow over 24 hours and still behave very differently. If the heat flow into the room swings widely, the heating or cooling system has to ramp up and down quickly to hold the room steady, and it needs enough capacity to cover the peaks. A wall with small swings asks for a gentle, steady output instead.
+          </p>
+          <p>
+            Swings can also raise the energy used, not only the peak power. If the wall gives heat in the afternoon and loses it overnight, the net can be close to zero while the room still needs cooling at one time and heating at another. Heating and cooling can't cancel each other out, so you pay for both. Systems also tend to run less efficiently when working hard or cycling on and off. On the other hand, if the swings are small enough for the room to ride through without the system switching on, they cost nothing. This is why a low decrement factor and a suitable decrement delay are worth looking at alongside the U-value.
+          </p>
         </section>
 
         {/* ------------------------------------------------------------ UNDER THE HOOD */}
@@ -338,7 +364,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
             <li>Cut the wall into thin slices, each with a resistance to its neighbours and a heat capacity.</li>
             <li>Starting from a sensible guess, step forward in two-minute intervals, working out how heat shifts between slices.</li>
             <li>Repeat the same day several times until the pattern settles down, then record the last one.</li>
-            <li>Derive the summary numbers (U-value, decrement, lag, and so on) from the recorded day.</li>
+            <li>Derive the summary numbers (U-value, decrement factor, decrement delay, and so on) from the recorded day.</li>
           </ol>
         </section>
 
@@ -473,7 +499,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
             </li>
           </ul>
           <p>
-            In each time step, the wall equations and the room equation are solved together. This is possible because the wall's response to the room temperature is a fixed relationship that can be worked out once. In this mode the decrement factor and time lag shown are measured separately, in a second run with the room held steady, since they describe the wall itself, not the room.
+            In each time step, the wall equations and the room equation are solved together. This is possible because the wall's response to the room temperature is a fixed relationship that can be worked out once. In this mode the decrement factor and decrement delay shown are measured separately, in a second run with the room held steady, since they describe the wall itself, not the room.
           </p>
         </section>
 
@@ -488,12 +514,12 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
           <p>
             The U-value is calculated directly, as 1 ÷ the sum of all layer resistances and the two surface films, as explained above. It is not the result of the simulation.
           </p>
-          <h3>Decrement factor and time lag</h3>
+          <h3>Decrement factor and delay</h3>
           <p>
             A day-long cycle can be broken into a simple, once-a-day cosine wave (its <em>first harmonic</em>) plus faster ripples. The tool fits that daily wave to both the sol-air temperature and the heat flow at the inner face, using a discrete Fourier sum, and compares them:
           </p>
           <Eq>decrement factor = (amplitude of inner heat flow) ÷ (U × amplitude of sol-air temperature)</Eq>
-          <Eq>time lag = how many hours the inner heat-flow wave peaks after the sol-air wave</Eq>
+          <Eq>decrement delay = how many hours the inner heat-flow wave peaks after the sol-air wave</Eq>
           <p>
             The denominator is the swing in heat flow you would get with no thermal mass at all, so the ratio says how much of that swing survives.
           </p>
@@ -568,8 +594,8 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
             <dd>A part of the structure that conducts heat more easily than its surroundings, letting heat bypass insulation.</dd>
             <dt>Thermal mass</dt>
             <dd>The ability of a material to store heat. High-density materials such as brick and concrete have a lot.</dd>
-            <dt>Time lag</dt>
-            <dd>The delay, in hours, between a peak outside and the resulting peak of heat flow at the inner face.</dd>
+            <dt>Decrement delay</dt>
+            <dd>The delay, in hours, between a peak outside and the resulting peak of heat flow at the inner face. Also called time lag or time shift.</dd>
             <dt>U-value</dt>
             <dd>The steady rate of heat flow through one square metre of a wall per kelvin of temperature difference, in W/m²K. The reciprocal of total resistance.</dd>
           </dl>

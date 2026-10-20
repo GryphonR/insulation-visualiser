@@ -20,7 +20,7 @@ export function buildTiles(res: ScenarioResult): Tile[] {
       note: 'Share of the outside heat swing that reaches the inner face. Lower is better.' + (free ? ' Wall property, found with the room held steady.' : ''),
     },
     {
-      label: 'Time lag', value: sim.lag.toFixed(1), unit: 'hours',
+      label: 'Decrement delay', value: sim.lag.toFixed(1), unit: 'hours',
       note: 'Delay between peak sol-air temperature and peak heat flow at the inner face.' + (free ? ' Wall property, found with the room held steady.' : ''),
     },
     { label: 'Inner thermal mass', value: String(Math.round(sim.kin)), unit: 'kJ/m²K', note: `Heat capacity inside the main insulation (top 100 mm). Whole wall: ${Math.round(sim.ktot)} kJ/m²K.` },

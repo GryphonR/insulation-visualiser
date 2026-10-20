@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { layersFromTuples } from '../engine/library';
+import { DEFAULT_SCENARIO, runScenario } from '../engine/scenario';
 import type { Stackup } from '../engine/library';
 import type { LayerInput } from '../engine/simulate';
 import { Builder } from './Builder';
@@ -19,14 +20,22 @@ interface Props {
   title: string;
   onCancel: () => void;
   onSave: (draft: StackupDraft) => void;
+  /** When set, the modal edits something in use (the single wall): the name is optional and "Apply" uses the layers without saving. */
+  onApply?: (draft: StackupDraft) => void;
 }
 
-export function StackupModal({ initial, library, title, onCancel, onSave }: Props) {
+export function StackupModal({ initial, library, title, onCancel, onSave, onApply }: Props) {
   const idRef = useRef(1000000);
   const nextId = () => idRef.current++;
   const [name, setName] = useState(initial?.name ?? '');
   const [layers, setLayers] = useState<LayerInput[]>(() => layersFromTuples(initial?.layers ?? [['pir', 100]]));
   const [isRoof, setIsRoof] = useState(initial?.orient === 'roof');
+
+  // Decrement factor and delay barely depend on weather, so a typical summer day with a steady room is enough here.
+  const summary = useMemo(() => {
+    const { sim } = runScenario({ ...DEFAULT_SCENARIO, orient: isRoof ? 'roof' : DEFAULT_SCENARIO.orient, layers });
+    return { total: layers.reduce((s, l) => s + l.t, 0), U: sim.U, decr: sim.decr, lag: sim.lag };
+  }, [layers, isRoof]);
 
   const onPreset = (s: Stackup) => {
     setLayers(layersFromTuples(s.layers));
@@ -34,6 +43,8 @@ export function StackupModal({ initial, library, title, onCancel, onSave }: Prop
   };
 
   /** `asNew` drops the id so an edit is saved as a separate build-up instead of replacing the original. */
+  const apply = () => onApply?.({ name: name.trim(), layers: layers.map((l) => [l.mat, l.t]), orient: isRoof ? 'roof' : undefined });
+
   const save = (asNew: boolean) => {
     const trimmed = name.trim();
     if (!trimmed) return;
@@ -56,7 +67,7 @@ export function StackupModal({ initial, library, title, onCancel, onSave }: Prop
         </div>
 
         <div className="modal-body">
-          <Field label="Name this build-up">
+          <Field label={onApply ? 'Name (only needed to save to your library)' : 'Name this build-up'}>
             <input
               className="select"
               value={name}
@@ -68,18 +79,38 @@ export function StackupModal({ initial, library, title, onCancel, onSave }: Prop
 
           <label className="roof-check">
             <input type="checkbox" checked={isRoof} onChange={(e) => setIsRoof(e.target.checked)} />
-            This is a roof build-up (always compared as a flat roof, whatever orientation is set)
+            {onApply ? 'This is a roof build-up (modelled as a flat roof)' : 'This is a roof build-up (always compared as a flat roof, whatever orientation is set)'}
           </label>
 
-          <Builder layers={layers} onChange={setLayers} library={library} onPreset={onPreset} nextId={nextId} bare />
+          <Builder layers={layers} onChange={setLayers} library={library} onPreset={onPreset} nextId={nextId} />
         </div>
+
+        <dl className="wall-summary" aria-label="Wall summary">
+          {[
+            ['Thickness', `${summary.total} mm`],
+            ['U-value', `${summary.U.toFixed(2)} W/m²K`],
+            ['Decrement factor', summary.decr.toFixed(2)],
+            ['Decrement delay', `${summary.lag.toFixed(1)} h`],
+          ].map(([k, v]) => (
+            <div key={k}><dt>{k}</dt><dd className="mono">{v}</dd></div>
+          ))}
+        </dl>
 
         <div className="modal-actions">
           <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
-          {initial?.id && (
-            <button type="button" className="btn-secondary" disabled={!name.trim()} onClick={() => save(true)}>Save as new build-up</button>
+          {onApply ? (
+            <>
+              <button type="button" className="btn-secondary" disabled={!name.trim()} onClick={() => save(true)}>Save to library</button>
+              <button type="button" className="btn-primary" onClick={apply}>Apply</button>
+            </>
+          ) : (
+            <>
+              {initial?.id && (
+                <button type="button" className="btn-secondary" disabled={!name.trim()} onClick={() => save(true)}>Save as new build-up</button>
+              )}
+              <button type="button" className="btn-primary" disabled={!name.trim()} onClick={() => save(false)}>Save build-up</button>
+            </>
           )}
-          <button type="button" className="btn-primary" disabled={!name.trim()} onClick={() => save(false)}>Save build-up</button>
         </div>
       </div>
     </div>

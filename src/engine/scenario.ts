@@ -110,7 +110,7 @@ export interface ScenarioResult extends ScenarioContext {
 }
 
 /**
- * Run a scenario. In free-floating mode the decrement factor and time lag are
+ * Run a scenario. In free-floating mode the decrement factor and decrement delay are
  * wall properties, so they are taken from a second run with the room held steady.
  */
 export function runScenario(sc: Scenario): ScenarioResult {

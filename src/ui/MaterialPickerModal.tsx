@@ -1,9 +1,15 @@
 import { useState } from 'react';
-import { MAT, MATERIAL_GROUPS } from '../engine/data';
+import { MAT, MATERIALS, MATERIAL_GROUPS } from '../engine/data';
 import type { Material } from '../engine/data';
+import type { LayerInput } from '../engine/simulate';
+import { ROLE_LABELS, layerR, roleOf, thicknessForR } from '../engine/swap';
+import type { Role } from '../engine/swap';
 import { useFavorites } from './useFavorites';
 
 const FAV_CAT = '__fav__';
+const RECENT_CAT = '__recent__';
+
+type Sort = 'default' | 'thin' | 'lambda';
 
 interface Props {
   /** Currently-chosen material id, if any (highlighted, and used to pick the starting category). */
@@ -11,6 +17,8 @@ interface Props {
   title: string;
   onSelect: (id: string) => void;
   onClose: () => void;
+  /** The layer being replaced: enables the "same R" thickness preview, the thinnest-first sort and a like-for-like filter. */
+  swapFrom?: LayerInput;
 }
 
 function StarIcon({ filled }: { filled: boolean }) {
@@ -33,20 +41,41 @@ function matLine(m: Material): string {
   return `${base} · ${Math.round(m.rho)} kg/m³`;
 }
 
-export function MaterialPickerModal({ value, title, onSelect, onClose }: Props) {
-  const { fav, toggleMaterial } = useFavorites();
+export function MaterialPickerModal({ value, title, onSelect, onClose, swapFrom }: Props) {
+  const { fav, toggleMaterial, pushRecent } = useFavorites();
   const hasFavMaterials = fav.materials.length > 0;
-  const [cat, setCat] = useState(() => (hasFavMaterials ? FAV_CAT : MAT[value]?.cat ?? 'common'));
+  const hasRecent = fav.recent.length > 0;
+  const [cat, setCat] = useState(() => (swapFrom ? MAT[value]?.cat ?? 'common' : hasFavMaterials ? FAV_CAT : MAT[value]?.cat ?? 'common'));
+  const [query, setQuery] = useState('');
+  const [role, setRole] = useState<Role | 'all'>(() => (swapFrom ? roleOf(MAT[swapFrom.mat]) : 'all'));
+  const [sort, setSort] = useState<Sort>('default');
 
-  const items: Material[] =
-    cat === FAV_CAT
-      ? fav.materials.map((id) => MAT[id]).filter((m): m is Material => !!m)
-      : MATERIAL_GROUPS.find((g) => g.cat === cat)?.items ?? [];
+  const oldR = swapFrom ? layerR(MAT[swapFrom.mat], swapFrom.t) : 0;
+  const eq = (m: Material) => (swapFrom ? thicknessForR(m, oldR, swapFrom.t) : null);
+
+  const byId = (ids: string[]) => ids.map((id) => MAT[id]).filter((m): m is Material => !!m);
+  const q = query.trim().toLowerCase();
+  let items: Material[] = q
+    ? MATERIALS.filter((m) => m.name.toLowerCase().includes(q))
+    : cat === FAV_CAT
+      ? byId(fav.materials)
+      : cat === RECENT_CAT
+        ? byId(fav.recent)
+        : MATERIAL_GROUPS.find((g) => g.cat === cat)?.items ?? [];
+  if (role !== 'all') items = items.filter((m) => roleOf(m) === role);
+  if (sort === 'lambda') items = [...items].sort((a, b) => (a.k ?? Infinity) - (b.k ?? Infinity));
+  if (sort === 'thin') items = [...items].sort((a, b) => (a.R ? Infinity : eq(a)!.t) - (b.R ? Infinity : eq(b)!.t));
 
   const pick = (id: string) => {
+    pushRecent(id);
     onSelect(id);
     onClose();
   };
+  const catBtn = (id: string, label: string, count: number) => (
+    <button key={id} type="button" className={!q && cat === id ? 'picker-cat on' : 'picker-cat'} onClick={() => { setCat(id); setQuery(''); }}>
+      <span>{label}</span><span className="picker-count">{count}</span>
+    </button>
+  );
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -60,38 +89,61 @@ export function MaterialPickerModal({ value, title, onSelect, onClose }: Props) 
 
         <div className="picker-body">
           <nav className="picker-cats" aria-label="Material categories">
-            {hasFavMaterials && (
-              <button type="button" className={cat === FAV_CAT ? 'picker-cat on' : 'picker-cat'} onClick={() => setCat(FAV_CAT)}>
-                <span>★ Favourites</span><span className="picker-count">{fav.materials.length}</span>
-              </button>
-            )}
-            {MATERIAL_GROUPS.map((g) => (
-              <button key={g.cat} type="button" className={cat === g.cat ? 'picker-cat on' : 'picker-cat'} onClick={() => setCat(g.cat)}>
-                <span>{g.label}</span><span className="picker-count">{g.items.length}</span>
-              </button>
-            ))}
+            {hasFavMaterials && catBtn(FAV_CAT, '★ Favourites', fav.materials.length)}
+            {hasRecent && catBtn(RECENT_CAT, 'Recently used', fav.recent.length)}
+            {MATERIAL_GROUPS.map((g) => catBtn(g.cat, g.label, g.items.length))}
           </nav>
 
-          <div className="picker-items">
-            {items.length === 0 && (
-              <p className="small muted picker-empty">No materials starred yet — star one from any category to find it here quickly.</p>
-            )}
-            {items.map((m) => (
-              <div key={m.id} className={m.id === value ? 'picker-item on' : 'picker-item'}>
-                <button
-                  type="button"
-                  className="icon-btn small"
-                  aria-label={fav.materials.includes(m.id) ? `Unfavourite ${m.name}` : `Favourite ${m.name}`}
-                  onClick={() => toggleMaterial(m.id)}
-                >
-                  <StarIcon filled={fav.materials.includes(m.id)} />
-                </button>
-                <button type="button" className="picker-item-btn" onClick={() => pick(m.id)}>
-                  <span className="picker-item-name">{m.name}</span>
-                  <span className="picker-item-meta mono">{matLine(m)}</span>
-                </button>
+          <div className="picker-main">
+            <div className="picker-tools">
+              <div className="picker-tools-row">
+                <input type="search" className="picker-search" placeholder="Search all materials…" aria-label="Search materials" value={query} onChange={(e) => setQuery(e.target.value)} />
+                <select className="select" aria-label="Sort" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+                  <option value="default">Default order</option>
+                  <option value="lambda">Lowest λ first</option>
+                  {swapFrom && <option value="thin">Thinnest for same R</option>}
+                </select>
               </div>
-            ))}
+              <div className="picker-chips" role="group" aria-label="Filter by type">
+                {(['all', 'insulation', 'dense', 'other', 'air'] as const).map((r) => (
+                  <button key={r} type="button" className={role === r ? 'picker-chip on' : 'picker-chip'} aria-pressed={role === r} onClick={() => setRole(r)}>
+                    {r === 'all' ? 'All types' : ROLE_LABELS[r]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="picker-items">
+              {items.length === 0 && (
+                <p className="small muted picker-empty">
+                  {cat === FAV_CAT && !q && role === 'all'
+                    ? 'No materials starred yet — star one from any category to find it here quickly.'
+                    : 'No materials match. Try a different search or filter.'}
+                </p>
+              )}
+              {items.map((m) => {
+                const f = eq(m);
+                return (
+                  <div key={m.id} className={m.id === value ? 'picker-item on' : 'picker-item'}>
+                    <button
+                      type="button"
+                      className="icon-btn small"
+                      aria-label={fav.materials.includes(m.id) ? `Unfavourite ${m.name}` : `Favourite ${m.name}`}
+                      onClick={() => toggleMaterial(m.id)}
+                    >
+                      <StarIcon filled={fav.materials.includes(m.id)} />
+                    </button>
+                    <button type="button" className="picker-item-btn" onClick={() => pick(m.id)}>
+                      <span className="picker-item-name">{m.name}</span>
+                      <span className="picker-item-meta mono">
+                        <span>{matLine(m)}</span>
+                        {f && !m.R && <span className="picker-item-eq">same R → {f.t} mm{f.missed ? ' (limit)' : ''}</span>}
+                      </span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>

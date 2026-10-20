@@ -49,6 +49,8 @@ export interface Cell {
   dx: number;
   C: number;
   li: number;
+  /** Conductance to outdoor air (ventilated gap cells only), W/m²K. */
+  gv: number;
   x0: number;
   x1: number;
 }
@@ -66,6 +68,8 @@ export interface LayerGeom {
 /** Number of stored frames (every 10 minutes, plus the closing 24:00 frame). */
 export const N_FRAMES = 145;
 export const FRAMES_PER_HOUR = 6;
+/** Heat exchange between a ventilated gap and outdoor air, W/m²K (~0.5 m/s through a 40 mm gap on a 5 m rafter). */
+const GV_VENT = 5;
 
 export function harmonic(arr: ArrayLike<number>): { amp: number; ph: number } {
   const n = arr.length;
@@ -93,6 +97,8 @@ export interface Frames {
   tsIn: Float64Array;
   /** Heat flow into the room at the inner face, W/m² (positive = into room). */
   q: Float64Array;
+  /** Heat flow entering the wall at the outer face, W/m² (positive = towards the room). */
+  qOut: Float64Array;
   tin: Float64Array;
   tsa: Float64Array;
   tair: Float64Array;
@@ -117,15 +123,24 @@ export function simulate(P: SimParams) {
     const n = clamp(Math.ceil(L.t / (k > 0.4 ? 15 : 40)), 2, 14);
     const x0 = xmm;
     for (let j = 0; j < n; j++) {
-      cells.push({ k, dx: d / n, C: (m.rho * m.cp * d) / n, li, x0: x0 + (j * L.t) / n, x1: x0 + ((j + 1) * L.t) / n });
+      cells.push({ k, dx: d / n, C: (m.rho * m.cp * d) / n, li, gv: m.vent ? GV_VENT / n : 0, x0: x0 + (j * L.t) / n, x1: x0 + ((j + 1) * L.t) / n });
     }
     lay.push({ x0, x1: x0 + L.t, R: d / k, C: m.rho * m.cp * d, k, name: m.name, mat: m });
     xmm += L.t;
   });
   const N = cells.length;
   const total = xmm;
-  const Rsum = lay.reduce((s, l) => s + l.R, 0);
-  const Rtot = Rse + Rsi + Rsum;
+  // A ventilated gap ties its air to outdoor air in parallel with the path through the outer layers.
+  // shortcut: only the first ventilated layer is handled, and the quoted U uses outdoor air = sol-air.
+  const v = lay.findIndex((l) => l.mat.vent);
+  let Rtot: number;
+  if (v < 0) {
+    Rtot = Rse + Rsi + lay.reduce((s, l) => s + l.R, 0);
+  } else {
+    const Rout = Rse + lay.slice(0, v).reduce((s, l) => s + l.R, 0) + lay[v].R / 2;
+    const Rin = Rsi + lay.slice(v + 1).reduce((s, l) => s + l.R, 0) + lay[v].R / 2;
+    Rtot = 1 / (GV_VENT + 1 / Rout) + Rin;
+  }
   const U = 1 / Rtot;
   const dt = 120;
   const spd = 720;
@@ -140,7 +155,7 @@ export function simulate(P: SimParams) {
   for (let i = 0; i < N; i++) {
     A[i] = i > 0 ? -G[i - 1] : 0;
     Cc[i] = i < N - 1 ? -G[i] : 0;
-    Bd[i] = cells[i].C / dt + (i > 0 ? G[i - 1] : 0) + (i < N - 1 ? G[i] : 0) + (i === 0 ? Gout : 0) + (i === N - 1 ? Gin : 0);
+    Bd[i] = cells[i].C / dt + (i > 0 ? G[i - 1] : 0) + (i < N - 1 ? G[i] : 0) + (i === 0 ? Gout : 0) + (i === N - 1 ? Gin : 0) + cells[i].gv;
   }
   const cpr = new Float64Array(N);
   const bden = new Float64Array(N);
@@ -192,6 +207,7 @@ export function simulate(P: SimParams) {
     tsOut: new Float64Array(N_FRAMES),
     tsIn: new Float64Array(N_FRAMES),
     q: new Float64Array(N_FRAMES),
+    qOut: new Float64Array(N_FRAMES),
     tin: new Float64Array(N_FRAMES),
     tsa: new Float64Array(N_FRAMES),
     tair: new Float64Array(N_FRAMES),
@@ -215,6 +231,7 @@ export function simulate(P: SimParams) {
     fr.tsOut[f] = to;
     fr.tsIn[f] = ti;
     fr.q[f] = (ti - tinK[k]) / Rsi;
+    fr.qOut[f] = (tsa - to) / Rse;
     fr.tin[f] = tinK[k];
     fr.tsa[f] = tsa;
     fr.tair[f] = tairK[k];
@@ -245,7 +262,7 @@ export function simulate(P: SimParams) {
     if (last) snap(0, 0);
     for (let s = 0; s < spd; s++) {
       const kn = (s + 1) % spd;
-      for (let i = 0; i < N; i++) rhs[i] = (cells[i].C / dt) * T[i];
+      for (let i = 0; i < N; i++) rhs[i] = (cells[i].C / dt) * T[i] + cells[i].gv * tairK[kn];
       rhs[0] += Gout * tsaK[kn];
       if (free) {
         solve(Ta);

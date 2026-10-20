@@ -3,9 +3,11 @@ const STORAGE_KEY = 'insulation-visualiser.favorites.v1';
 export interface Favorites {
   /** Starred material ids. */
   materials: string[];
+  /** Recently picked material ids, newest first. */
+  recent: string[];
 }
 
-const EMPTY: Favorites = { materials: [] };
+const EMPTY: Favorites = { materials: [], recent: [] };
 
 export function loadFavorites(): Favorites {
   try {
@@ -14,6 +16,7 @@ export function loadFavorites(): Favorites {
     const parsed = JSON.parse(raw);
     return {
       materials: Array.isArray(parsed.materials) ? parsed.materials : [],
+      recent: Array.isArray(parsed.recent) ? parsed.recent : [],
     };
   } catch {
     return { ...EMPTY };

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MONTHS_FULL, PRESETS } from './engine/data';
-import { BUILTIN_STACKUPS, loadCustomStackups, saveCustomStackups } from './engine/library';
+import { BUILTIN_STACKUPS, loadCustomStackups, loadScenario, saveCustomStackups, saveScenario } from './engine/library';
 import type { Stackup } from './engine/library';
 import { DEFAULT_SCENARIO, runScenario } from './engine/scenario';
 import type { Scenario } from './engine/scenario';
 import { N_FRAMES } from './engine/simulate';
 import { clamp, sgn } from './lib/util';
-import { Builder } from './ui/Builder';
+import { BuildupSummary } from './ui/BuildupSummary';
 import { ComparePage } from './ui/ComparePage';
 import { EnvironmentPanel } from './ui/EnvironmentPanel';
 import { HeatMap } from './ui/HeatMap';
@@ -54,10 +54,13 @@ export default function App() {
     [nextId],
   );
 
-  const [sc, setSc] = useState<Scenario>(() => ({
+  const [saved] = useState(loadScenario);
+  const [notice, setNotice] = useState(saved.dropped);
+  const [sc, setSc] = useState<Scenario>(() => saved.sc ?? ({
     ...DEFAULT_SCENARIO,
     layers: PRESETS[0].layers.map(([mat, t], i) => ({ id: i + 1, mat, t })),
   }));
+  useEffect(() => saveScenario(sc), [sc]);
 
   const { frame, playing, setPlaying, scrub } = useClock(90); // 15:00
 
@@ -67,15 +70,15 @@ export default function App() {
   const fr = res.sim.fr;
   const set = useCallback((patch: Partial<Scenario>) => setSc((s) => ({ ...s, ...patch })), []);
 
-  const onPreset = (p: Stackup) => {
-    setSc((s) => ({ ...s, layers: mkLayers(p.layers), orient: p.orient ?? (s.orient === 'roof' ? 'W' : s.orient) }));
+  const [editing, setEditing] = useState(false);
+  const applyDraft = (draft: StackupDraft) => {
+    setSc((s) => ({ ...s, layers: mkLayers(draft.layers), orient: draft.orient ?? (s.orient === 'roof' ? 'W' : s.orient) }));
+    setEditing(false);
   };
-
-  const [saveModal, setSaveModal] = useState(false);
-  const saveCurrentToLibrary = (draft: StackupDraft) => {
+  const saveAndApply = (draft: StackupDraft) => {
     const id = `custom:${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     setCustomStackups((prev) => [...prev, { id, name: draft.name, layers: draft.layers, orient: draft.orient }]);
-    setSaveModal(false);
+    applyDraft(draft);
   };
 
   const pills = [
@@ -93,22 +96,33 @@ export default function App() {
           <div>
             <h1>Insulation Visualiser</h1>
             <p className="lede">
-              Build a wall or roof, pick a UK day, and watch the heat soak through each layer. Steady-state U-values hide this: thermal mass delays and flattens the swing.
+              Visualise heat transfer and the effects of insulation and thermal mass in wall and roof build-ups.
             </p>
           </div>
           <div className="head-right">
             <button type="button" aria-pressed={mode === 'learn'} className={mode === 'learn' ? 'chip on' : 'chip'} onClick={() => setMode('learn')}>Learn</button>
-            {mode === 'single' && (
-              <p className="mono small muted">
-                {res.loc.name} · {MONTHS_FULL[sc.month]} · {res.weather.name} · {res.orient.name}
-              </p>
-            )}
           </div>
         </header>
 
-        <div role="tablist" aria-label="View" className="chips">
-          <button type="button" role="tab" aria-selected={mode === 'single'} className={mode === 'single' ? 'chip on' : 'chip'} onClick={() => setMode('single')}>Single wall</button>
-          <button type="button" role="tab" aria-selected={mode === 'compare'} className={mode === 'compare' ? 'chip on' : 'chip'} onClick={() => setMode('compare')}>Compare build-ups</button>
+        {notice.length > 0 && (
+          <aside role="status" className="callout">
+            <div className="eyebrow">Your saved wall was changed</div>
+            {notice.map((n, i) => <p key={i}>{n}</p>)}
+            {!saved.sc && <p>Because no valid layers were left, the default build-up has been loaded instead.</p>}
+            <p><button type="button" className="btn-secondary" onClick={() => setNotice([])}>Dismiss</button></p>
+          </aside>
+        )}
+
+        <div className="tabs-row">
+          <div role="tablist" aria-label="View" className="chips">
+            <button type="button" role="tab" aria-selected={mode === 'single'} className={mode === 'single' ? 'chip on' : 'chip'} onClick={() => setMode('single')}>Single wall</button>
+            <button type="button" role="tab" aria-selected={mode === 'compare'} className={mode === 'compare' ? 'chip on' : 'chip'} onClick={() => setMode('compare')}>Compare build-ups</button>
+          </div>
+          {mode === 'single' && (
+            <p className="mono small muted">
+              {res.loc.name} · {MONTHS_FULL[sc.month]} · {res.weather.name} · {res.orient.name}
+            </p>
+          )}
         </div>
 
         {mode === 'learn' ? (
@@ -118,7 +132,7 @@ export default function App() {
         ) : (
           <div className="cols">
             <aside className="side">
-              <Builder layers={sc.layers} onChange={(layers) => set({ layers })} library={library} onPreset={onPreset} nextId={nextId} onSaveToLibrary={() => setSaveModal(true)} />
+              <BuildupSummary layers={sc.layers} sim={res.sim} onEdit={() => setEditing(true)} />
               <EnvironmentPanel sc={sc} params={res.params} solar={res.sim.solar} set={set} />
             </aside>
 
@@ -170,13 +184,14 @@ export default function App() {
         </footer>
       </div>
 
-      {saveModal && (
+      {editing && (
         <StackupModal
           library={library}
-          title="Save current build-up to library"
+          title="Customize build-up"
           initial={{ name: '', layers: sc.layers.map((l) => [l.mat, l.t]), orient: sc.orient === 'roof' ? 'roof' : undefined }}
-          onCancel={() => setSaveModal(false)}
-          onSave={saveCurrentToLibrary}
+          onCancel={() => setEditing(false)}
+          onSave={saveAndApply}
+          onApply={applyDraft}
         />
       )}
     </div>
