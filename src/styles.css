@@ -48,6 +48,7 @@ p { margin: 0; }
 .grow { flex: 1; min-width: 0; }
 
 .select { min-height: 44px; border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; padding: 0 10px; font-size: 15px; color: var(--ink); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.head-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .months { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
 .months .chip { padding: 0; }
@@ -196,4 +197,37 @@ p { margin: 0; }
   .picker-body { flex-direction: column; height: min(640px, 80vh); }
   .picker-cats { width: 100%; max-height: 40%; border-right: 0; border-bottom: 1px solid var(--line); }
   .picker-items { max-height: 60%; }
+}
+
+/* Learn page */
+.learn { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+.learn-toc { flex: 1 1 240px; max-width: 280px; min-width: 0; position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.learn-toc-group { display: flex; flex-direction: column; gap: 4px; }
+.learn-toc ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.toc-link { background: none; border: 0; padding: 6px 8px; margin: 0 -8px; border-radius: 6px; text-align: left; width: calc(100% + 16px); font-size: 14px; color: var(--ink); cursor: pointer; }
+.toc-link:hover { background: #f5f7f8; color: var(--accent); }
+.learn-body { flex: 999 1 520px; min-width: 0; padding: 12px 32px 32px; }
+.learn-section { padding: 24px 0; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 14px; scroll-margin-top: 16px; max-width: 76ch; }
+.learn-section:last-child { border-bottom: 0; }
+.learn-section h2 { font-size: 22px; letter-spacing: -0.005em; }
+.learn-section h3 { font-size: 16px; margin-top: 6px; }
+.learn-section p, .learn-section li, .learn-section dd { font-size: 16px; line-height: 1.65; }
+.learn-section ul, .learn-section ol { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; }
+.learn-section code { font-family: var(--mono); font-size: 14px; background: #f0f3f5; padding: 1px 5px; border-radius: 4px; }
+.learn-steps { counter-reset: none; }
+.eq { background: #f5f7f8; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 16px; font-size: 14px; line-height: 1.7; overflow-x: auto; }
+.callout { background: #eaf2fa; border: 1px solid #c3d9ee; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.inline-link { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); text-decoration: underline; cursor: pointer; }
+.learn-figure { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.learn-dl { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.learn-dl dt { font-weight: 600; margin-top: 10px; }
+.learn-dl dd { margin: 0; color: var(--muted); }
+.learn-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.learn-table th, .learn-table td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; line-height: 1.5; }
+.learn-table th { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.learn-table td:first-child { font-weight: 500; white-space: nowrap; }
+@media (max-width: 820px) {
+  .learn-toc { position: static; max-width: none; max-height: none; flex-basis: 100%; }
+  .learn-body { padding: 4px 18px 24px; }
+  .learn-table td:first-child { white-space: normal; }
 }

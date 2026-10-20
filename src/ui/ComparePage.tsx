@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react';
 import { BUILTIN_STACKUPS, layersFromTuples } from '../engine/library';
 import type { Stackup } from '../engine/library';
-import { runScenario } from '../engine/scenario';
+import { DEFAULT_SCENARIO, buildParams, daySolar, runScenario } from '../engine/scenario';
 import type { Scenario } from '../engine/scenario';
-import { FRAMES_PER_HOUR } from '../engine/simulate';
-import { clamp, pad2, sgn } from '../lib/util';
+import { clamp, sgn } from '../lib/util';
 import { buildChart } from './charts';
 import { EnvironmentPanel } from './EnvironmentPanel';
 import { LineChart } from './LineChart';
+import { Player } from './Player';
 import { StackupModal } from './StackupModal';
 import type { StackupDraft } from './StackupModal';
 import { WallSection } from './WallSection';
@@ -16,13 +16,6 @@ import { useClock } from './useClock';
 const COLORS = ['#0b63b5', '#c75b00', '#2d7a4d', '#a23b72'];
 const MAX_COMPARE = 4;
 const NEW_OPTION = '__new__';
-
-const DEFAULT_ENV: Scenario = {
-  layers: [],
-  loc: 'bir', month: 6, weather: 'typical', orient: 'W', colour: 'mid',
-  heat: 'fixed', tin: 21, comfort: 21, setback: 16, on1: 6, off1: 9, on2: 17, off2: 22,
-  floor: 16, elA: 12, glA: 2, rest: 20, ach: 3, gains: 150, glaz: 'std', mass: 'med',
-};
 
 const DEFAULT_SLOTS = ['preset:cavity_old', 'preset:cavity_new'];
 
@@ -40,7 +33,7 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
     const def = DEFAULT_SLOTS.filter((id) => ids.has(id));
     return def.length ? def : library.slice(0, 2).map((s) => s.id);
   });
-  const [env, setEnv] = useState<Scenario>(DEFAULT_ENV);
+  const [env, setEnv] = useState<Scenario>(DEFAULT_SCENARIO);
   const [modal, setModal] = useState<null | { draft?: StackupDraft; slot: number | null }>(null);
   const [confirmDelete, setConfirmDelete] = useState<null | { stackup: Stackup; slot: number }>(null);
   const { frame, playing, setPlaying, scrub } = useClock();
@@ -72,12 +65,11 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
     setSlots((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== slot) : prev));
   };
 
-  // A throwaway single-layer run, only to drive the "set the day" summary text
-  // (solar geometry and outdoor temperatures), independent of any compared wall.
-  const envProbe = useMemo(
-    () => runScenario({ ...env, layers: layersFromTuples([['brick', 100]]) }),
-    [env],
-  );
+  // Drives the "set the day" summary text; needs no wall, so no simulation.
+  const day = useMemo(() => {
+    const { params, orient } = buildParams(env);
+    return { params, solar: daySolar(params, orient) };
+  }, [env]);
 
   const results = useMemo(
     () =>
@@ -91,7 +83,7 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
   );
 
   const f = clamp(frame, 0, 143);
-  const valid = results.filter((r): r is NonNullable<typeof r> => !!r);
+  const valid = useMemo(() => results.filter((r): r is NonNullable<typeof r> => !!r), [results]);
 
   const tempChart = useMemo(
     () =>
@@ -144,7 +136,7 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
 
   return (
     <div className="compare-page">
-      <EnvironmentPanel sc={env} res={envProbe} set={set} wide />
+      <EnvironmentPanel sc={env} params={day.params} solar={day.solar} set={set} wide />
 
       <section className="card panel">
         <div className="section-head">
@@ -152,17 +144,7 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
             <h2><span className="step">1</span>Heat moving through each wall</h2>
             <p className="muted small">Pick a build-up for each column below. They all run under the one day set above. Press play or drag the clock.</p>
           </div>
-          <div className="player">
-            <button type="button" className="play" onClick={() => setPlaying((p) => !p)} aria-label={playing ? 'Pause' : 'Play'}>
-              {playing ? (
-                <svg width={18} height={18} viewBox="0 0 18 18" aria-hidden="true"><path d="M4.5 3h3.2v12H4.5zM10.3 3h3.2v12h-3.2z" fill="#fff" /></svg>
-              ) : (
-                <svg width={18} height={18} viewBox="0 0 18 18" aria-hidden="true"><path d="M5 3.2v11.6L15 9z" fill="#fff" /></svg>
-              )}
-            </button>
-            <input type="range" aria-label="Time of day" min={0} max={143} step={1} value={f} onChange={(e) => scrub(Number(e.target.value))} />
-            <span className="mono clock">{pad2(Math.floor(f / FRAMES_PER_HOUR))}:{pad2((f % FRAMES_PER_HOUR) * 10)}</span>
-          </div>
+          <Player frame={f} playing={playing} setPlaying={setPlaying} scrub={scrub} />
         </div>
 
         <div className="compare-grid">

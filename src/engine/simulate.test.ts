@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ORIENTS, PRESETS } from './data';
-import { runScenario } from './scenario';
+import { DEFAULT_SCENARIO, runScenario } from './scenario';
 import type { Scenario } from './scenario';
 import { simulate } from './simulate';
 import type { SimParams } from './simulate';
@@ -22,10 +22,8 @@ const wall = (id: string, over: Partial<SimParams> = {}): SimParams => ({
 });
 
 const scenario = (over: Partial<Scenario> = {}): Scenario => ({
+  ...DEFAULT_SCENARIO,
   layers: layersOf('solid'),
-  loc: 'bir', month: 6, weather: 'typical', orient: 'W', colour: 'mid',
-  heat: 'fixed', tin: 21, comfort: 21, setback: 16, on1: 6, off1: 9, on2: 17, off2: 22,
-  floor: 16, elA: 12, glA: 2, rest: 20, ach: 3, gains: 150, glaz: 'std', mass: 'med',
   ...over,
 });
 

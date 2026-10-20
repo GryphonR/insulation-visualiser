@@ -2,15 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MONTHS_FULL, PRESETS } from './engine/data';
 import { loadCustomStackups, saveCustomStackups } from './engine/library';
 import type { Stackup } from './engine/library';
-import { runScenario } from './engine/scenario';
+import { DEFAULT_SCENARIO, runScenario } from './engine/scenario';
 import type { Scenario } from './engine/scenario';
-import { N_FRAMES, FRAMES_PER_HOUR } from './engine/simulate';
-import { clamp, pad2, sgn } from './lib/util';
+import { N_FRAMES } from './engine/simulate';
+import { clamp, sgn } from './lib/util';
 import { Builder } from './ui/Builder';
 import { ComparePage } from './ui/ComparePage';
 import { EnvironmentPanel } from './ui/EnvironmentPanel';
 import { HeatMap } from './ui/HeatMap';
+import { LearnPage } from './ui/LearnPage';
 import { LineChart } from './ui/LineChart';
+import { Player } from './ui/Player';
 import { StackupModal } from './ui/StackupModal';
 import type { StackupDraft } from './ui/StackupModal';
 import { Stats } from './ui/Stats';
@@ -18,13 +20,17 @@ import { WallSection } from './ui/WallSection';
 import { buildCharts } from './ui/charts';
 import { useClock } from './ui/useClock';
 
-type Mode = 'single' | 'compare';
+type Mode = 'single' | 'compare' | 'learn';
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('single');
 
   const [customStackups, setCustomStackups] = useState<Stackup[]>(() => loadCustomStackups());
-  useEffect(() => saveCustomStackups(customStackups), [customStackups]);
+  // Don't write back what we just loaded: if the stored JSON was unreadable, that would wipe it.
+  const [loadedStackups] = useState(customStackups);
+  useEffect(() => {
+    if (customStackups !== loadedStackups) saveCustomStackups(customStackups);
+  }, [customStackups, loadedStackups]);
 
   const idRef = useRef(100);
   const nextId = useCallback(() => idRef.current++, []);
@@ -34,10 +40,8 @@ export default function App() {
   );
 
   const [sc, setSc] = useState<Scenario>(() => ({
+    ...DEFAULT_SCENARIO,
     layers: PRESETS[0].layers.map(([mat, t], i) => ({ id: i + 1, mat, t })),
-    loc: 'bir', month: 6, weather: 'typical', orient: 'W', colour: 'mid',
-    heat: 'fixed', tin: 21, comfort: 21, setback: 16, on1: 6, off1: 9, on2: 17, off2: 22,
-    floor: 16, elA: 12, glA: 2, rest: 20, ach: 3, gains: 150, glaz: 'std', mass: 'med',
   }));
 
   const { frame, playing, setPlaying, scrub } = useClock(90); // 15:00
@@ -79,11 +83,14 @@ export default function App() {
               Build a wall or roof, pick a UK day, and watch the heat soak through each layer. Steady-state U-values hide this: thermal mass delays and flattens the swing.
             </p>
           </div>
-          {mode === 'single' ? (
-            <p className="mono small muted">
-              {res.loc.name} · {MONTHS_FULL[sc.month]} · {res.weather.name} · {res.orient.name}
-            </p>
-          ) : <span />}
+          <div className="head-right">
+            <button type="button" aria-pressed={mode === 'learn'} className={mode === 'learn' ? 'chip on' : 'chip'} onClick={() => setMode('learn')}>Learn</button>
+            {mode === 'single' && (
+              <p className="mono small muted">
+                {res.loc.name} · {MONTHS_FULL[sc.month]} · {res.weather.name} · {res.orient.name}
+              </p>
+            )}
+          </div>
         </header>
 
         <div role="tablist" aria-label="View" className="chips">
@@ -91,13 +98,15 @@ export default function App() {
           <button type="button" role="tab" aria-selected={mode === 'compare'} className={mode === 'compare' ? 'chip on' : 'chip'} onClick={() => setMode('compare')}>Compare build-ups</button>
         </div>
 
-        {mode === 'compare' ? (
+        {mode === 'learn' ? (
+          <LearnPage onOpenSimulator={() => setMode('single')} />
+        ) : mode === 'compare' ? (
           <ComparePage customStackups={customStackups} setCustomStackups={setCustomStackups} />
         ) : (
           <div className="cols">
             <aside className="side">
               <Builder layers={sc.layers} onChange={(layers) => set({ layers })} onPreset={onPreset} nextId={nextId} onSaveToLibrary={() => setSaveModal(true)} />
-              <EnvironmentPanel sc={sc} res={res} set={set} />
+              <EnvironmentPanel sc={sc} params={res.params} solar={res.sim.solar} set={set} />
             </aside>
 
             <main className="main">
@@ -109,20 +118,7 @@ export default function App() {
                     <h2>Heat moving through the wall</h2>
                     <p className="muted small">Colour shows temperature in every slice of every layer, arrows show the heat flow. Press play or drag the clock.</p>
                   </div>
-                  <div className="player">
-                    <button type="button" className="play" onClick={() => setPlaying((p) => !p)} aria-label={playing ? 'Pause' : 'Play'}>
-                      {playing ? (
-                        <svg width={18} height={18} viewBox="0 0 18 18" aria-hidden="true"><path d="M4.5 3h3.2v12H4.5zM10.3 3h3.2v12h-3.2z" fill="#fff" /></svg>
-                      ) : (
-                        <svg width={18} height={18} viewBox="0 0 18 18" aria-hidden="true"><path d="M5 3.2v11.6L15 9z" fill="#fff" /></svg>
-                      )}
-                    </button>
-                    <input
-                      type="range" aria-label="Time of day" min={0} max={143} step={1} value={f % 144}
-                      onChange={(e) => scrub(Number(e.target.value))}
-                    />
-                    <span className="mono clock">{pad2(Math.floor(f / FRAMES_PER_HOUR))}:{pad2((f % FRAMES_PER_HOUR) * 10)}</span>
-                  </div>
+                  <Player frame={f} playing={playing} setPlaying={setPlaying} scrub={scrub} />
                 </div>
 
                 <div className="pills">

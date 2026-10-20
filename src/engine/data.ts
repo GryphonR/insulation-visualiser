@@ -55,7 +55,7 @@ export interface MaterialGroup {
   items: Material[];
 }
 
-/** MATERIALS grouped by `cat`, in MATERIAL_CATEGORIES order, for <optgroup>-based dropdowns. */
+/** MATERIALS grouped by `cat`, in MATERIAL_CATEGORIES order,. */
 export const MATERIAL_GROUPS: MaterialGroup[] = Object.keys(MATERIAL_CATEGORIES)
   .map((cat) => ({ cat, label: MATERIAL_CATEGORIES[cat], items: MATERIALS.filter((m) => (m.cat ?? 'common') === cat) }))
   .filter((g) => g.items.length > 0);

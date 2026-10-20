@@ -3,6 +3,7 @@ import {
 } from './data';
 import type { Location, Orient, Weather } from './data';
 import { simulate } from './simulate';
+import { solarAt } from './solar';
 import type { LayerInput, SimParams, SimResult } from './simulate';
 
 export type HeatMode = 'fixed' | 'schedule' | 'free';
@@ -35,6 +36,13 @@ export interface Scenario {
   glaz: string;
   mass: string;
 }
+
+export const DEFAULT_SCENARIO: Scenario = {
+  layers: [],
+  loc: 'bir', month: 6, weather: 'typical', orient: 'W', colour: 'mid',
+  heat: 'fixed', tin: 21, comfort: 21, setback: 16, on1: 6, off1: 9, on2: 17, off2: 22,
+  floor: 16, elA: 12, glA: 2, rest: 20, ach: 3, gains: 150, glaz: 'std', mass: 'med',
+};
 
 export const ROOM_HEIGHT = 2.5;
 const AIR_CP = 1.2 * 1005; // J/m³K
@@ -88,6 +96,13 @@ export function buildParams(sc: Scenario): ScenarioContext {
     };
   }
   return { loc, weather, orient, params };
+}
+
+/** Sun landing on the face over the day, kWh/m² (same 10-minute sampling as the simulation). */
+export function daySolar(p: SimParams, orient: Orient): number {
+  let s = 0;
+  for (let f = 0; f < 144; f++) s += solarAt(p.lat, p.doy, f / 6, p.c, orient) / 6 / 1000;
+  return s;
 }
 
 export interface ScenarioResult extends ScenarioContext {

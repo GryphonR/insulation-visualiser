@@ -16,5 +16,5 @@ export function useClock(initial = 90) {
     setPlaying(false);
   };
 
-  return { frame, setFrame, playing, setPlaying, scrub };
+  return { frame, playing, setPlaying, scrub };
 }

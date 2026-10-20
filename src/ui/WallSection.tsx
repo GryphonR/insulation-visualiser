@@ -8,6 +8,8 @@ const PY0 = 222;
 const PY1 = 360;
 const ARROW_ROWS = [76, 117, 158];
 const ARROW_COLS = 21;
+// Flux below this fraction of the peak flux is drawn as a '-' rather than an arrow.
+const NO_FLOW_FRAC = 0.002;
 
 export function WallSection({ res, frame }: { res: ScenarioResult; frame: number }) {
   const { sim } = res;
@@ -73,7 +75,11 @@ export function WallSection({ res, frame }: { res: ScenarioResult; frame: number
       const hd = 2 + 4 * m;
       const xa = cx - dir * L;
       const xb = cx + dir * L;
-      const d = `M${xa.toFixed(1)} ${cy}L${xb.toFixed(1)} ${cy}M${(xb - dir * hd).toFixed(1)} ${cy - hd}L${xb.toFixed(1)} ${cy}L${(xb - dir * hd).toFixed(1)} ${cy + hd}`;
+      // Where there is effectively no heat flow, show a plain dash instead of an arrow.
+      const still = Math.abs(q) / sim.fmax < NO_FLOW_FRAC;
+      const d = still
+        ? `M${(cx - 4).toFixed(1)} ${cy}L${(cx + 4).toFixed(1)} ${cy}`
+        : `M${xa.toFixed(1)} ${cy}L${xb.toFixed(1)} ${cy}M${(xb - dir * hd).toFixed(1)} ${cy - hd}L${xb.toFixed(1)} ${cy}L${(xb - dir * hd).toFixed(1)} ${cy + hd}`;
       const base = { fill: 'none', strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
       arrows.push({
         d,

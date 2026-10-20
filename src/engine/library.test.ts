@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ORIENTS } from './data';
 import { loadCustomStackups } from './library';
 import type { Stackup } from './library';
-import { inPeriod, runScenario } from './scenario';
+import { DEFAULT_SCENARIO, inPeriod, runScenario } from './scenario';
 import type { Scenario } from './scenario';
 
 const stubStorage = (value: unknown) =>
@@ -26,10 +26,9 @@ describe('loadCustomStackups', () => {
 
 describe('roof orientation', () => {
   const base = (orient: string): Scenario => ({
+    ...DEFAULT_SCENARIO,
+    orient,
     layers: [{ id: 1, mat: 'pir', t: 100 }, { id: 2, mat: 'conc', t: 150 }],
-    loc: 'bir', month: 6, weather: 'typical', orient, colour: 'mid',
-    heat: 'fixed', tin: 21, comfort: 21, setback: 16, on1: 6, off1: 9, on2: 17, off2: 22,
-    floor: 16, elA: 12, glA: 2, rest: 20, ach: 3, gains: 150, glaz: 'std', mass: 'med',
   });
 
   it('uses a different inside surface resistance for a roof than for a wall', () => {

@@ -1,12 +1,15 @@
 import { COLOURS, GLAZING, LOCATIONS, MASSES, MONTHS, MONTHS_FULL, ORIENTS, WEATHER } from '../engine/data';
 import { heatingOn } from '../engine/scenario';
-import type { HeatMode, Scenario, ScenarioResult } from '../engine/scenario';
+import type { HeatMode, Scenario } from '../engine/scenario';
+import type { SimParams } from '../engine/simulate';
 import { pad2 } from '../lib/util';
 import { Chip, ChipGroup, Eyebrow, Field, Slider } from './controls';
 
 interface Props {
   sc: Scenario;
-  res: ScenarioResult;
+  params: SimParams;
+  /** Sun on this face over the day, kWh/m². */
+  solar: number;
   set: (patch: Partial<Scenario>) => void;
   /** Lays groups out as a wide responsive grid instead of a narrow stack (for the comparison screen). */
   wide?: boolean;
@@ -20,8 +23,7 @@ const HEAT_MODES: Array<{ id: HeatMode; label: string }> = [
 
 const HOURS = Array.from({ length: 24 }, (_, i) => ({ id: i, name: `${pad2(i)}:00` }));
 
-export function EnvironmentPanel({ sc, res, set, wide }: Props) {
-  const { params, sim } = res;
+export function EnvironmentPanel({ sc, params, solar, set, wide }: Props) {
   const sel = (label: string, key: 'on1' | 'off1' | 'on2' | 'off2') => (
     <label className="field small muted">
       {label}
@@ -110,7 +112,7 @@ export function EnvironmentPanel({ sc, res, set, wide }: Props) {
 
       <p className={wide ? 'small muted env-span' : 'small muted'}>
         Mean air {params.tmean.toFixed(1)} °C, swinging ±{(params.swing / 2).toFixed(1)} K around it, peaking at 15:00.{' '}
-        {sim.solar.toFixed(1)} kWh/m² of sun lands on this face; the outer surface absorbs {Math.round(params.alpha * 100)}% of it.
+        {solar.toFixed(1)} kWh/m² of sun lands on this face; the outer surface absorbs {Math.round(params.alpha * 100)}% of it.
         Times are solar time (add one hour in BST).
       </p>
     </section>

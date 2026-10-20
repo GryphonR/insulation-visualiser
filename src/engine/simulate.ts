@@ -295,7 +295,7 @@ export function simulate(P: SimParams) {
   // skewed by, say, a much larger swing on one side.
   let roomRef = 0;
   for (let f = 0; f < 144; f++) roomRef += fr.tin[f] / 144;
-  let half = Math.max(extHi - roomRef, roomRef - extLo, 2);
+  const half = Math.max(extHi - roomRef, roomRef - extLo, 2);
   const tlo = roomRef - half;
   const thi = roomRef + half;
 
@@ -370,8 +370,8 @@ export function simulate(P: SimParams) {
   }
 
   return {
-    N, cells, lay, total, U, Rtot, Rsi, fr, px, pmin, pmax, tlo, thi, roomRef,
-    decr, lag, hs, hq, gain, loss, gainSS, lossSS, solar, qmin, qmax, qsmin, qsmax, qss, timin, timax,
+    cells, lay, total, U, Rtot, fr, px, pmin, pmax, tlo, thi, roomRef,
+    decr, lag, gain, loss, gainSS, lossSS, solar, qmin, qmax, qsmin, qsmax, qss, timin, timax,
     kin, ktot, faceFlux, fmax,
   };
 }
