@@ -1,4 +1,4 @@
-import { PRESETS } from './data';
+import { MAT, PRESETS } from './data';
 import type { LayerInput } from './simulate';
 
 /** A named, reusable build-up: the comparison library's unit. */
@@ -22,12 +22,20 @@ export const BUILTIN_STACKUPS: Stackup[] = PRESETS.map((p) => ({
 
 const STORAGE_KEY = 'insulation-visualiser.library.v1';
 
+/** Drops entries the simulator would crash on: no layers, or a material id that no longer exists. */
+export function validStackup(s: Stackup): boolean {
+  return (
+    !!s && typeof s.id === 'string' && typeof s.name === 'string' && Array.isArray(s.layers) && s.layers.length > 0 &&
+    s.layers.every((l) => Array.isArray(l) && !!MAT[l[0]] && Number.isFinite(l[1]) && l[1] > 0)
+  );
+}
+
 export function loadCustomStackups(): Stackup[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed.filter(validStackup) : [];
   } catch {
     return [];
   }

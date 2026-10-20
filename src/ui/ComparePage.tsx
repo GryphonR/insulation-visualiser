@@ -84,7 +84,7 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
       slots.map((id, i) => {
         const s = findStackup(id);
         if (!s) return null;
-        return { stackup: s, color: COLORS[i % COLORS.length], res: runScenario({ ...env, layers: layersFromTuples(s.layers) }) };
+        return { stackup: s, color: COLORS[i % COLORS.length], res: runScenario({ ...env, orient: s.orient ?? env.orient, layers: layersFromTuples(s.layers) }) };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [slots, env, library],
@@ -138,7 +138,7 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
   const doDelete = (stackup: Stackup, slot: number) => {
     setCustomStackups((prev) => prev.filter((x) => x.id !== stackup.id));
     const fallback = library.find((s) => s.id !== stackup.id)?.id ?? stackup.id;
-    setSlots((prev) => prev.map((id, i) => (i === slot && id === stackup.id ? fallback : id)));
+    setSlots((prev) => prev.map((id) => (id === stackup.id ? fallback : id)));
     setConfirmDelete(null);
   };
 
