@@ -22,8 +22,21 @@ import { useClock } from './ui/useClock';
 
 type Mode = 'single' | 'compare' | 'learn';
 
+const MODES: Mode[] = ['single', 'compare', 'learn'];
+// Hash routes (#/compare, #/learn): GitHub Pages can't rewrite deep links to index.html.
+const modeFromHash = (): Mode => MODES.find((m) => location.hash === `#/${m}`) ?? 'single';
+
 export default function App() {
-  const [mode, setMode] = useState<Mode>('single');
+  const [mode, setModeState] = useState<Mode>(modeFromHash);
+  useEffect(() => {
+    const onHash = () => setModeState(modeFromHash());
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+  const setMode = (m: Mode) => {
+    location.hash = m === 'single' ? '' : `/${m}`;
+    setModeState(m);
+  };
 
   const [customStackups, setCustomStackups] = useState<Stackup[]>(() => loadCustomStackups());
   // Don't write back what we just loaded: if the stored JSON was unreadable, that would wipe it.
