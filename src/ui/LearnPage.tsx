@@ -340,9 +340,6 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
             <li>Repeat the same day several times until the pattern settles down, then record the last one.</li>
             <li>Derive the summary numbers (U-value, decrement, lag, and so on) from the recorded day.</li>
           </ol>
-          <p>
-            The engine is a small amount of TypeScript. Sun position and brightness are in <code>solar.ts</code>, the wall model in <code>simulate.ts</code>, and the assembly of a scenario in <code>scenario.ts</code>. The reference data (materials, locations, weather presets) lives in <code>data.ts</code>.
-          </p>
         </section>
 
         <section id="sim-weather" className="learn-section">

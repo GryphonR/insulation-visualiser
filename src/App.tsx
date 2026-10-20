@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MONTHS_FULL, PRESETS } from './engine/data';
-import { loadCustomStackups, saveCustomStackups } from './engine/library';
+import { BUILTIN_STACKUPS, loadCustomStackups, saveCustomStackups } from './engine/library';
 import type { Stackup } from './engine/library';
 import { DEFAULT_SCENARIO, runScenario } from './engine/scenario';
 import type { Scenario } from './engine/scenario';
@@ -45,6 +45,8 @@ export default function App() {
     if (customStackups !== loadedStackups) saveCustomStackups(customStackups);
   }, [customStackups, loadedStackups]);
 
+  const library = useMemo(() => [...BUILTIN_STACKUPS, ...customStackups], [customStackups]);
+
   const idRef = useRef(100);
   const nextId = useCallback(() => idRef.current++, []);
   const mkLayers = useCallback(
@@ -65,9 +67,7 @@ export default function App() {
   const fr = res.sim.fr;
   const set = useCallback((patch: Partial<Scenario>) => setSc((s) => ({ ...s, ...patch })), []);
 
-  const onPreset = (id: string) => {
-    const p = PRESETS.find((x) => x.id === id);
-    if (!p) return;
+  const onPreset = (p: Stackup) => {
     setSc((s) => ({ ...s, layers: mkLayers(p.layers), orient: p.orient ?? (s.orient === 'roof' ? 'W' : s.orient) }));
   };
 
@@ -118,7 +118,7 @@ export default function App() {
         ) : (
           <div className="cols">
             <aside className="side">
-              <Builder layers={sc.layers} onChange={(layers) => set({ layers })} onPreset={onPreset} nextId={nextId} onSaveToLibrary={() => setSaveModal(true)} />
+              <Builder layers={sc.layers} onChange={(layers) => set({ layers })} library={library} onPreset={onPreset} nextId={nextId} onSaveToLibrary={() => setSaveModal(true)} />
               <EnvironmentPanel sc={sc} params={res.params} solar={res.sim.solar} set={set} />
             </aside>
 
@@ -172,6 +172,7 @@ export default function App() {
 
       {saveModal && (
         <StackupModal
+          library={library}
           title="Save current build-up to library"
           initial={{ name: '', layers: sc.layers.map((l) => [l.mat, l.t]), orient: sc.orient === 'roof' ? 'roof' : undefined }}
           onCancel={() => setSaveModal(false)}

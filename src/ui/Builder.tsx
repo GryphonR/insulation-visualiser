@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { MAT, PRESETS } from '../engine/data';
+import { MAT } from '../engine/data';
+import type { Stackup } from '../engine/library';
 import type { LayerInput } from '../engine/simulate';
 import { clamp, fgFor } from '../lib/util';
 import { Field } from './controls';
@@ -8,7 +9,9 @@ import { MaterialPickerModal } from './MaterialPickerModal';
 interface Props {
   layers: LayerInput[];
   onChange: (layers: LayerInput[]) => void;
-  onPreset: (id: string) => void;
+  /** Build-ups offered in the "start from" menu: built-in presets, then the user's own. */
+  library: Stackup[];
+  onPreset: (s: Stackup) => void;
   nextId: () => number;
   onSaveToLibrary?: () => void;
   /** Set when embedded somewhere that already has its own heading (e.g. a modal). */
@@ -30,7 +33,7 @@ const ChevronDown = () => (
 /** Index into `layers`, or 'add' for the "add a layer" slot — whichever opened the picker. */
 type PickerTarget = number | 'add' | null;
 
-export function Builder({ layers, onChange, onPreset, nextId, onSaveToLibrary, bare }: Props) {
+export function Builder({ layers, onChange, library, onPreset, nextId, onSaveToLibrary, bare }: Props) {
   const [picker, setPicker] = useState<PickerTarget>(null);
 
   const edit = (fn: (ls: LayerInput[]) => void) => {
@@ -63,9 +66,16 @@ export function Builder({ layers, onChange, onPreset, nextId, onSaveToLibrary, b
       )}
 
       <Field label="Start from a preset">
-        <select className="select" value="" onChange={(e) => e.target.value && onPreset(e.target.value)}>
+        <select className="select" value="" onChange={(e) => { const s = library.find((x) => x.id === e.target.value); if (s) onPreset(s); }}>
           <option value="">Choose a build-up…</option>
-          {PRESETS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          <optgroup label="Presets">
+            {library.filter((s) => s.builtin).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </optgroup>
+          {library.some((s) => !s.builtin) && (
+            <optgroup label="My build-ups">
+              {library.filter((s) => !s.builtin).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </optgroup>
+          )}
         </select>
       </Field>
 

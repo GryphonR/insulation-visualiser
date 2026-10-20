@@ -208,6 +208,7 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
         <StackupModal
           title={modal.draft?.id ? 'Edit build-up' : modal.draft ? 'Customize build-up' : 'New build-up'}
           initial={modal.draft}
+          library={library}
           onCancel={() => setModal(null)}
           onSave={saveStackup}
         />

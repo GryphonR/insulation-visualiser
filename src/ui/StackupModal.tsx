@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
-import { PRESETS } from '../engine/data';
 import { layersFromTuples } from '../engine/library';
+import type { Stackup } from '../engine/library';
 import type { LayerInput } from '../engine/simulate';
 import { Builder } from './Builder';
 import { Field } from './controls';
@@ -15,30 +15,30 @@ export interface StackupDraft {
 
 interface Props {
   initial?: StackupDraft;
+  library: Stackup[];
   title: string;
   onCancel: () => void;
   onSave: (draft: StackupDraft) => void;
 }
 
-export function StackupModal({ initial, title, onCancel, onSave }: Props) {
+export function StackupModal({ initial, library, title, onCancel, onSave }: Props) {
   const idRef = useRef(1000000);
   const nextId = () => idRef.current++;
   const [name, setName] = useState(initial?.name ?? '');
   const [layers, setLayers] = useState<LayerInput[]>(() => layersFromTuples(initial?.layers ?? [['pir', 100]]));
   const [isRoof, setIsRoof] = useState(initial?.orient === 'roof');
 
-  const onPreset = (id: string) => {
-    const p = PRESETS.find((x) => x.id === id);
-    if (!p) return;
-    setLayers(layersFromTuples(p.layers));
-    if (p.orient === 'roof') setIsRoof(true);
+  const onPreset = (s: Stackup) => {
+    setLayers(layersFromTuples(s.layers));
+    if (s.orient === 'roof') setIsRoof(true);
   };
 
-  const save = () => {
+  /** `asNew` drops the id so an edit is saved as a separate build-up instead of replacing the original. */
+  const save = (asNew: boolean) => {
     const trimmed = name.trim();
     if (!trimmed) return;
     onSave({
-      id: initial?.id,
+      id: asNew ? undefined : initial?.id,
       name: trimmed,
       layers: layers.map((l) => [l.mat, l.t]),
       orient: isRoof ? 'roof' : undefined,
@@ -71,12 +71,15 @@ export function StackupModal({ initial, title, onCancel, onSave }: Props) {
             This is a roof build-up (always compared as a flat roof, whatever orientation is set)
           </label>
 
-          <Builder layers={layers} onChange={setLayers} onPreset={onPreset} nextId={nextId} bare />
+          <Builder layers={layers} onChange={setLayers} library={library} onPreset={onPreset} nextId={nextId} bare />
         </div>
 
         <div className="modal-actions">
           <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
-          <button type="button" className="btn-primary" disabled={!name.trim()} onClick={save}>Save build-up</button>
+          {initial?.id && (
+            <button type="button" className="btn-secondary" disabled={!name.trim()} onClick={() => save(true)}>Save as new build-up</button>
+          )}
+          <button type="button" className="btn-primary" disabled={!name.trim()} onClick={() => save(false)}>Save build-up</button>
         </div>
       </div>
     </div>
