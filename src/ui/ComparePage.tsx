@@ -183,6 +183,7 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
                       <span><b className="mono">{r.res.sim.decr.toFixed(2)}</b> decrement</span>
                       <span><b className="mono">{r.res.sim.lag.toFixed(1)}</b> h delay</span>
                       <span><b className="mono">{sgn(r.res.sim.gain - r.res.sim.loss, 0)}</b> Wh/m² net</span>
+                      <span><b className="mono">{sgn(r.res.sim.qmin, 1)} to {sgn(r.res.sim.qmax, 1)}</b> W/m² range</span>
                     </div>
                     <WallSection res={r.res} frame={f} />
                   </>
