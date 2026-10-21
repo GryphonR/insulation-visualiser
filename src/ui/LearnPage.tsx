@@ -779,6 +779,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
             <li><b>Black line:</b> the vapour pressure actually in the wall, from the outside value on the left to the inside value on the right. Both are labelled, with temperature and humidity.</li>
             <li><b>Blue dashed line:</b> the saturation pressure, the most the air can hold at the temperature of each point.</li>
             <li><b>Red dot:</b> the two lines meet, so water condenses. The label shows how much is held, in g/m².</li>
+            <li><b>Hollow blue dot:</b> condensation on the face of an air cavity, which is assumed to drain away through the weep holes. It is labelled with the amount that month but is not added to the water held in the wall.</li>
             <li><b>Arrows along the bottom:</b> the vapour flow through each layer. The dashes move in the direction vapour is travelling. A thicker, darker arrow means more.</li>
             <li><b>Play button and slider:</b> step through the year from October. All the charts glide between months.</li>
           </ul>
