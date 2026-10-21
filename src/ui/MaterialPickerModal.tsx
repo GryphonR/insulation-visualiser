@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { MAT, MATERIALS, MATERIAL_GROUPS } from '../engine/data';
 import type { Material } from '../engine/data';
+import { MU_CLOSED } from '../engine/materials-mu';
 import type { LayerInput } from '../engine/simulate';
 import { ROLE_LABELS, layerR, roleOf, thicknessForR } from '../engine/swap';
 import type { Role } from '../engine/swap';
@@ -38,7 +39,8 @@ function StarIcon({ filled }: { filled: boolean }) {
 function matLine(m: Material): string {
   const r = m.R ?? m.t / 1000 / (m.k as number);
   const base = m.R ? `R ${r.toFixed(2)} m²K/W` : `λ ${m.k} W/mK`;
-  return `${base} · ${Math.round(m.rho)} kg/m³`;
+  const mu = m.mu === undefined ? '' : m.mu >= MU_CLOSED ? ' · vapour-closed' : ` · µ ${m.mu === m.muWet ? m.mu : `${m.mu}/${m.muWet}`}`;
+  return `${base} · ${Math.round(m.rho)} kg/m³${mu}`;
 }
 
 export function MaterialPickerModal({ value, title, onSelect, onClose, swapFrom }: Props) {

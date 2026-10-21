@@ -64,7 +64,7 @@ export function swapFit(old: LayerInput, nm: Material, mode: SwapMode, value = N
 /** Thickness of layer `i` that brings the whole wall to `targetU` (others unchanged). Null for fixed-R layers or bad input. */
 export function sizeToU(layers: LayerInput[], i: number, targetU: number): (Fit & { U: number }) | null {
   const m = MAT[layers[i].mat];
-  if (m.R || !(targetU > 0)) return null;
+  if (m.R || m.min === m.max || !(targetU > 0)) return null;
   const others = wallR(layers) - layerR(m, layers[i].t);
   const fit = thicknessForR(m, Math.max(1 / targetU - others, 1e-6), layers[i].t);
   return { ...fit, U: 1 / (others + fit.R) };
@@ -74,7 +74,8 @@ export type Role = 'insulation' | 'air' | 'dense' | 'other';
 export const ROLE_LABELS: Record<Role, string> = { insulation: 'Insulation', air: 'Air & foil', dense: 'Masonry & dense', other: 'Timber & boards' };
 
 export function roleOf(m: Material): Role {
-  if (m.R) return 'air';
+  // Imported air layers carry an effective k at one fixed thickness instead of R, but sit in the 'cavity' category.
+  if (m.R || m.cat === 'cavity') return 'air';
   const k = m.k as number;
   return k <= 0.06 ? 'insulation' : k >= 0.5 ? 'dense' : 'other';
 }

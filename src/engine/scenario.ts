@@ -110,13 +110,13 @@ export interface ScenarioResult extends ScenarioContext {
 }
 
 /**
- * Run a scenario. In free-floating mode the decrement factor and decrement delay are
- * wall properties, so they are taken from a second run with the room held steady.
+ * Run a scenario. The decrement factor and decrement delay are wall properties, so when the
+ * room temperature moves (schedule or free-floating) they come from a second run with it held steady.
  */
 export function runScenario(sc: Scenario): ScenarioResult {
   const ctx = buildParams(sc);
   const sim = simulate(ctx.params);
-  if (ctx.params.free) {
+  if (sc.heat !== 'fixed') {
     const ref = simulate({ ...ctx.params, free: undefined, tinF: () => sc.tin });
     sim.decr = ref.decr;
     sim.lag = ref.lag;

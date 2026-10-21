@@ -183,11 +183,17 @@ export function simulate(P: SimParams) {
     tinMean += tinK[k] / spd;
   }
   const free = P.free;
+  const Uv = free ? free.Uv + free.Arest * U : 0;
   if (free) {
-    let m = 0;
-    for (let k = 0; k < spd; k++) m += tairK[k] / spd;
-    tinK.fill(m + 1);
-    tinMean = m + 1;
+    // Start the room at its daily-mean heat balance, so heavy, poorly ventilated rooms settle within the run.
+    let ta = 0;
+    let im = 0;
+    for (let k = 0; k < spd; k++) {
+      ta += tairK[k] / spd;
+      im += Ik[k] / spd;
+    }
+    tinMean = (free.Ael * U * tsaMean + Uv * ta + free.gSol * free.Ag * im + free.Qint) / (free.Ael * U + Uv);
+    tinK.fill(tinMean);
   }
 
   // Start from the steady state under the day's mean conditions.
@@ -251,7 +257,6 @@ export function simulate(P: SimParams) {
   const Tb = new Float64Array(N);
   const Ta = new Float64Array(N);
   let Tin = tinMean;
-  const Uv = free ? free.Uv + free.Arest * U : 0;
   if (free) {
     rhs.fill(0);
     rhs[N - 1] = Gin;

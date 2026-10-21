@@ -12,6 +12,7 @@ import { EnvironmentPanel } from './ui/EnvironmentPanel';
 import { HeatMap } from './ui/HeatMap';
 import { LearnPage } from './ui/LearnPage';
 import { LineChart } from './ui/LineChart';
+import { MoisturePage } from './ui/MoisturePage';
 import { Player } from './ui/Player';
 import { StackupModal } from './ui/StackupModal';
 import type { StackupDraft } from './ui/StackupModal';
@@ -20,9 +21,9 @@ import { WallSection } from './ui/WallSection';
 import { buildCharts } from './ui/charts';
 import { useClock } from './ui/useClock';
 
-type Mode = 'single' | 'compare' | 'learn';
+type Mode = 'single' | 'compare' | 'moisture' | 'learn';
 
-const MODES: Mode[] = ['single', 'compare', 'learn'];
+const MODES: Mode[] = ['single', 'compare', 'moisture', 'learn'];
 // Hash routes (#/compare, #/learn): GitHub Pages can't rewrite deep links to index.html.
 const modeFromHash = (): Mode => MODES.find((m) => location.hash === `#/${m}`) ?? 'single';
 
@@ -117,6 +118,7 @@ export default function App() {
           <div role="tablist" aria-label="View" className="chips">
             <button type="button" role="tab" aria-selected={mode === 'single'} className={mode === 'single' ? 'chip on' : 'chip'} onClick={() => setMode('single')}>Single wall</button>
             <button type="button" role="tab" aria-selected={mode === 'compare'} className={mode === 'compare' ? 'chip on' : 'chip'} onClick={() => setMode('compare')}>Compare build-ups</button>
+            <button type="button" role="tab" aria-selected={mode === 'moisture'} className={mode === 'moisture' ? 'chip on' : 'chip'} onClick={() => setMode('moisture')}>Moisture over a year</button>
           </div>
           {mode === 'single' && (
             <p className="mono small muted">
@@ -127,6 +129,8 @@ export default function App() {
 
         {mode === 'learn' ? (
           <LearnPage onOpenSimulator={() => setMode('single')} />
+        ) : mode === 'moisture' ? (
+          <MoisturePage customStackups={customStackups} setCustomStackups={setCustomStackups} />
         ) : mode === 'compare' ? (
           <ComparePage customStackups={customStackups} setCustomStackups={setCustomStackups} />
         ) : (
@@ -137,17 +141,19 @@ export default function App() {
             </aside>
 
             <main className="main">
-              <Stats res={res} />
+              <Stats res={res} group="wall" />
 
               <section className="card panel">
                 <div className="section-head">
                   <div>
-                    <h2>Heat moving through the wall</h2>
+                    <h2>Heat movement simulation</h2>
                     <p className="muted small">Colour shows temperature in every slice of every layer, arrows show the heat flow. Press play or drag the clock.</p>
                   </div>
                   <Player frame={f} playing={playing} setPlaying={setPlaying} scrub={scrub} />
                 </div>
 
+
+                <Stats res={res} group="day" />
                 <div className="pills">
                   {pills.map((p) => (
                     <div key={p.label} className="pill"><span className="small muted">{p.label}</span><span className="mono">{p.value}</span></div>

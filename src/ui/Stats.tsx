@@ -7,23 +7,26 @@ interface Tile {
   value: string;
   unit: string;
   note: string;
+  /** A property of the build-up itself; otherwise it depends on the weather, room and heating chosen. */
+  wall?: boolean;
 }
 
 export function buildTiles(res: ScenarioResult): Tile[] {
   const { sim, params } = res;
   const fr = sim.fr;
   const free = !!params.free;
+  const held = fr.tin.some((v) => v !== fr.tin[0]) ? ' Wall property, found with the room held steady.' : '';
   const tiles: Tile[] = [
-    { label: 'U-value', value: sim.U.toFixed(2), unit: 'W/m²K', note: `Steady-state, R = ${sim.Rtot.toFixed(2)} m²K/W including surface films.` },
+    { wall: true, label: 'U-value', value: sim.U.toFixed(2), unit: 'W/m²K', note: `Steady-state, R = ${sim.Rtot.toFixed(2)} m²K/W including surface films.` },
     {
-      label: 'Decrement factor', value: sim.decr.toFixed(2), unit: '',
-      note: 'Share of the outside heat swing that reaches the inner face. Lower is better.' + (free ? ' Wall property, found with the room held steady.' : ''),
+      wall: true, label: 'Decrement factor', value: sim.decr.toFixed(2), unit: '',
+      note: 'Share of the outside heat swing that reaches the inner face. Lower is better.' + held,
     },
     {
-      label: 'Decrement delay', value: sim.lag.toFixed(1), unit: 'hours',
-      note: 'Delay between peak sol-air temperature and peak heat flow at the inner face.' + (free ? ' Wall property, found with the room held steady.' : ''),
+      wall: true, label: 'Decrement delay', value: sim.lag.toFixed(1), unit: 'hours',
+      note: 'Delay between peak sol-air temperature and peak heat flow at the inner face.' + held,
     },
-    { label: 'Inner thermal mass', value: String(Math.round(sim.kin)), unit: 'kJ/m²K', note: `Heat capacity inside the main insulation (top 100 mm). Whole wall: ${Math.round(sim.ktot)} kJ/m²K.` },
+    { wall: true, label: 'Inner thermal mass', value: String(Math.round(sim.kin)), unit: 'kJ/m²K', note: `Heat capacity inside the main insulation (top 100 mm). Whole wall: ${Math.round(sim.ktot)} kJ/m²K.` },
     { label: 'Inner face', value: `${sim.timin.toFixed(1)}–${sim.timax.toFixed(1)}`, unit: '°C', note: `Swing of ${(sim.timax - sim.timin).toFixed(1)} K across the day.` },
     {
       label: 'Net heat flow, 24 h', value: sgn(sim.gain - sim.loss, 0), unit: 'Wh/m²',
@@ -52,16 +55,21 @@ export function buildTiles(res: ScenarioResult): Tile[] {
   return tiles;
 }
 
-export function Stats({ res }: { res: ScenarioResult }) {
+/** Build-up properties (headline cards) or the day's simulation results (shown inside the simulation box). */
+export function Stats({ res, group }: { res: ScenarioResult; group: 'wall' | 'day' }) {
+  const label = group === 'wall' ? 'Build-up properties' : "This day's results";
   return (
-    <section aria-label="Wall properties" className="tiles">
-      {buildTiles(res).map((t) => (
-        <div key={t.label} className="tile">
-          <div className="eyebrow">{t.label}</div>
-          <div className="tile-value"><span className="mono big">{t.value}</span><span className="muted">{t.unit}</span></div>
-          <div className="small muted">{t.note}</div>
-        </div>
-      ))}
+    <section aria-label={label} className="stack-10">
+      {group === 'wall' && <h3 className="tiles-head">{label}</h3>}
+      <div className="tiles">
+        {buildTiles(res).filter((t) => !!t.wall === (group === 'wall')).map((t) => (
+          <div key={t.label} className="tile">
+            <div className="eyebrow">{t.label}</div>
+            <div className="tile-value"><span className="mono big">{t.value}</span><span className="muted">{t.unit}</span></div>
+            <div className="small muted">{t.note}</div>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }

@@ -1,4 +1,6 @@
 import { EXTRA_MATERIALS, MATERIAL_CATEGORIES as EXTRA_CATEGORIES } from './materials-extra';
+import { HERITAGE_MATERIALS, HERITAGE_CATEGORIES } from './materials-heritage';
+import { withMu } from './materials-mu';
 
 export interface Material {
   id: string;
@@ -21,6 +23,11 @@ export interface Material {
   cat?: string;
   /** Air layer ventilated to outside (e.g. tile batten gap): exchanges heat with outdoor air. */
   vent?: boolean;
+  /** Vapour resistance factor (air = 1): dry-cup and wet-cup. Absent when no confident figure (see materials-mu.ts). */
+  mu?: number;
+  muWet?: number;
+  /** Critical moisture content (fraction of dry mass) for hygroscopic organic materials that soak up condensate; absent = non-absorbent. */
+  hygro?: number;
 }
 
 const CURATED_MATERIALS: Material[] = [
@@ -54,12 +61,12 @@ const CURATED_MATERIALS: Material[] = [
   { id: 'hemp', name: 'Hempcrete', k: 0.09, rho: 330, cp: 1550, col: '#9db08a', t: 300, min: 100, max: 450, step: 10, cat: 'common' },
 ];
 
-export const MATERIALS: Material[] = [...CURATED_MATERIALS, ...EXTRA_MATERIALS];
+export const MATERIALS: Material[] = [...CURATED_MATERIALS, ...EXTRA_MATERIALS, ...HERITAGE_MATERIALS].map(withMu);
 
 export const MAT: Record<string, Material> = Object.fromEntries(MATERIALS.map((m) => [m.id, m]));
 
 /** Category id -> dropdown group label, in display order (the common/curated set first). */
-export const MATERIAL_CATEGORIES: Record<string, string> = { common: 'Common build-up materials', ...EXTRA_CATEGORIES };
+export const MATERIAL_CATEGORIES: Record<string, string> = { common: 'Common build-up materials', ...HERITAGE_CATEGORIES, ...EXTRA_CATEGORIES };
 
 export interface MaterialGroup {
   cat: string;

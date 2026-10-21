@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MAT } from './data';
-import { layerR, sizeToU, swapFit, wallU } from './swap';
+import { layerR, roleOf, sizeToU, swapFit, wallU } from './swap';
 
 const L = (mat: string, t: number, id = 0) => ({ id, mat, t });
 
@@ -30,6 +30,15 @@ describe('swapFit', () => {
   it('fixed-R new material keeps thickness and reports a miss', () => {
     const f = swapFit(mw100, MAT.cavity, 'same-r')!;
     expect(f).toMatchObject({ t: 100, R: 0.18, missed: true });
+  });
+});
+
+describe('roleOf', () => {
+  it('files imported air layers (k at fixed thickness) under air, not timber', () => {
+    expect(roleOf(MAT.m_2_cm_vertical_air_layer_e_g_wall)).toBe('air');
+    expect(roleOf(MAT.cavity)).toBe('air');
+    expect(roleOf(MAT.timber)).toBe('other');
+    expect(sizeToU([L('m_2_cm_vertical_air_layer_e_g_wall', 20)], 0, 0.3)).toBeNull();
   });
 });
 

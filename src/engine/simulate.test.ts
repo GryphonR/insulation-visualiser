@@ -114,6 +114,11 @@ describe('free-floating room', () => {
     expect(Math.abs(mean - r.params.tmean)).toBeLessThan(1.5);
   });
 
+  it('settles to a repeating day even in a heavy, poorly ventilated room', () => {
+    const r = runScenario(scenario({ heat: 'free', ach: 0.3, mass: 'heavy', month: 0, layers: layersOf('cavity_new') }));
+    expect(Math.abs(r.sim.fr.tin[144] - r.sim.fr.tin[0])).toBeLessThan(0.05);
+  });
+
   it('reports wall decrement and lag from the steady-room reference', () => {
     const fixed = runScenario(scenario());
     const free = runScenario(scenario({ heat: 'free' }));
@@ -161,5 +166,12 @@ describe('heating schedule', () => {
     expect(r.sim.fr.tin[7 * 6]).toBe(21); // 07:00 on
     expect(r.sim.fr.tin[12 * 6]).toBe(16); // 12:00 off
     expect(r.sim.fr.tin[19 * 6]).toBe(21); // 19:00 on
+  });
+
+  it('reports wall decrement and lag unaffected by the schedule', () => {
+    const fixed = runScenario(scenario({ layers: layersOf('cavity_new') }));
+    const sched = runScenario(scenario({ layers: layersOf('cavity_new'), heat: 'schedule' }));
+    expect(sched.sim.decr).toBeCloseTo(fixed.sim.decr, 5);
+    expect(sched.sim.lag).toBeCloseTo(fixed.sim.lag, 5);
   });
 });

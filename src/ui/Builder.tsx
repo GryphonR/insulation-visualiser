@@ -24,12 +24,6 @@ const Icon = ({ d, stroke = '#14212b' }: { d: string; stroke?: string }) => (
   </svg>
 );
 
-const ChevronDown = () => (
-  <svg width={14} height={14} viewBox="0 0 16 16" aria-hidden="true" className="material-btn-chevron">
-    <path d="M4 6 8 10 12 6" fill="none" stroke="#51606c" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
 /** Typed thickness in mm. Free typing while focused; clamped to the material's range on blur or Enter. */
 function ThicknessInput({ label, mat, value, onCommit }: { label: string; mat: Material; value: number; onCommit: (t: number) => void }) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -57,8 +51,8 @@ function ThicknessInput({ label, mat, value, onCommit }: { label: string; mat: M
   );
 }
 
-/** Index into `layers`, or 'add' for the "add a layer" slot — whichever opened the picker. */
-type PickerTarget = number | 'add' | null;
+/** What opened the picker: swap the material of layer `i`, or insert a new layer at position `at`. */
+type PickerTarget = { swap: number } | { at: number } | null;
 
 export function Builder({ layers, onChange, library, onPreset, nextId }: Props) {
   const [picker, setPicker] = useState<PickerTarget>(null);
@@ -67,6 +61,8 @@ export function Builder({ layers, onChange, library, onPreset, nextId }: Props) 
   /** Layer being sized to a target wall U, with the typed value and any "limit reached" note. */
   const [sizing, setSizing] = useState<{ i: number; u: string; note?: string } | null>(null);
   /** Layers before the last swap / size / remove, so it can be undone. */
+  /** A layer being dragged by its handle, and the insertion position (0..n) it would drop at. */
+  const [drag, setDrag] = useState<{ from: number; over: number | null } | null>(null);
   const [undo, setUndo] = useState<{ layers: LayerInput[]; label: string } | null>(null);
 
   const edit = (fn: (ls: LayerInput[]) => void, undoLabel?: string) => {
@@ -82,12 +78,33 @@ export function Builder({ layers, onChange, library, onPreset, nextId }: Props) 
   const applyPick = (id: string) => {
     const nm = MAT[id];
     if (!nm) return;
-    if (picker === 'add') {
-      edit((ls) => { ls.push({ id: nextId(), mat: nm.id, t: nm.t }); });
-    } else if (typeof picker === 'number' && layers[picker].mat !== id) {
-      setSwap({ i: picker, mat: id });
+    if (!picker) return;
+    if ('at' in picker) {
+      const { at } = picker;
+      edit((ls) => { ls.splice(at, 0, { id: nextId(), mat: nm.id, t: nm.t }); });
+    } else if (layers[picker.swap].mat !== id) {
+      setSwap({ i: picker.swap, mat: id });
     }
   };
+  /** Move layer `from` to insertion position `to` (an index in the current list, 0..n). */
+  const move = (from: number, to: number) => {
+    if (to === from || to === from + 1) return;
+    edit((ls) => { const [l] = ls.splice(from, 1); ls.splice(to > from ? to - 1 : to, 0, l); }, 'move');
+  };
+  const onHandleKey = (e: React.KeyboardEvent, i: number) => {
+    const j = e.key === 'ArrowUp' ? i - 1 : e.key === 'ArrowDown' ? i + 1 : -1;
+    if (j < 0 || j >= layers.length) return;
+    e.preventDefault();
+    move(i, j > i ? j + 1 : j);
+    // The moved row is re-inserted in the DOM, which drops focus.
+    const id = layers[i].id;
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-handle="${id}"]`)?.focus());
+  };
+  const gap = (at: number, edge = false) => (
+    <div key={`gap${at}`} className={`layer-gap${edge ? ' edge' : ''}${drag?.over === at ? ' drop' : ''}`}>
+      <button type="button" className="layer-add" aria-label={`Add a layer at position ${at + 1}`} onClick={() => setPicker({ at })}>+</button>
+    </div>
+  );
   const applySwap = (t: number) => {
     if (swap) edit((ls) => { ls[swap.i].mat = swap.mat; ls[swap.i].t = t; }, 'swap');
   };
@@ -121,29 +138,44 @@ export function Builder({ layers, onChange, library, onPreset, nextId }: Props) 
 
       <div className="eyebrow row-between"><span>OUTSIDE ↓</span><span>{total} mm · U {wallU(layers).toFixed(2)}</span></div>
 
-      <div className="layers">
-        {layers.map((L, i) => {
+      <div className="layers" onDragOver={(e) => { if (drag) e.preventDefault(); }}
+        onDrop={(e) => { e.preventDefault(); if (drag && drag.over !== null) move(drag.from, drag.over); setDrag(null); }}>
+        {gap(0, true)}
+        {layers.flatMap((L, i) => {
           const m = MAT[L.mat];
           const R = m.R ?? L.t / 1000 / (m.k as number);
-          return (
-            <div key={L.id} className="layer">
+          return [(
+            <div key={L.id} className={drag?.from === i ? 'layer dragging' : 'layer'}
+              onDragOver={(e) => {
+                if (!drag) return;
+                const r = e.currentTarget.getBoundingClientRect();
+                const over = e.clientY < r.top + r.height / 2 ? i : i + 1;
+                if (over !== drag.over) setDrag({ ...drag, over });
+              }}>
               <div className="layer-top">
+                <span role="button" tabIndex={0} draggable className="drag-handle" data-handle={L.id}
+                  aria-label={`Reorder layer ${i + 1}: drag, or press up or down arrow`}
+                  onKeyDown={(e) => onHandleKey(e, i)}
+                  onDragStart={(e) => {
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', String(i));
+                    const row = e.currentTarget.closest('.layer');
+                    if (row) e.dataTransfer.setDragImage(row, 20, 20);
+                    setDrag({ from: i, over: null });
+                  }}
+                  onDragEnd={() => setDrag(null)}>
+                  <svg width={14} height={20} viewBox="0 0 14 20" aria-hidden="true" fill="#51606c">
+                    {[4, 10, 16].map((y) => [3.5, 10.5].map((x) => <circle key={`${x}-${y}`} cx={x} cy={y} r={1.6} />))}
+                  </svg>
+                </span>
                 <span className="badge" style={{ background: m.col, color: fgFor(m.col) }}>{i + 1}</span>
-                <button type="button" className="select grow material-btn" aria-label={`Material for layer ${i + 1}: ${m.name}`} onClick={() => setPicker(i)}>
-                  <span className="material-btn-name">{m.name}</span>
-                  <ChevronDown />
-                </button>
-                <button type="button" className="icon-btn" aria-label={`Move layer ${i + 1} towards outside`} disabled={i === 0}
-                  onClick={() => edit((ls) => { [ls[i - 1], ls[i]] = [ls[i], ls[i - 1]]; })}>
-                  <Icon d="M3.5 10 8 5.5 12.5 10" />
-                </button>
-                <button type="button" className="icon-btn" aria-label={`Move layer ${i + 1} towards inside`} disabled={i === layers.length - 1}
-                  onClick={() => edit((ls) => { [ls[i + 1], ls[i]] = [ls[i], ls[i + 1]]; })}>
-                  <Icon d="M3.5 6 8 10.5 12.5 6" />
+                <span className="select grow material-label"><span className="material-btn-name">{m.name}</span></span>
+                <button type="button" className="icon-btn" aria-label={`Change material of layer ${i + 1}`} onClick={() => setPicker({ swap: i })}>
+                  <Icon d="M10.5 2.5 13.5 5.5 5.5 13.5 2 14 2.5 10.5ZM9 4l3 3" />
                 </button>
                 <button type="button" className="icon-btn" aria-label={`Remove layer ${i + 1}`} disabled={layers.length <= 1}
                   onClick={() => edit((ls) => { ls.splice(i, 1); }, 'remove')}>
-                  <Icon d="M4 4 12 12M12 4 4 12" stroke="#a02828" />
+                  <Icon d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 8.5h6.6l.7-8.5M6.8 7v4M9.2 7v4" stroke="#a02828" />
                 </button>
               </div>
               <div className="layer-mid">
@@ -151,7 +183,7 @@ export function Builder({ layers, onChange, library, onPreset, nextId }: Props) 
                   onChange={(e) => edit((ls) => { ls[i].t = Number(e.target.value); })} />
                 <ThicknessInput label={`Thickness of layer ${i + 1} in mm`} mat={m} value={L.t} onCommit={(t) => edit((ls) => { ls[i].t = t; })} />
               </div>
-              {sizing?.i === i && !m.R ? (
+              {sizing?.i === i && !m.R && m.min !== m.max ? (
                 <div className="size-row">
                   <label>Wall U ≤ <input type="number" className="thk-input mono" aria-label="Target wall U-value" autoFocus min={0} step={0.01} value={sizing.u}
                     onChange={(e) => setSizing({ ...sizing, u: e.target.value, note: undefined })}
@@ -163,22 +195,15 @@ export function Builder({ layers, onChange, library, onPreset, nextId }: Props) 
               ) : (
                 <div className="row-between small">
                   <span className="mono muted">{m.R ? `R fixed ${R.toFixed(2)} m²K/W` : `λ ${m.k} W/mK · R ${R.toFixed(2)} m²K/W`}</span>
-                  {!m.R && <button type="button" className="btn-link inline" onClick={() => setSizing({ i, u: wallU(layers).toFixed(2) })}>Size to U…</button>}
+                  {!m.R && m.min !== m.max && <button type="button" className="btn-link inline" onClick={() => setSizing({ i, u: wallU(layers).toFixed(2) })}>Size to U…</button>}
                 </div>
               )}
             </div>
-          );
+          ), gap(i + 1, i === layers.length - 1)];
         })}
       </div>
 
       <div className="eyebrow">INSIDE ↑</div>
-
-      <Field label="Add a layer (inside face)">
-        <button type="button" className="select material-btn" onClick={() => setPicker('add')}>
-          <span className="material-btn-name muted">+ Choose a material…</span>
-          <ChevronDown />
-        </button>
-      </Field>
 
       <div className="stack-6">
         <div className="eyebrow">Build-up to scale</div>
@@ -195,11 +220,11 @@ export function Builder({ layers, onChange, library, onPreset, nextId }: Props) 
 
       {picker !== null && (
         <MaterialPickerModal
-          value={picker === 'add' ? '' : layers[picker].mat}
-          title={picker === 'add' ? 'Add a layer' : `Material for layer ${(picker as number) + 1}`}
+          value={'swap' in picker ? layers[picker.swap].mat : ''}
+          title={'swap' in picker ? `Material for layer ${picker.swap + 1}` : 'Add a layer'}
           onClose={() => setPicker(null)}
           onSelect={applyPick}
-          swapFrom={typeof picker === 'number' ? layers[picker] : undefined}
+          swapFrom={'swap' in picker ? layers[picker.swap] : undefined}
         />
       )}
       {swap && <SwapModal layers={layers} index={swap.i} newMat={swap.mat} onApply={applySwap} onClose={() => setSwap(null)} />}

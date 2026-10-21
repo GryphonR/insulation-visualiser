@@ -58,7 +58,7 @@ p { margin: 0; }
 .slider { display: flex; flex-direction: column; gap: 4px; }
 .slider-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; }
 
-.layers { display: flex; flex-direction: column; gap: 10px; }
+.layers { display: flex; flex-direction: column; }
 .layer { display: flex; flex-direction: column; gap: 6px; padding: 10px; background: #f5f7f8; border: 1px solid var(--line); border-radius: 10px; }
 .layer-top { display: flex; align-items: center; gap: 6px; }
 .layer-mid { display: flex; align-items: center; gap: 10px; }
@@ -172,9 +172,8 @@ p { margin: 0; }
 .compare-card-head .select { min-height: 40px; font-size: 14px; }
 
 /* Material picker trigger button (looks like the .select it replaces) */
-.material-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; text-align: left; }
+.material-label { display: flex; align-items: center; min-width: 0; }
 .material-btn-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.material-btn-chevron { flex: none; }
 
 /* Material picker modal: categories on the left, materials on the right */
 .modal-picker { width: min(760px, 100%); }
@@ -271,3 +270,26 @@ p { margin: 0; }
 .sum-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .sum-row { display: flex; align-items: center; gap: 10px; font-size: 14px; }
 .sum-name { flex: 1; min-width: 0; }
+.tiles-head { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* Layer reordering handle and the hover-revealed "insert a layer here" button */
+.drag-handle { flex: none; width: 24px; height: 44px; display: grid; place-items: center; cursor: grab; border-radius: 6px; touch-action: none; }
+.drag-handle:hover { background: #e6ebee; }
+.layer.dragging { opacity: 0.45; }
+.layer-gap { position: relative; height: 10px; }
+.layer-gap.edge:first-child, .layer-gap.edge:last-child { height: 6px; }
+.layer-gap::before { content: ''; position: absolute; left: 0; right: 0; top: -8px; bottom: -8px; }
+.layer-gap.drop::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 3px; margin-top: -1.5px; background: var(--accent); border-radius: 2px; }
+.layer-add {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%); z-index: 2;
+  width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 1px solid var(--accent); background: #fff; color: var(--accent);
+  font-size: 17px; line-height: 1; cursor: pointer; display: grid; place-items: center; opacity: 0; transition: opacity 0.12s;
+}
+.layer-gap:hover .layer-add, .layer-add:focus-visible { opacity: 1; }
+@media (hover: none) { .layer-add { opacity: 0.8; width: 28px; height: 28px; } }
+
+/* Moisture tab: vapour-flow arrows. Dashes travel along the arrow; .flux-rev runs them backwards (towards the outside). */
+@keyframes flux-flow { to { stroke-dashoffset: -18; } }
+.flux-flow { animation: flux-flow 1s linear infinite; }
+.flux-rev { animation-direction: reverse; }
+@media (prefers-reduced-motion: reduce) { .flux-flow { animation: none; } }
