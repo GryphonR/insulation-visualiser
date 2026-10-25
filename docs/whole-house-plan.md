@@ -77,12 +77,38 @@ These are sample data. The engine works them out from geometry, so expect them t
   - new-project templates and EPC (0a);
   - survey mode and history (1f).
 
-## Questions for Rowan
+## Decisions (answered)
 
-1. **Party wall:** board 0a calls the reference house a 1950–66 semi, but the plan on board 1 has outside walls on all four sides. Which side is the party wall? What temperature should the neighbour be: 10 °C as in MCS, or the same as ours?
-2. **Wall U-value:** the reference cavity wall uses U 0.17 ("PIR filled"). A filled 1950s cavity is nearer 0.5. Keep 0.17, or use a realistic retrofill?
-3. **Design temperature and degree days:** −2.2 °C and 2,200 K·day are fixed inputs for now. Should these come from the MCS / CIBSE location table, by postcode?
-4. **Ground floor ΔT:** should it be to the annual-mean ground temperature (EN 12831 style, 9 °C here)? Or to the outside design temperature?
-5. **Junctions:** a single house y-value (0.08 accredited, 0.15 SAP default for unknown details), or ψ × length per junction from phase 1?
-6. **Minimum ventilation:** should the 0.5 ach minimum for habitable rooms (MCS 2026) be applied automatically?
-7. **Annual energy:** should it include hot water now, or wait for phase 2 with occupancy?
+1. **Party walls:** user-definable. Any outside wall can be switched to a neighbour wall, and the neighbour temperature is an input (default 10 °C). The demo house has none.
+2. **U-values:** always computed from the stack-up layers. The only exceptions are glazing and doors, which take a fixed U.
+3. **Climate:** from the MCS tables (`src/engine/climate-mcs.ts`):
+   - design temperature from the chosen weather station, 99.6% by default, with the altitude rule;
+   - ground temperature from the regional mean annual temperature;
+   - degree days from the postcode area.
+4. **ΔT for each face:** set by what is on the other side. The ground floor uses the ground temperature.
+5. **Junctions:** left out for now, as an advanced feature for later.
+6. **Ventilation minimum:** the MCS 0.5 ach minimum applies to habitable rooms (living, dining, bedroom, study). It is on by default and can be switched off.
+7. **Hot water:** later.
+
+## Phase 1 status: built
+
+- **Pages and code:**
+  - `#/house` tab: plan with heat-loss and temperature colouring, room editor, per-face build-up and party-wall choice, windows and doors;
+  - cards for climate, ventilation, loft, heat pump, and build-ups (layers edited with the existing layer editor);
+  - room results table and model checks.
+- **Tests:** `src/engine/house.test.ts`.
+- **Demo house** at Manchester (Woodford, 60 m altitude, −4.5 °C):
+  - heat loss 4.7 kW, of which ventilation 1.9 kW and windows 0.8 kW;
+  - kitchen 0.90 ach;
+  - utility room 12.6 °C;
+  - about 10,000 kWh/yr;
+  - SCOP 3.6.
+- **Engine change from the design:** the COP uses refrigerant temperatures (condensing 5 K above flow, evaporating 6 K below outside). The plain flow-temperature Carnot fraction gave SCOP 4.9, which is too high.
+
+## Open questions
+
+1. **Picking the weather station:** at present the user picks it from the list. MCS picks the nearest station to the postcode centre, which needs postcode coordinates. Should we use postcodes.io (a free external API, so the postcode is sent off-site), or bundle a table of postcode-area centres?
+2. **Default room temperatures:** MCS (CIBSE 2026 Table 2-2) defaults depend on the age band. Should the house have an age-band field so new rooms take 18 or 21 °C automatically? At present it's 21 °C, with the MCS figure shown as a hint.
+3. **MVHR and the 0.5 ach minimum:** at present the minimum applies to the effective rate after heat recovery. Should it apply to the supply rate instead? The MCS calculator's exact treatment isn't documented on its site.
+4. **Loft gable walls:** not counted in the loft's heat balance yet. The loft-temperature effect is small. Add them as faces when room-in-roof (phase 4) arrives?
+5. **Next phase:** is phase 2 the right one (scenarios, compare and test conditions), or would you rather have emitters and zones (phase 3) first?

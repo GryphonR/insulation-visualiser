@@ -10,6 +10,7 @@ import { BuildupSummary } from './ui/BuildupSummary';
 import { ComparePage } from './ui/ComparePage';
 import { EnvironmentPanel } from './ui/EnvironmentPanel';
 import { HeatMap } from './ui/HeatMap';
+import { HousePage } from './ui/HousePage';
 import { LearnPage } from './ui/LearnPage';
 import { LineChart } from './ui/LineChart';
 import { MoisturePage } from './ui/MoisturePage';
@@ -21,9 +22,9 @@ import { WallSection } from './ui/WallSection';
 import { buildCharts } from './ui/charts';
 import { useClock } from './ui/useClock';
 
-type Mode = 'single' | 'compare' | 'moisture' | 'learn';
+type Mode = 'single' | 'compare' | 'moisture' | 'house' | 'learn';
 
-const MODES: Mode[] = ['single', 'compare', 'moisture', 'learn'];
+const MODES: Mode[] = ['single', 'compare', 'moisture', 'house', 'learn'];
 // Hash routes (#/compare, #/learn): GitHub Pages can't rewrite deep links to index.html.
 const modeFromHash = (): Mode => MODES.find((m) => location.hash === `#/${m}`) ?? 'single';
 
@@ -119,6 +120,7 @@ export default function App() {
             <button type="button" role="tab" aria-selected={mode === 'single'} className={mode === 'single' ? 'chip on' : 'chip'} onClick={() => setMode('single')}>Single wall</button>
             <button type="button" role="tab" aria-selected={mode === 'compare'} className={mode === 'compare' ? 'chip on' : 'chip'} onClick={() => setMode('compare')}>Compare build-ups</button>
             <button type="button" role="tab" aria-selected={mode === 'moisture'} className={mode === 'moisture' ? 'chip on' : 'chip'} onClick={() => setMode('moisture')}>Moisture over a year</button>
+            <button type="button" role="tab" aria-selected={mode === 'house'} className={mode === 'house' ? 'chip on' : 'chip'} onClick={() => setMode('house')}>Whole house</button>
           </div>
           {mode === 'single' && (
             <p className="mono small muted">
@@ -129,6 +131,8 @@ export default function App() {
 
         {mode === 'learn' ? (
           <LearnPage onOpenSimulator={() => setMode('single')} />
+        ) : mode === 'house' ? (
+          <HousePage customStackups={customStackups} />
         ) : mode === 'moisture' ? (
           <MoisturePage customStackups={customStackups} setCustomStackups={setCustomStackups} />
         ) : mode === 'compare' ? (
