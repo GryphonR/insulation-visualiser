@@ -161,6 +161,40 @@ These are sample data. The engine works them out from geometry, so expect them t
   - basement (lowest storey's depth below ground: walls against the ground, basement floor formula).
 - **Storeys card:** names, ceiling heights, floor zones, adding and removing storeys. A loft conversion is a new top storey with a room-in-roof room.
 
+## Phase 5 status: built
+
+- **Check against bills** (`house-calibrate.ts`, `HouseBills.tsx`):
+  - inputs: 12 months of gas, optional monthly mean temperatures, and a cooking and hot-water baseline (blank estimates it from the summer);
+  - monthly model with knobs for room temperature offset, airtightness factor and share of rooms heated;
+  - fit statistics against ASHRAE Guideline 14 limits (CV(RMSE) < 15%, NMBE ±5%);
+  - grid-search best fit, and an energy-signature heat loss figure from the bills;
+  - "Use as calibrated" stores the knobs on the scenario: annual heat uses them, and an estimated q50 is scaled; design-day temperatures are unchanged.
+- **Moisture and mould** (`house-moisture.ts`, `HouseMoisture.tsx`):
+  - room by room on a mean January day: moisture sources by room type and occupancy, removed by each room's ventilation;
+  - the coldest opaque surface by ISO 13788 (Rsi 0.25), giving surface RH and a suggested fix;
+  - toggles for drying washing indoors, extract fans used and trickle vents open;
+  - the existing EN ISO 13788 condensation check for each outside build-up in use.
+- **Report** (`HouseReport.tsx`):
+  - printable report (print to PDF) with section toggles: design conditions, room table with emitters and cover, heat pump and running cost, build-ups, assumptions and checks;
+  - room-table CSV; project export and import as JSON (sanitised, older saves upgraded).
+- **New project** (`house-templates.ts`, `HouseStart.tsx`):
+  - templates: mid-terrace, semi/end, detached, bungalow; width × depth; 1–3 storeys; seven age bands;
+  - EPC facts (cavity filled, loft 250 mm+, floor insulated, double glazed) override the age guesses;
+  - generates the rooms, windows and doors, party walls, build-ups, q50 and devices, plus radiators sized for the loss and a heat pump sized to it;
+  - shows the likely range of the design loss before creating.
+- **Undo and redo** for the whole project (50 steps, Ctrl+Z / Ctrl+Y outside text fields).
+- **Unheated room types** from board 1e: garage, conservatory, porch, cellar.
+
+## Not built yet (from the design boards)
+
+- Hot water and its share of running cost (board 4c), as you asked: later.
+- Thermal bridges and junctions (boards 2b edge upstand, 2c junction methods), as you asked: later.
+- Glazing library with frame factors and shading (board 2c). Glazing is a U-value plus one house-wide g-value today.
+- Survey mode (marking each input measured or assumed) and the version history list (board 1f). Undo and redo cover the history need for now.
+- UFH pipe routes and manifold placement drawn on the plan (board 1b); pipe sizing (board 3).
+- Rooms of any shape and plan tracing (board 1).
+- The three wall-tool skins (page "Wall tool skins"). These restyle the existing Single wall tool rather than the house model.
+
 ## Open questions
 
 1. **Picking the weather station:** at present the user picks it from the list. MCS picks the nearest station to the postcode centre, which needs postcode coordinates. Should we use postcodes.io (a free external API, so the postcode is sent off-site), or bundle a table of postcode-area centres?
@@ -174,4 +208,7 @@ These are sample data. The engine works them out from geometry, so expect them t
 9. **UFH pipe routes:** the design board draws spiral and serpentine routes, tails and manifold positions on the plan. Loops are numbers for now (area, spacing, covering, tail length). Is drawing the routes worth the effort, or is the loop length check enough?
 11. **Rooms of any shape:** rooms are still rectangles. L-shaped rooms are drawn as two rectangles of the same room type today. Do you want true polygon rooms (much more geometry work: walls at angles, bays), or is two-rectangle splitting acceptable for now?
 12. **Plan tracing:** the Plan board shows tracing over an uploaded floor-plan image. Worth doing next, or later?
+13. **Wall-tool skins:** the design has three skins for the Single wall tool (Drafting table, Instrument, Datasheet). Should one replace the current look, or should they be a user setting?
+14. **Bills from a smart meter:** the design imports half-hourly smart-meter data with consent (for example through the n3rgy or Glowmarkt APIs). Shall I wire that up, or keep manual monthly entry?
+15. **Report sharing:** the design shows sharing a report link with an installer. The app has no backend (it runs on GitHub Pages). Is export to PDF or JSON enough, or do you want hosted sharing?
 10. **Pipe sizing:** board 3's pipe table (velocity and pressure drop per run, index circuit) needs pipe runs drawn or entered. Should we enter them as a list (from, to, size, length), or leave pipe sizing out?

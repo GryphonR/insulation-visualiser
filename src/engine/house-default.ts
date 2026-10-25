@@ -15,10 +15,11 @@ export const DEFAULT_BUILDUPS: Buildup[] = [
   { id: 'loft', name: 'Cold roof ceiling, 270 mm loft', kind: 'roof', layers: preset('cold270') },
   { id: 'tiles', name: 'Pitched roof, tiles on felt', kind: 'roof', layers: [['m_roof_tile_concrete', 15]] },
   { id: 'flat', name: 'Lightweight timber flat roof', kind: 'roof', layers: preset('roofl') },
-  { id: 'slope', name: 'Rafters, 100 mm mineral wool', kind: 'roof', layers: [['pb', 12.5], ['mw', 100], ['vgap', 50], ['m_roof_tile_concrete', 15]] },
+  // Layers run outside → inside, as everywhere in the app.
+  { id: 'slope', name: 'Rafters, 100 mm mineral wool', kind: 'roof', layers: [['m_roof_tile_concrete', 15], ['vgap', 50], ['mw', 100], ['pb', 12.5]] },
   { id: 'knee', name: 'Knee wall, stud with 75 mm mineral wool', kind: 'wall', layers: [['pb', 12.5], ['mw', 75], ['pb', 12.5]] },
-  { id: 'dwall', name: 'Dormer, timber frame 75 mm mineral wool', kind: 'wall', layers: [['pb', 12.5], ['mw', 75], ['ply', 18], ['timber', 20]] },
-  { id: 'droof', name: 'Dormer flat roof, 50 mm between joists', kind: 'roof', layers: [['pb', 12.5], ['mw', 50], ['cavity', 100], ['ply', 18]] },
+  { id: 'dwall', name: 'Dormer, timber frame 75 mm mineral wool', kind: 'wall', layers: [['timber', 20], ['ply', 18], ['mw', 75], ['pb', 12.5]] },
+  { id: 'droof', name: 'Dormer flat roof, 50 mm between joists', kind: 'roof', layers: [['ply', 18], ['cavity', 100], ['mw', 50], ['pb', 12.5]] },
   { id: 'dg', name: 'Double glazed, 2010', kind: 'glazing', layers: [], u: 1.4 },
   { id: 'door', name: 'Composite door', kind: 'door', layers: [], u: 1.6 },
 ];

@@ -3,24 +3,46 @@ import type { Stackup } from '../engine/library';
 import { calcHouse, onStorey } from '../engine/house';
 import type { House, HouseResult } from '../engine/house';
 import { defaultHouse } from '../engine/house-default';
-import { applyChanges, chain, describe, diff, loadProject, newProject, saveProject, steps } from '../engine/house-scenarios';
+import { applyChanges, chain, describe, diff, loadProject, newProject, sanitizeProject, saveProject, steps } from '../engine/house-scenarios';
 import type { Change, Project, Scenario } from '../engine/house-scenarios';
 import { Chip } from './controls';
+import { HouseBills } from './HouseBills';
 import { HouseHeating } from './HouseHeating';
+import { HouseMoisture } from './HouseMoisture';
+import { HouseReport } from './HouseReport';
+import { HouseStart } from './HouseStart';
 import { HousePage } from './HousePage';
 import { HouseRuns } from './HouseRuns';
 import './house.css';
 
-type View = 'model' | 'heating' | 'scenarios' | 'compare' | 'runs';
+type View = 'model' | 'heating' | 'scenarios' | 'compare' | 'runs' | 'bills' | 'moisture' | 'report';
 const fmt = (v: number, d = 0) => v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d });
 const sgn = (v: number, d = 0) => (Math.abs(v) < 0.5 * 10 ** -d ? '0' : `${v > 0 ? '+' : '−'}${fmt(Math.abs(v), d)}`);
 const uid = () => `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 const KIND_LABEL: Record<Scenario['kind'], string> = { base: 'base · the house today', plan: 'plan', whatif: 'what-if' };
 
 export function HouseWorkspace({ customStackups }: { customStackups: Stackup[] }) {
-  const [project, setProject] = useState<Project>(loadProject);
+  // Undo / redo over the whole project (board 1f history). Edits typed in a field are grouped by the browser's own input events.
+  const [hist, setHist] = useState<{ past: Project[]; now: Project; future: Project[] }>(() => ({ past: [], now: loadProject(), future: [] }));
+  const project = hist.now;
+  const setProject = (fn: Project | ((p: Project) => Project)) =>
+    setHist((h) => {
+      const next = typeof fn === 'function' ? fn(h.now) : fn;
+      return next === h.now ? h : { past: [...h.past.slice(-49), h.now], now: next, future: [] };
+    });
+  const undo = () => setHist((h) => (h.past.length ? { past: h.past.slice(0, -1), now: h.past[h.past.length - 1], future: [h.now, ...h.future] } : h));
+  const redo = () => setHist((h) => (h.future.length ? { past: [...h.past, h.now], now: h.future[0], future: h.future.slice(1) } : h));
   useEffect(() => saveProject(project), [project]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || (e.target as HTMLElement)?.tagName === 'INPUT') return;
+      if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); } else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   const [view, setView] = useState<View>('model');
+  const [starting, setStarting] = useState(false);
   const active = project.scenarios.find((s) => s.id === project.active) ?? project.scenarios[0];
   const setHouse = (fn: (h: House) => House) =>
     setProject((p) => ({ ...p, scenarios: p.scenarios.map((s) => (s.id === p.active ? { ...s, house: fn(s.house) } : s)) }));
@@ -66,7 +88,10 @@ export function HouseWorkspace({ customStackups }: { customStackups: Stackup[] }
           <div className="chips">
             <button type="button" className="btn-secondary" onClick={branch}>New scenario from this</button>
             {active.parent && <button type="button" className="btn-secondary" onClick={remove}>Delete</button>}
-            <button type="button" className="btn-link" onClick={() => { if (confirm('Start again from the demo house? All scenarios will be replaced.')) setProject(newProject(defaultHouse())); }}>Start again from demo</button>
+            <button type="button" className="btn-secondary" disabled={!hist.past.length} onClick={undo} title="Undo (Ctrl+Z)">Undo</button>
+            <button type="button" className="btn-secondary" disabled={!hist.future.length} onClick={redo} title="Redo (Ctrl+Y)">Redo</button>
+            <button type="button" className="btn-secondary" onClick={() => setStarting(true)}>New project…</button>
+            <button type="button" className="btn-link" onClick={() => { if (confirm('Start again from the demo house? All scenarios will be replaced.')) setProject(newProject(defaultHouse())); }}>Demo house</button>
           </div>
         </div>
         <div className="chips" role="group" aria-label="Scenarios">
@@ -78,8 +103,18 @@ export function HouseWorkspace({ customStackups }: { customStackups: Stackup[] }
         </div>
       </section>
 
+      {starting && (
+        <HouseStart onCancel={() => setStarting(false)} onCreate={(h) => {
+          if (!confirm('Replace the current project (all scenarios) with this new house? Undo can bring it back.')) return;
+          setProject(newProject(h));
+          setStarting(false);
+          setView('model');
+        }} />
+      )}
+
       <div role="tablist" aria-label="Whole-house view" className="chips">
-        {([['model', 'Model'], ['heating', 'Heating'], ['scenarios', 'Scenarios'], ['compare', 'Compare A vs B'], ['runs', 'Test conditions & year']] as Array<[View, string]>).map(([v, l]) => (
+        {([['model', 'Model'], ['heating', 'Heating'], ['scenarios', 'Scenarios'], ['compare', 'Compare A vs B'], ['runs', 'Test conditions & year'],
+          ['bills', 'Check against bills'], ['moisture', 'Moisture & mould'], ['report', 'Report']] as Array<[View, string]>).map(([v, l]) => (
           <button key={v} type="button" role="tab" aria-selected={view === v} className={view === v ? 'chip on' : 'chip'} onClick={() => setView(v)}>{l}</button>
         ))}
       </div>
@@ -89,6 +124,10 @@ export function HouseWorkspace({ customStackups }: { customStackups: Stackup[] }
       {view === 'scenarios' && <ScenariosView project={project} active={active} results={results} ordered={ordered} setProject={setProject} />}
       {view === 'compare' && <CompareView project={project} results={results} ordered={ordered} />}
       {view === 'runs' && <HouseRuns key={active.id} house={active.house} setHouse={setHouse} project={project} ordered={ordered} />}
+      {view === 'bills' && <HouseBills key={active.id} house={active.house} setHouse={setHouse} />}
+      {view === 'moisture' && <HouseMoisture key={active.id} house={active.house} />}
+      {view === 'report' && <HouseReport house={active.house} scenarioName={active.name} project={project}
+        onImport={(p) => { const q = sanitizeProject(p); if (q) setProject(q); else alert('That file has no usable scenarios.'); }} />}
     </div>
   );
 }

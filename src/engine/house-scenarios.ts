@@ -141,15 +141,24 @@ export function newProject(house: House = defaultHouse()): Project {
   return { v: 1, active: 'base', scenarios: [{ id: 'base', name: 'As built', kind: 'base', parent: null, house }] };
 }
 
+/** A project read from storage or a file, with unusable scenarios dropped and older houses upgraded; null if nothing usable. */
+export function sanitizeProject(p: unknown): Project | null {
+  const q = p as Project | null;
+  if (!q || q.v !== 1 || !Array.isArray(q.scenarios)) return null;
+  const scenarios = q.scenarios.filter((s) => s && typeof s.id === 'string' && s.house && Array.isArray(s.house.rooms) && Array.isArray(s.house.buildups) && Array.isArray(s.house.storeys))
+    .map((s) => ({ ...s, house: upgradeHouse(s.house) }));
+  // A scenario whose parent was dropped hangs off the first one instead.
+  const ids = new Set(scenarios.map((s) => s.id));
+  scenarios.forEach((s, i) => { if (i > 0 && (!s.parent || !ids.has(s.parent))) s.parent = scenarios[0].id; if (i === 0) s.parent = null; });
+  if (!scenarios.length) return null;
+  return { v: 1, scenarios, active: scenarios.some((s) => s.id === q.active) ? q.active : scenarios[0].id };
+}
+
 /** Saved project; an older single-house save becomes the base scenario. */
 export function loadProject(): Project {
   try {
-    const p = JSON.parse(localStorage.getItem(KEY) ?? 'null');
-    if (p && p.v === 1 && Array.isArray(p.scenarios) && p.scenarios.length) {
-      const scenarios = p.scenarios.filter((s: Scenario) => s && typeof s.id === 'string' && s.house && Array.isArray(s.house.rooms) && Array.isArray(s.house.buildups))
-        .map((s: Scenario) => ({ ...s, house: upgradeHouse(s.house) }));
-      if (scenarios.length) return { v: 1, scenarios, active: scenarios.some((s: Scenario) => s.id === p.active) ? p.active : scenarios[0].id };
-    }
+    const p = sanitizeProject(JSON.parse(localStorage.getItem(KEY) ?? 'null'));
+    if (p) return p;
   } catch {
     // fall through to a fresh project
   }

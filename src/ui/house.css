@@ -106,3 +106,30 @@
 .shape-ed { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fbfcfd; }
 .shape-svg { width: 100%; max-height: 260px; }
 .shape-side { padding-top: 6px; border-top: 1px solid var(--line); }
+
+.bills-t td { padding: 3px 2px; }
+.bills-t .thk-input { width: 58px; padding: 4px; font-size: 12px; }
+.bills-bars .mb { padding-bottom: 18px; }
+.mb-pair { display: flex; gap: 2px; align-items: flex-end; height: 100%; }
+.mb-pair span { flex: 1; border-radius: 2px 2px 0 0; }
+.mb-meas, .key.meas { background: #14212b; }
+.mb-pred, .key.pred { background: #e9965f; }
+.key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; }
+.tile-ok { background: #e3f0e8; }
+.tile-bad { background: #fbe6d8; }
+.range { display: flex; flex-direction: column; gap: 6px; }
+.range-bar { position: relative; height: 14px; background: #f0f2f4; border-radius: 7px; }
+.range-fill { position: absolute; top: 0; bottom: 0; background: #f3c9a2; border-radius: 7px; }
+.range-mark { position: absolute; top: -3px; bottom: -3px; width: 3px; background: #c2410c; transform: translateX(-1px); }
+.start { border-color: #c2410c; }
+.report-title { font-size: 24px; }
+.report-body section { display: flex; flex-direction: column; gap: 8px; }
+.report-body ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+
+@media print {
+  .head, .tabs-row, .scen-bar, .house > [role='tablist'], .no-print, .foot, .callout { display: none !important; }
+  .page { padding: 0; background: #fff; }
+  .card { border: 0; }
+  .report-body { padding: 0; }
+  .h-table { font-size: 11px; }
+}

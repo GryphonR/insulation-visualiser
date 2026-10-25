@@ -5,6 +5,7 @@ import { layerR } from './swap';
 import { MCS_HDD, MCS_MEAN_TEMPS, MCS_STATIONS, designTemp, postcodeArea } from './climate-mcs';
 import { flowNeeded, loopLength, roomOut, systemFlow } from './house-heating';
 import type { Heating } from './house-heating';
+import type { Bills } from './house-calibrate';
 
 export type Side = 'N' | 'E' | 'S' | 'W';
 export const SIDES: Side[] = ['N', 'E', 'S', 'W'];
@@ -33,7 +34,8 @@ export interface RoomShape {
   /** Rooflight area in the first slope, m². */
   rooflight: number;
 }
-export type RoomType = 'living' | 'dining' | 'kitchen' | 'bedroom' | 'bathroom' | 'wc' | 'hall' | 'landing' | 'utility' | 'study' | 'store' | 'other';
+export type RoomType = 'living' | 'dining' | 'kitchen' | 'bedroom' | 'bathroom' | 'wc' | 'hall' | 'landing' | 'utility' | 'study' | 'store' | 'other'
+  | 'garage' | 'conservatory' | 'porch' | 'cellar';
 export interface Room {
   id: string; name: string; type: RoomType;
   /** Lowest storey and how many storeys it rises through (2 for a hall with the stair void). */
@@ -76,6 +78,10 @@ export interface House {
   hp: { capacity: number; maxFlow: number; elecP: number; gasP: number; gasSC: number; boilerEff: number };
   gains: Gains;
   heating: Heating;
+  /** Applied bills calibration (board 4d): rooms warmer/cooler by dt, estimated q50 scaled by q, share of rooms heated hf. */
+  calib?: { dt: number; q: number; hf: number; note: string };
+  /** Monthly gas bills for the calibration check. */
+  bills?: Bills;
 }
 
 /** Occupancy, heating schedule and gains for the hour-by-hour runs (board 6a). */
@@ -110,6 +116,7 @@ const HABITABLE: RoomType[] = ['living', 'dining', 'bedroom', 'study'];
 /** Older CIBSE room-type air change rates (pre-2000 houses), ach. */
 export const CIBSE_ACH: Record<RoomType, number> = {
   living: 1.5, dining: 1.5, kitchen: 2, bedroom: 1, bathroom: 3, wc: 2, hall: 2, landing: 2, utility: 2, study: 1.5, store: 1, other: 1.5,
+  garage: 3, conservatory: 1.5, porch: 3, cellar: 0.5,
 };
 const DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
@@ -414,7 +421,8 @@ export function calcHouse(h: House): HouseResult {
   const toHeated = (to: To) => to.k === 'room' && !!h.rooms.find((o) => o.id === to.id)?.heated;
   const envelope = heated.reduce((t, r) => t + (faces.get(r.id) ?? []).filter((f) => f.to.k !== 'party' && !toHeated(f.to)).reduce((s, f) => s + f.area, 0), 0);
   const v = h.vent;
-  const q50 = v.source === 'meas' ? v.q50 : v.factors.filter((f) => f.on).reduce((t, f) => t + f.dq, 0);
+  // A bills calibration scales an estimated q50; a measured one stands.
+  const q50 = v.source === 'meas' ? v.q50 : v.factors.filter((f) => f.on).reduce((t, f) => t + f.dq, 0) * (h.calib?.q ?? 1);
   const n50 = heatedV > EPS ? (q50 * envelope) / heatedV : 0, base = n50 / 20;
   const fansOff = v.mech !== 'none';
 
@@ -460,8 +468,10 @@ export function calcHouse(h: House): HouseResult {
   const Tin = heatedV > EPS ? hr.reduce((t, x) => t + x.T * x.V, 0) / heatedV : 21;
   const htc = Tin - Tout > EPS ? peakW / (Tin - Tout) : 0;
   // shortcut: degree-day estimate scales the whole design loss, ground loss included; replace with the year simulation (board 4b) in phase 2.
-  const annualKWh = (htc * hdd * 24) / 1000;
-  const wts = MEAN.map((m, i) => Math.max(0, 15.5 - m) * DAYS[i]), wsum = wts.reduce((a, b) => a + b, 0) || 1;
+  const wts = MEAN.map((m, i) => Math.max(0, 15.5 + (h.calib?.dt ?? 0) - m) * DAYS[i]), wsum = wts.reduce((a, b) => a + b, 0) || 1;
+  // Calibration: warmer rooms raise the degree-day base; part-heated houses use a share of it.
+  const ddRatio = h.calib ? wsum / (MEAN.reduce((a, m, i) => a + Math.max(0, 15.5 - m) * DAYS[i], 0) || 1) : 1;
+  const annualKWh = ((htc * hdd * 24) / 1000) * ddRatio * (h.calib?.hf ?? 1);
   const needs = hr.map((x) => ({ room: x.room, need: x.totalW }));
   const flowAt = (Te: number) => systemFlow(h, needs, Tout, Te);
   const copAt = (Te: number) => heatPumpCop(flowAt(Te), Te);

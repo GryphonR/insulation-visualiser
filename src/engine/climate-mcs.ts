@@ -72,4 +72,6 @@ export function designTemp(station: number, altitude: number, pct: '99.6' | '99'
 export const ROOM_TEMPS: Record<string, [number, number]> = {
   living: [21, 21], dining: [21, 21], kitchen: [18, 21], bedroom: [18, 21], bathroom: [22, 22], wc: [18, 21],
   hall: [18, 21], landing: [18, 21], utility: [18, 21], study: [21, 21], store: [18, 21], other: [21, 21],
+  // Spaces usually left unheated (board 1e); figures are for when someone heats them.
+  garage: [10, 10], conservatory: [18, 18], porch: [10, 10], cellar: [10, 10],
 };
