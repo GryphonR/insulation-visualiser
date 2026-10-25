@@ -5,6 +5,7 @@ import type { House } from '../engine/house';
 import { COVERS, RAD_LABEL, autoEmitters, emitterOut, loopLength, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
 import type { Emitter, RadType, Zone } from '../engine/house-heating';
 import { Chip } from './controls';
+import { MAX_PA_M, MAX_V, PIPE_SIZES, autoPipes, sizePipes } from '../engine/house-pipes';
 
 const fmt = (v: number, d = 0) => (Number.isFinite(v) ? v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—');
 const uid = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
@@ -42,6 +43,7 @@ export function HouseHeating({ house, setHouse }: { house: House; setHouse: (fn:
   const fmax = Math.max(c.minFlow * 1.5, ...hourly);
   const lowHours = hourly.filter((f) => f > 0 && f < c.minFlow).length;
   const gov = res.heat.gov;
+  const pipesRes = sizePipes(house, res);
 
   const add = (room: string, kind: Emitter['kind']) => upd((h) => {
     const zone = h.heating.zones.find((z) => (kind === 'ufh' ? z.kind === 'ufh' : z.kind === 'rad'))?.id ?? '';
@@ -209,6 +211,53 @@ export function HouseHeating({ house, setHouse }: { house: House; setHouse: (fn:
               </div>
             );
           })}
+        </section>
+
+        <section className="card panel">
+          <div className="section-head">
+            <div><h2>Pipework</h2><p className="muted small">Pipe runs from the heat pump. Each run carries the design flow of every emitter beyond it ({c.dT} K flow − return). Limits: about 1 m/s (0.8 in microbore) and {MAX_PA_M} Pa/m.</p></div>
+            <div className="chips">
+              <button type="button" className="btn-secondary" onClick={() => { if (!c.pipes?.length || confirm('Replace the pipe runs with a typical layout?')) upd((h) => { h.heating.pipes = autoPipes(h); }); }}>Lay out typical pipework</button>
+              <button type="button" className="btn-secondary" onClick={() => upd((h) => { const ps = h.heating.pipes ?? []; h.heating.pipes = [...ps, { id: uid('p'), name: 'New run', parent: ps[0]?.id ?? null, size: 'Cu 15 mm', length: 3 }]; })}>+ Run</button>
+            </div>
+          </div>
+          {!pipesRes.rows.length ? <p className="small muted">No pipework yet.</p> : <>
+            <div className="h-table-wrap">
+              <table className="h-table">
+                <thead><tr><th>Run</th><th>From</th><th>Size</th><th className="n">m</th><th>Ends at</th><th className="n">W</th><th className="n">l/min</th><th className="n">m/s</th><th className="n">Pa/m</th><th /></tr></thead>
+                <tbody>
+                  {pipesRes.rows.map((r) => {
+                    const p = r.pipe;
+                    const setP = (patch: Partial<typeof p>) => upd((h) => { const x = h.heating.pipes?.find((y) => y.id === p.id); if (x) Object.assign(x, patch); });
+                    return (
+                      <tr key={p.id} className={r.index ? 'idx' : ''} title={r.why.join('; ')}>
+                        <td><input className="h-text" value={p.name} aria-label="Run name" onChange={(e) => setP({ name: e.target.value })} /></td>
+                        <td><select className="h-sel" value={p.parent ?? ''} aria-label="Upstream run" onChange={(e) => setP({ parent: e.target.value || null })}>
+                          <option value="">Heat pump</option>{(c.pipes ?? []).filter((x) => x.id !== p.id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                        </select></td>
+                        <td><select className="h-sel" value={p.size} aria-label="Pipe size" onChange={(e) => setP({ size: e.target.value })}>{Object.keys(PIPE_SIZES).map((k) => <option key={k}>{k}</option>)}</select></td>
+                        <td className="n"><input type="number" className="thk-input" step={0.5} min={0} value={p.length} aria-label="Length m" onChange={(e) => setP({ length: Math.max(0, Number(e.target.value) || 0) })} /></td>
+                        <td><select className="h-sel" value={p.emitter ?? ''} aria-label="Emitter at the end" onChange={(e) => setP({ emitter: e.target.value || undefined })}>
+                          <option value="">— (branch)</option>{c.emitters.map((e) => <option key={e.id} value={e.id}>{roomName(e.room)} {e.kind === 'ufh' ? 'UFH' : e.kind === 'towel' ? 'towel rail' : e.id}</option>)}
+                        </select></td>
+                        <td className="n mono">{fmt(r.loadW)}</td>
+                        <td className="n mono">{fmt(r.flowLpm, 1)}</td>
+                        <td className={`n mono ${r.v > MAX_V(PIPE_SIZES[p.size] ?? 13.6) ? 'bad' : ''}`}>{fmt(r.v, 2)}</td>
+                        <td className={`n mono ${r.paM > MAX_PA_M ? 'bad' : ''}`}>{fmt(r.paM)}</td>
+                        <td><button type="button" className="btn-link" onClick={() => upd((h) => { h.heating.pipes = (h.heating.pipes ?? []).filter((x) => x.id !== p.id).map((x) => (x.parent === p.id ? { ...x, parent: p.parent } : x)); })}>Remove</button></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="hf-row">
+              <label className="hf"><span className="eyebrow">Pump head available</span><span className="hf-in"><input type="number" className="thk-input" step={1} value={c.pumpHead ?? 40} onChange={(e) => upd((h) => { h.heating.pumpHead = Number(e.target.value) || 0; })} /><span className="small muted">kPa at the design flow</span></span></label>
+            </div>
+            <p className={pipesRes.headOk ? 'small' : 'small warn'}>Index circuit (highlighted): {fmt(pipesRes.indexDp / 1000, 1)} kPa through {pipesRes.indexPath.length} runs, flow and return, with {Math.round((1.3 - 1) * 100)}% for fittings and 5 kPa for the emitter and valves.{' '}
+              {pipesRes.headOk ? `Within the pump's ${fmt(pipesRes.head / 1000)} kPa.` : `More than the pump's ${fmt(pipesRes.head / 1000)} kPa: upsize the highlighted runs.`}</p>
+            {pipesRes.unpiped.length > 0 && <p className="small warn">Not piped yet: {pipesRes.unpiped.map((id) => { const e = c.emitters.find((x) => x.id === id); return e ? `${roomName(e.room)} ${e.kind === 'ufh' ? 'UFH' : id}` : id; }).join(', ')}.</p>}
+          </>}
         </section>
 
         <section className="card panel">

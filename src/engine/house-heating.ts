@@ -1,5 +1,6 @@
 // Emitters, zones and flow temperature (boards 3, 3a, 1b). Types only from house.ts, so no import cycle.
 import type { House, Room } from './house';
+import type { Pipe } from './house-pipes';
 
 export type RadType = 'K1' | 'P1' | 'K2' | 'K3';
 /** Panel radiator output per metre length at 600 mm high, ΔT50, W/m (typical catalogue values). */
@@ -37,6 +38,9 @@ export interface Heating {
   dT: number;
   /** Heat pump minimum flow rate, l/min. */
   minFlow: number;
+  /** Pipe runs from the heat pump (board 3), and the pump's available head at the design flow, kPa. */
+  pipes?: Pipe[];
+  pumpHead?: number;
 }
 
 export const radRated = (e: Pick<Emitter, 'type' | 'len' | 'height'>) => (RAD_PER_M[e.type] ?? 1700) * (e.len / 1000) * (e.height / 600) ** 0.9;
