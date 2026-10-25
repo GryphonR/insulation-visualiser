@@ -2,7 +2,7 @@
 // difference from the parent, so they can be listed, switched off one by one and applied step by step.
 import { buildupU, calcHouse } from './house';
 import type { House } from './house';
-import { defaultHouse, loadHouse } from './house-default';
+import { defaultHouse, loadHouse, withHeating } from './house-default';
 
 export type Seg = string | { id: string };
 export interface Change { key: string; path: Seg[]; from: unknown; to: unknown }
@@ -148,7 +148,7 @@ export function loadProject(): Project {
     if (p && p.v === 1 && Array.isArray(p.scenarios) && p.scenarios.length) {
       const d = defaultHouse();
       const scenarios = p.scenarios.filter((s: Scenario) => s && typeof s.id === 'string' && s.house && Array.isArray(s.house.rooms))
-        .map((s: Scenario) => ({ ...s, house: { ...d, ...s.house, vent: { ...d.vent, ...s.house.vent }, gains: { ...d.gains, ...s.house.gains } } }));
+        .map((s: Scenario) => ({ ...s, house: withHeating({ ...d, ...s.house, heating: s.house.heating, vent: { ...d.vent, ...s.house.vent }, gains: { ...d.gains, ...s.house.gains } }) }));
       if (scenarios.length) return { v: 1, scenarios, active: scenarios.some((s: Scenario) => s.id === p.active) ? p.active : scenarios[0].id };
     }
   } catch {

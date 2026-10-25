@@ -125,6 +125,25 @@ These are sample data. The engine works them out from geometry, so expect them t
   - typical year about 8,350 kWh (degree-day estimate 10,000), SCOP 3.5;
   - with the setback, the design-day reheat runs the 6 kW heat pump flat out and leaves living rooms short for a few hours.
 
+## Phase 3 status: built
+
+- **Emitters** (`src/engine/house-heating.ts`):
+  - **Panel radiators** (K1, P+, K2, K3) by length × height, from typical catalogue output per metre at ΔT50. Output = rated × ((mean water − room)/50)^1.3.
+  - **Towel rails** by rated output.
+  - **UFH loops:** area, spacing and covering. Output = (mean water − room) / (1/K_spacing + R_cover), capped at the EN 1264 29 °C floor-surface limit. Loop length = area/spacing + tails, flagged over 100 m.
+- **Zones:** radiator zones and UFH manifolds (direct, or blended to 30–45 °C), switchable on and off, with their own hours or following the occupancy schedule.
+- **Flow temperature:**
+  - three controls: fixed, ideal weather compensation (the lowest flow that keeps every room at setpoint), or a two-point curve;
+  - the room setting the flow temperature is named;
+  - flow and COP by month. The heat pump COP now uses this flow, so bigger emitters raise SCOP.
+- **Heating view:**
+  - flow curve against the ideal;
+  - emitter table with output, need and cover for each room, with add, remove and auto-size;
+  - zones, plus heat pump flow by hour against its minimum flow;
+  - the Model plan gains an "Emitter cover" colouring.
+- **Hour-by-hour runs:** each room's heat is its emitters' output at the hour's flow temperature, on its zone's schedule.
+- **Saved houses** from before phase 3 get one K2 radiator per heated room, sized for the design loss.
+
 ## Open questions
 
 1. **Picking the weather station:** at present the user picks it from the list. MCS picks the nearest station to the postcode centre, which needs postcode coordinates. Should we use postcodes.io (a free external API, so the postcode is sent off-site), or bundle a table of postcode-area centres?
@@ -134,3 +153,6 @@ These are sample data. The engine works them out from geometry, so expect them t
 5. **Weather:** the typical year is synthetic, built from monthly means. Should we bundle real hourly test-reference-year data for the 14 MCS stations (CIBSE TRY files are paid; PVGIS TMY is free)?
 6. **Comfort thresholds:** too warm is above 25 °C, or 26 °C in bedrooms (a simplification of CIBSE TM59). Is that enough, or do you want TM59's full criteria?
 7. **Scenarios and the house plan:** a scenario can move or add rooms. Should structural changes be locked in scenarios, with only fabric and systems allowed to change?
+8. **Radiator catalogue:** outputs are generic per-metre figures. Is there a manufacturer range (Stelrad, Quinn, Myson…) you want built in, or is entering a rated output for "other" enough?
+9. **UFH pipe routes:** the design board draws spiral and serpentine routes, tails and manifold positions on the plan. Loops are numbers for now (area, spacing, covering, tail length). Is drawing the routes worth the effort, or is the loop length check enough?
+10. **Pipe sizing:** board 3's pipe table (velocity and pressure drop per run, index circuit) needs pipe runs drawn or entered. Should we enter them as a list (from, to, size, length), or leave pipe sizing out?

@@ -1,5 +1,8 @@
 import { MAT, PRESETS } from './data';
+import { calcHouse } from './house';
 import type { Buildup, Device, House, Opening, Room } from './house';
+import { autoEmitters } from './house-heating';
+import type { Emitter, RadType } from './house-heating';
 
 const preset = (id: string) => PRESETS.find((p) => p.id === id)?.layers ?? [];
 
@@ -89,7 +92,33 @@ export function defaultHouse(): House {
       living: hours([6, 7, 8, 16, 17, 18, 19, 20, 21, 22]),
       bedrooms: hours([6, 7, 21, 22]),
     },
+    heating: {
+      control: 'ideal', curveDesign: 45, curve15: 30, dT: 5, minFlow: 7,
+      zones: [
+        { id: 'z1', name: 'Living areas', kind: 'rad', color: '#c2410c', on: true, hours: null, blend: 0 },
+        { id: 'z2', name: 'Bedrooms', kind: 'rad', color: '#1f6fb5', on: true, hours: null, blend: 0 },
+        { id: 'z3', name: 'Bathroom', kind: 'rad', color: '#1f7a4d', on: true, hours: null, blend: 0 },
+      ],
+      emitters: [
+        E('R1', 'living', 'z1', 'K2', 1400), E('R2', 'kitchen', 'z1', 'K2', 800), E('R3', 'hall', 'z1', 'K1', 600),
+        { ...E('R4', 'wc', 'z1', 'K1', 500), kind: 'towel', rated: 860 }, E('R5', 'dining', 'z1', 'K2', 1200),
+        E('R6', 'bed1', 'z2', 'K2', 1200), E('R7', 'bed2', 'z2', 'K2', 1200), E('R8', 'bed3', 'z2', 'K2', 800),
+        { ...E('R9', 'bath', 'z3', 'K1', 800), kind: 'towel', rated: 1440 },
+      ],
+    },
   };
+}
+
+function E(id: string, room: string, zone: string, type: RadType, len: number): Emitter {
+  return { id, room, kind: 'radiator', zone, type, len, height: 600, rated: 0, area: 0, spacing: 150, cover: 'Tiles', tail: 5 };
+}
+
+/** A house saved before emitters existed: one radiator per heated room, sized for the design loss. */
+export function withHeating(h: House): House {
+  if (h.heating && Array.isArray(h.heating.emitters)) return h;
+  const d = defaultHouse(), base = { ...h, heating: { ...d.heating, zones: [], emitters: [] } };
+  const res = calcHouse(base);
+  return { ...base, heating: { ...base.heating, emitters: autoEmitters(base, res.rooms.filter((r) => r.room.heated).map((r) => ({ room: r.room, need: r.totalW }))) } };
 }
 
 const KEY = 'insulation-visualiser.house.v1';
@@ -102,7 +131,8 @@ export function loadHouse(): House {
     const d = defaultHouse();
     const h: House = { ...d, ...p, vent: { ...d.vent, ...p.vent }, loft: { ...d.loft, ...p.loft }, climate: { ...d.climate, ...p.climate }, hp: { ...d.hp, ...p.hp }, gains: { ...d.gains, ...p.gains } };
     h.buildups = h.buildups.map((b) => ({ ...b, layers: (b.layers ?? []).filter(([m, t]) => !!MAT[m] && Number.isFinite(t) && t > 0) }));
-    return h;
+    h.heating = p.heating;
+    return withHeating(h);
   } catch {
     return defaultHouse();
   }

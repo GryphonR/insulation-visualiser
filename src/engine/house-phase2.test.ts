@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { calcHouse } from './house';
-import { defaultHouse } from './house-default';
+import type { House } from './house';
+import { defaultHouse, withHeating } from './house-default';
 import { applyChanges, describe as describeChange, diff, steps } from './house-scenarios';
 import { simulate, yearTotals } from './house-sim';
 
@@ -37,8 +38,8 @@ describe('scenarios', () => {
 describe('hour-by-hour runs', () => {
   const h = defaultHouse();
 
-  it('design day, heating on all day: every heated room holds its setpoint', () => {
-    const hh = structuredClone(h);
+  it('design day, heating on all day with radiators sized for the loss: every heated room holds its setpoint', () => {
+    const hh = withHeating({ ...structuredClone(h), heating: undefined as unknown as House['heating'] });
     hh.gains.living = Array(24).fill(1);
     hh.gains.bedrooms = Array(24).fill(1);
     const r = simulate(hh, 'design');
@@ -46,10 +47,18 @@ describe('hour-by-hour runs', () => {
     expect(r.peakW).toBeLessThanOrEqual(hh.hp.capacity * 1000 + 1);
   });
 
-  it('design day with a setback: reheat runs the heat pump flat out and leaves rooms short', () => {
+  it('design day, demo house: the undersized kitchen radiator leaves the kitchen short even with heating on all day', () => {
+    const hh = structuredClone(h);
+    hh.gains.living = Array(24).fill(1);
+    const r = simulate(hh, 'design');
+    const k = r.rooms.findIndex((x) => x.id === 'kitchen'), l = r.rooms.findIndex((x) => x.id === 'living');
+    expect(Math.min(...r.T[k])).toBeLessThan(20.5);
+    expect(Math.min(...r.T[l])).toBeGreaterThan(20.7);
+  });
+
+  it('design day with a setback: rooms are short after the reheat starts', () => {
     const r = simulate(h, 'design');
     const i = r.rooms.findIndex((x) => x.id === 'living');
-    expect(r.peakW).toBeCloseTo(h.hp.capacity * 1000, 0);
     expect(r.comfort[i].cold).toBeGreaterThan(0);
   });
 

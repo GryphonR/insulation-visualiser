@@ -3,6 +3,8 @@
 import { MAT, MEAN } from './data';
 import { layerR } from './swap';
 import { MCS_HDD, MCS_MEAN_TEMPS, MCS_STATIONS, designTemp, postcodeArea } from './climate-mcs';
+import { flowNeeded, loopLength, roomOut, systemFlow } from './house-heating';
+import type { Heating } from './house-heating';
 
 export type Side = 'N' | 'E' | 'S' | 'W';
 export const SIDES: Side[] = ['N', 'E', 'S', 'W'];
@@ -46,6 +48,7 @@ export interface House {
   };
   hp: { capacity: number; maxFlow: number; elecP: number; gasP: number; gasSC: number; boilerEff: number };
   gains: Gains;
+  heating: Heating;
 }
 
 /** Occupancy, heating schedule and gains for the hour-by-hour runs (board 6a). */
@@ -225,16 +228,20 @@ export interface HouseResult {
   months: Array<{ heat: number; Tout: number; flow: number; cop: number; elec: number }>;
   hp: { designCop: number; scop: number; elecKWh: number; spare: number; costHP: number; costGas: number; gasKWh: number };
   checks: Array<{ level: 'error' | 'warn'; text: string }>;
+  heat: {
+    designFlow: number;
+    /** Per heated room: design need, emitter output at the design flow, cover (out / need), lowest flow that meets the need. */
+    rooms: Array<{ id: string; need: number; out: number; cover: number; req: number; has: boolean }>;
+    /** The room that sets the flow temperature. */
+    gov: { id: string; req: number } | null;
+  };
 }
 
 export function deviceM3(d: Device) { return d.opts[d.pick]?.[1] ?? 0; }
 
-/** Weather-compensated flow: 25 °C at 15 °C outside, rising to the max flow at the design temperature. */
-export const flowTemp = (maxFlow: number, Tdesign: number, Te: number) => 25 + (maxFlow - 25) * Math.min(1, Math.max(0, (15 - Te) / (15 - Tdesign || 1)));
-
 /** Carnot fraction 0.45 on refrigerant temperatures (condensing 5 K above flow, evaporating 6 K below outside), 0.93 for defrost between −4 and 6 °C. */
-export function heatPumpCop(maxFlow: number, Tdesign: number, Te: number): number {
-  const Tc = flowTemp(maxFlow, Tdesign, Te) + 5, Tev = Te - 6, c = (0.45 * (Tc + 273.15)) / Math.max(3, Tc - Tev);
+export function heatPumpCop(flow: number, Te: number): number {
+  const Tc = flow + 5, Tev = Te - 6, c = (0.45 * (Tc + 273.15)) / Math.max(3, Tc - Tev);
   return Math.min(7, c * (Te > -4 && Te < 6 ? 0.93 : 1));
 }
 
@@ -336,8 +343,16 @@ export function calcHouse(h: House): HouseResult {
   // shortcut: degree-day estimate scales the whole design loss, ground loss included; replace with the year simulation (board 4b) in phase 2.
   const annualKWh = (htc * hdd * 24) / 1000;
   const wts = MEAN.map((m, i) => Math.max(0, 15.5 - m) * DAYS[i]), wsum = wts.reduce((a, b) => a + b, 0) || 1;
-  const flowAt = (Te: number) => flowTemp(h.hp.maxFlow, Tout, Te);
-  const copAt = (Te: number) => heatPumpCop(h.hp.maxFlow, Tout, Te);
+  const needs = hr.map((x) => ({ room: x.room, need: x.totalW }));
+  const flowAt = (Te: number) => systemFlow(h, needs, Tout, Te);
+  const copAt = (Te: number) => heatPumpCop(flowAt(Te), Te);
+  const designFlow = flowAt(Tout);
+  const emitRooms = hr.map((x) => {
+    const has = h.heating.emitters.some((e) => e.room === x.room.id);
+    const out = roomOut(h, x.room.id, designFlow, x.room.setpoint);
+    return { id: x.room.id, need: x.totalW, out, cover: x.totalW > 0 ? out / x.totalW : Infinity, req: flowNeeded(h, x.room.id, x.totalW, x.room.setpoint), has };
+  });
+  const gov = emitRooms.filter((e) => e.has).reduce<(typeof emitRooms)[number] | null>((a, e) => (!a || e.req > a.req ? e : a), null);
   const months = MEAN.map((m, i) => {
     const heat = (annualKWh * wts[i]) / wsum, cop = copAt(m);
     return { heat, Tout: m, flow: flowAt(m), cop, elec: heat / cop };
@@ -369,10 +384,19 @@ export function calcHouse(h: House): HouseResult {
   if (!hddKnown) checks.push({ level: 'warn', text: `Postcode area "${area || h.climate.postcode}" not in the MCS degree-day table; using 2,200 K·day.` });
   if (v.mech === 'mvhr' && q50 > 5) checks.push({ level: 'warn', text: `MVHR with q50 ${q50.toFixed(1)}: above 5 m³/h·m² most of the heat recovery is lost to leakage.` });
   if (hp.spare < 0) checks.push({ level: 'warn', text: `Heat pump is ${Math.round(-hp.spare * 100)}% short of the design heat loss.` });
+  for (const e of emitRooms) {
+    const name = h.rooms.find((r) => r.id === e.id)?.name ?? e.id;
+    if (!e.has) checks.push({ level: 'warn', text: `${name} is heated but has no emitter.` });
+    else if (e.cover < 0.995) checks.push({ level: 'warn', text: `${name}: emitters give ${Math.round(e.out)} W at ${designFlow.toFixed(0)} °C flow, ${Math.round(e.need)} W needed (${Math.round(e.cover * 100)}%).` });
+  }
+  for (const e of h.heating.emitters) {
+    if (e.kind === 'ufh' && loopLength(e) > 100) checks.push({ level: 'warn', text: `UFH loop in ${h.rooms.find((r) => r.id === e.room)?.name ?? e.room} is ${Math.round(loopLength(e))} m; keep 16 mm loops under 100 m (split it in two).` });
+  }
 
   return {
     Tout, Tg, hdd, hddKnown, station: MCS_STATIONS[h.climate.station]?.[0] ?? '?', region: reg[0],
     rooms, loft: hasLoft ? { T: T.loft, area: loftA, V: loftV } : null,
     q50, n50, envelope, heatedV, heatedA, peakW, paths, htc, hlp: heatedA > EPS ? htc / heatedA : 0, annualKWh, months, hp, checks,
+    heat: { designFlow, rooms: emitRooms, gov: gov ? { id: gov.id, req: gov.req } : null },
   };
 }

@@ -6,11 +6,12 @@ import { defaultHouse } from '../engine/house-default';
 import { applyChanges, chain, describe, diff, loadProject, newProject, saveProject, steps } from '../engine/house-scenarios';
 import type { Change, Project, Scenario } from '../engine/house-scenarios';
 import { Chip } from './controls';
+import { HouseHeating } from './HouseHeating';
 import { HousePage } from './HousePage';
 import { HouseRuns } from './HouseRuns';
 import './house.css';
 
-type View = 'model' | 'scenarios' | 'compare' | 'runs';
+type View = 'model' | 'heating' | 'scenarios' | 'compare' | 'runs';
 const fmt = (v: number, d = 0) => v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d });
 const sgn = (v: number, d = 0) => (Math.abs(v) < 0.5 * 10 ** -d ? '0' : `${v > 0 ? '+' : '−'}${fmt(Math.abs(v), d)}`);
 const uid = () => `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
@@ -78,12 +79,13 @@ export function HouseWorkspace({ customStackups }: { customStackups: Stackup[] }
       </section>
 
       <div role="tablist" aria-label="Whole-house view" className="chips">
-        {([['model', 'Model'], ['scenarios', 'Scenarios'], ['compare', 'Compare A vs B'], ['runs', 'Test conditions & year']] as Array<[View, string]>).map(([v, l]) => (
+        {([['model', 'Model'], ['heating', 'Heating'], ['scenarios', 'Scenarios'], ['compare', 'Compare A vs B'], ['runs', 'Test conditions & year']] as Array<[View, string]>).map(([v, l]) => (
           <button key={v} type="button" role="tab" aria-selected={view === v} className={view === v ? 'chip on' : 'chip'} onClick={() => setView(v)}>{l}</button>
         ))}
       </div>
 
       {view === 'model' && <HousePage key={active.id} house={active.house} setHouse={setHouse} customStackups={customStackups} />}
+      {view === 'heating' && <HouseHeating key={active.id} house={active.house} setHouse={setHouse} />}
       {view === 'scenarios' && <ScenariosView project={project} active={active} results={results} ordered={ordered} setProject={setProject} />}
       {view === 'compare' && <CompareView project={project} results={results} ordered={ordered} />}
       {view === 'runs' && <HouseRuns key={active.id} house={active.house} setHouse={setHouse} project={project} ordered={ordered} />}

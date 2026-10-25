@@ -94,3 +94,11 @@
 .cal-d { height: 12px; border: 0; padding: 0; border-radius: 2px; cursor: pointer; }
 .cal-d.none { background: transparent; cursor: default; }
 .cal-d.on { outline: 2px solid #14212b; }
+
+.zone { border-left: 4px solid; padding: 4px 0 8px 12px; display: flex; flex-direction: column; gap: 6px; }
+.h-size .thk-input { width: 64px; }
+.callout.warnbox { background: #fdf0e6; border-color: #f3c9a2; }
+.flow-bars { position: relative; display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 2px; height: 120px; align-items: end; border-bottom: 1px solid var(--line-strong); }
+.fb { display: flex; align-items: flex-end; height: 100%; }
+.fb span { display: block; width: 100%; border-radius: 2px 2px 0 0; }
+.fb-min { position: absolute; left: 0; right: 0; border-top: 1.5px dashed #9a3412; pointer-events: none; }

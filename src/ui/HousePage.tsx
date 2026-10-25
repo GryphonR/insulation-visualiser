@@ -55,7 +55,7 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
 
   const [storey, setStorey] = useState(0);
   const [sel, setSel] = useState<string>(house.rooms[0]?.id ?? '');
-  const [lens, setLens] = useState<'loss' | 'temp' | 'none'>('loss');
+  const [lens, setLens] = useState<'loss' | 'temp' | 'cover' | 'none'>('loss');
   const [editing, setEditing] = useState<string | null>(null);
   const library = useMemo(() => [...BUILTIN_STACKUPS, ...customStackups], [customStackups]);
 
@@ -79,6 +79,7 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
       h.rooms = h.rooms.filter((r) => r.id !== sel);
       h.openings = h.openings.filter((o) => o.room !== sel);
       h.vent.devices = h.vent.devices.filter((d) => d.room !== sel);
+      h.heating.emitters = h.heating.emitters.filter((e) => e.room !== sel);
     });
     setSel(house.rooms.find((r) => r.id !== sel)?.id ?? '');
   };
@@ -130,15 +131,19 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
             <div className="chips" role="group" aria-label="Colour rooms by">
               <Chip on={lens === 'loss'} onClick={() => setLens('loss')}>Heat loss W/m²</Chip>
               <Chip on={lens === 'temp'} onClick={() => setLens('temp')}>Temperature</Chip>
+              <Chip on={lens === 'cover'} onClick={() => setLens('cover')}>Emitter cover</Chip>
               <Chip on={lens === 'none'} onClick={() => setLens('none')}>None</Chip>
             </div>
             <svg className="plan" viewBox={`0 0 ${maxX * S + PAD * 2} ${maxY * S + PAD * 2}`} role="img" aria-label={`${house.storeys[storey]?.name} plan`}>
               <text x={PAD + (maxX * S) / 2} y={18} textAnchor="middle" className="plan-n">N</text>
               {onThis.map((r) => {
                 const x = res.rooms.find((q) => q.room.id === r.id)!;
+                const cv = res.heat.rooms.find((q) => q.id === r.id);
                 const fill = lens === 'none' ? '#fff' : lens === 'loss' ? (r.heated ? mix([247, 239, 225], [233, 150, 95], (x.perM2 - 20) / 70) : '#eceff1')
+                  : lens === 'cover' ? (!cv ? '#eceff1' : !cv.has || cv.cover < 0.995 ? '#f3c9a2' : '#dcebdf')
                   : mix([143, 179, 227], [247, 239, 225], (x.T - 5) / 16);
-                const label = lens === 'temp' ? `${fmt(x.T, 1)} °C` : r.heated ? `${fmt(x.totalW)} W` : `unheated ${fmt(x.T, 1)} °C`;
+                const label = lens === 'temp' ? `${fmt(x.T, 1)} °C` : lens === 'cover' ? (!cv ? 'unheated' : cv.has ? `${fmt(cv.cover * 100)}% cover` : 'no emitter')
+                  : r.heated ? `${fmt(x.totalW)} W` : `unheated ${fmt(x.T, 1)} °C`;
                 const X = PAD + r.x * S, Y = PAD + r.y * S;
                 return (
                   <g key={r.id} onClick={() => setSel(r.id)} className="plan-room">

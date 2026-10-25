@@ -5,6 +5,7 @@ import { MCS_STATIONS } from './climate-mcs';
 import { solarAt } from './solar';
 import { calcHouse, heatPumpCop } from './house';
 import type { House, HouseResult, RoomType } from './house';
+import { roomOut, roomSchedule, systemFlow } from './house-heating';
 
 export type CaseId = 'design' | 'summer' | 'snap' | 'year';
 export const CASES: Array<{ id: CaseId; name: string; use: string }> = [
@@ -110,10 +111,16 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h))
     Hout[LOFT] = Math.max(1, Hin / Math.max(0.05, base.loft.T - base.Tout));
   }
 
-  // Heating: each heated room gets its share of the heat pump, sized by its design loss.
-  const ratio = base.peakW > 0 ? (h.hp.capacity * 1000) / base.peakW : 1;
-  const Pmax = rooms.map((r) => (r.room.heated ? Math.max(0, r.totalW) * ratio : 0));
-  const sched = rooms.map((r) => (BED.includes(r.room.type) ? g.bedrooms : g.living));
+  // Heating: each room's emitters at the system flow for this hour, on its zone's schedule.
+  const needs = rooms.filter((r) => r.room.heated).map((r) => ({ room: r.room, need: r.totalW }));
+  const flowCache = new Map<number, number>();
+  const flowAt = (Te: number) => {
+    const k = Math.round(Te * 4) / 4;
+    if (!flowCache.has(k)) flowCache.set(k, systemFlow(h, needs, base.Tout, k));
+    return flowCache.get(k)!;
+  };
+  const off = Array(24).fill(0);
+  const sched = rooms.map((r) => (r.room.heated ? roomSchedule(h, r.room) ?? off : off));
 
   // Gain shares: awake gains to living spaces, asleep to bedrooms, cooking to kitchens (by floor area).
   const share = (types: RoomType[]) => {
@@ -158,11 +165,14 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h))
     const snapOff = id === 'snap' && tAbs >= wx.warmup;
     let Ptot = 0;
     P.fill(0);
+    const flow = flowAt(To);
     rooms.forEach((r, i) => {
-      if (!r.room.heated || !heatingOn || snapOff) return;
+      if (!r.room.heated || !heatingOn || snapOff || sched[i] === off) return;
       // The cold snap starts from a house held at its setpoints.
       const set = sched[i][hr] || id === 'snap' ? r.room.setpoint : g.setback;
-      P[i] = Math.min(Pmax[i], Math.max(0, set * Hsum[i] - rhs[i]));
+      const need = set * Hsum[i] - rhs[i];
+      if (need <= 0) return;
+      P[i] = Math.min(roomOut(h, r.room.id, flow, T[i]), need);
       Ptot += P[i];
     });
     const cap = h.hp.capacity * 1000;
@@ -186,7 +196,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h))
   for (let k = 0; k < hours; k++) {
     peakW = Math.max(peakW, heat[k]);
     heatKWh += heat[k] / 1000;
-    elecKWh += heat[k] / 1000 / heatPumpCop(h.hp.maxFlow, base.Tout, out[k]);
+    elecKWh += heat[k] / 1000 / heatPumpCop(flowAt(out[k]), out[k]);
   }
   const comfort = rooms.map((r, i) => {
     let cold = 0, warm = 0, min = Infinity, max = -Infinity, below16: number | null = null;
