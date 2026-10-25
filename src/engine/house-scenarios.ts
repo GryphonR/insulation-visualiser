@@ -25,7 +25,8 @@ export function diff(a: unknown, b: unknown, path: Seg[] = [], out: Change[] = [
       else out.push({ key: segKey(p), path: p, from: ea, to: eb });
     }
   } else if (isObj(a) && isObj(b)) {
-    for (const k of [...new Set([...Object.keys(a), ...Object.keys(b)])]) diff(a[k], b[k], [...path, k], out);
+    // Tracing images are drawing aids, not part of the house: never a scenario change.
+    for (const k of [...new Set([...Object.keys(a), ...Object.keys(b)])]) if (!(path.length === 0 && k === 'trace')) diff(a[k], b[k], [...path, k], out);
   } else out.push({ key: segKey(path), path, from: a, to: b });
   return out;
 }

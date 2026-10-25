@@ -153,3 +153,7 @@
 .pipe-tail { stroke: #55626e; stroke-dasharray: 5 3; }
 .manifold { cursor: move; touch-action: none; }
 .loop-label { paint-order: stroke; stroke: #fff; stroke-width: 3px; pointer-events: none; }
+.trace { display: flex; flex-direction: column; gap: 8px; }
+.file-btn { display: inline-flex; align-items: center; cursor: pointer; }
+.thk-input.wide { width: 110px; }
+.nudge { display: inline-grid; grid-template-columns: repeat(4, 36px); gap: 4px; }

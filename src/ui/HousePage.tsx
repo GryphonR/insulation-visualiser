@@ -9,6 +9,8 @@ import type { Buildup, BuildupKind, DefaultKey, House, Room, RoomType, Side } fr
 import { Chip } from './controls';
 import { RoomShapeEditor } from './HouseShape';
 import { HousePlan, planBounds } from './HousePlan';
+import { TraceControls, traceUnderlay } from './HouseTrace';
+import type { Pt } from '../engine/geom';
 import { StackupModal } from './StackupModal';
 import type { StackupDraft } from './StackupModal';
 import './house.css';
@@ -70,6 +72,7 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
   // Plan geometry, shared by all storeys so they line up.
   const { maxX, maxY, minX, minY } = planBounds(house);
   const [outlineMode, setOutlineMode] = useState(true);
+  const [measure, setMeasure] = useState<{ len: number; pts: Pt[] } | null>(null);
 
   const addRoom = () => {
     const id = uid('r');
@@ -136,7 +139,23 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
               <Chip on={lens === 'cover'} onClick={() => setLens('cover')}>Emitter cover</Chip>
               <Chip on={lens === 'none'} onClick={() => setLens('none')}>None</Chip>
             </div>
-            <HousePlan house={house} storey={storey} sel={sel} setSel={setSel} editOutline={outlineMode}
+            <HousePlan house={house} storey={storey} sel={sel} setSel={setSel} editOutline={outlineMode && !measure}
+              underlay={traceUnderlay(house, storey)}
+              overlay={measure ? (to, _S, from) => (
+                <g>
+                  {measure.pts.map((p, i) => { const q = to(p); return <circle key={i} cx={q[0]} cy={q[1]} r={5} fill="#c2410c" />; })}
+                  <rect x={-1e4} y={-1e4} width={2e4} height={2e4} fill="transparent" style={{ cursor: 'crosshair' }} onPointerDown={(e) => {
+                    const p = from(e);
+                    if (!p) return;
+                    const pts = [...measure.pts, p];
+                    if (pts.length < 2) { setMeasure({ ...measure, pts }); return; }
+                    // Rescale the image about the first point so the two points are `len` apart.
+                    const d = Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]);
+                    if (d > 0.01) upd((h) => { const im = h.trace?.images[storey]; if (!im) return; const k = measure.len / d; im.x = pts[0][0] - (pts[0][0] - im.x) * k; im.y = pts[0][1] - (pts[0][1] - im.y) * k; im.w *= k; });
+                    setMeasure(null);
+                  }} />
+                </g>
+              ) : undefined}
               onOutline={(id, poly, after) => upd((h) => {
                 const r = h.rooms.find((x) => x.id === id);
                 if (!r) return;
@@ -155,6 +174,7 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
                 return lens === 'temp' ? `${fmt(x.T, 1)} °C` : lens === 'cover' ? (!cv ? 'unheated' : cv.has ? `${fmt(cv.cover * 100)}% cover` : 'no emitter')
                   : r.heated ? `${fmt(x.totalW)} W` : `unheated ${fmt(x.T, 1)} °C`;
               }} />
+            <TraceControls house={house} res={res} storey={storey} upd={upd} measuring={!!measure} onMeasure={(len) => setMeasure({ len, pts: [] })} />
             <div className="row-between">
               <button type="button" className="btn-secondary" onClick={addRoom}>Add room on this storey</button>
               <span className="small muted mono">{fmt(maxX - minX, 1)} × {fmt(maxY - minY, 1)} m</span>

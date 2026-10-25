@@ -125,6 +125,17 @@ export interface House {
   ageBand?: 'AJ' | 'K';
   /** The user's own default temperature for each room type, overriding the table. */
   roomTemps?: Partial<Record<RoomType, number>>;
+  /** Tracing underlay for the plan: a floor-plan image per storey, or satellite imagery. */
+  trace?: TraceSettings;
+}
+
+/** A floor-plan image placed under one storey's plan: top-left corner and width in plan metres. */
+export interface TraceImage { src: string; x: number; y: number; w: number; opacity: number }
+export interface TraceSettings {
+  mode: 'none' | 'image' | 'sat';
+  images: Record<number, TraceImage>;
+  /** Satellite imagery: plan (0, 0) sits at this latitude and longitude. */
+  sat: { lat: number; lon: number; zoom: number; opacity: number };
 }
 
 /** Default setpoint for a room type: the user's own figure, else MCS / CIBSE Table 2-2 for the house's age band. */
