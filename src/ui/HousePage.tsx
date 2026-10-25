@@ -9,7 +9,8 @@ import type { Buildup, BuildupKind, DefaultKey, House, Room, RoomType, Side } fr
 import { Chip } from './controls';
 import { RoomShapeEditor } from './HouseShape';
 import { HousePlan, planBounds } from './HousePlan';
-import { TraceControls, traceUnderlay } from './HouseTrace';
+import { TraceControls, loadImagery, saveImagery, traceUnderlay } from './HouseTrace';
+import type { Imagery } from './HouseTrace';
 import type { Pt } from '../engine/geom';
 import { StackupModal } from './StackupModal';
 import type { StackupDraft } from './StackupModal';
@@ -73,6 +74,7 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
   const { maxX, maxY, minX, minY } = planBounds(house);
   const [outlineMode, setOutlineMode] = useState(true);
   const [measure, setMeasure] = useState<{ len: number; pts: Pt[] } | null>(null);
+  const [imagery, setImageryState] = useState<Imagery>(loadImagery);
 
   const addRoom = () => {
     const id = uid('r');
@@ -140,7 +142,7 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
               <Chip on={lens === 'none'} onClick={() => setLens('none')}>None</Chip>
             </div>
             <HousePlan house={house} storey={storey} sel={sel} setSel={setSel} editOutline={outlineMode && !measure}
-              underlay={traceUnderlay(house, storey)}
+              underlay={traceUnderlay(house, storey, imagery)}
               overlay={measure ? (to, _S, from) => (
                 <g>
                   {measure.pts.map((p, i) => { const q = to(p); return <circle key={i} cx={q[0]} cy={q[1]} r={5} fill="#c2410c" />; })}
@@ -174,7 +176,7 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
                 return lens === 'temp' ? `${fmt(x.T, 1)} °C` : lens === 'cover' ? (!cv ? 'unheated' : cv.has ? `${fmt(cv.cover * 100)}% cover` : 'no emitter')
                   : r.heated ? `${fmt(x.totalW)} W` : `unheated ${fmt(x.T, 1)} °C`;
               }} />
-            <TraceControls house={house} res={res} storey={storey} upd={upd} measuring={!!measure} onMeasure={(len) => setMeasure({ len, pts: [] })} />
+            <TraceControls house={house} res={res} storey={storey} upd={upd} imagery={imagery} setImagery={(v) => { setImageryState(v); saveImagery(v); }} measuring={!!measure} onMeasure={(len) => setMeasure({ len, pts: [] })} />
             <div className="row-between">
               <button type="button" className="btn-secondary" onClick={addRoom}>Add room on this storey</button>
               <span className="small muted mono">{fmt(maxX - minX, 1)} × {fmt(maxY - minY, 1)} m</span>

@@ -7,9 +7,30 @@ import { planBounds } from './HousePlan';
 
 
 const TILE = 256, ZOOM = 19;
-// Esri World Imagery: free to view with attribution (see the Esri terms of use for commercial applications).
-const tileUrl = (z: number, x: number, y: number) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
-export const SAT_CREDIT = 'Imagery © Esri, Maxar, Earthstar Geographics, and the GIS User Community';
+
+/**
+ * Satellite imagery is bring-your-own: tiles load only from a provider and key the user is licensed for, so the
+ * app itself never relies on free-to-view terms. Kept in this browser only, never in the project or its exports.
+ */
+export interface Imagery { provider: 'mapbox' | 'custom'; key: string; template: string; credit: string }
+const IMAGERY_KEY = 'insulation-visualiser.imagery';
+export const IMAGERY_PRESETS: Record<Imagery['provider'], Omit<Imagery, 'key' | 'provider'> & { label: string; terms: string }> = {
+  mapbox: { label: 'Mapbox Satellite (your access token)', template: 'https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg90?access_token={key}', credit: '© Mapbox © Maxar', terms: 'https://www.mapbox.com/legal/tos' },
+  custom: { label: 'Other provider (tile URL)', template: '', credit: '', terms: '' },
+};
+export function loadImagery(): Imagery {
+  try {
+    const v = JSON.parse(localStorage.getItem(IMAGERY_KEY) ?? 'null');
+    if (v && (v.provider === 'mapbox' || v.provider === 'custom')) return { key: '', template: '', credit: '', ...v };
+  } catch { /* fall through */ }
+  return { provider: 'mapbox', key: '', template: IMAGERY_PRESETS.mapbox.template, credit: IMAGERY_PRESETS.mapbox.credit };
+}
+export function saveImagery(v: Imagery) { try { localStorage.setItem(IMAGERY_KEY, JSON.stringify(v)); } catch { /* storage off: lasts this session */ } }
+/** Tile URL from a {z}/{x}/{y}/{key} template; null until the imagery is set up. */
+export function tileUrl(im: Imagery, z: number, x: number, y: number): string | null {
+  if (!im.template || (im.template.includes('{key}') && !im.key.trim())) return null;
+  return im.template.replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y)).replace('{key}', encodeURIComponent(im.key.trim()));
+}
 
 const worldPx = (lat: number, lon: number, z: number): Pt => {
   const n = TILE * 2 ** z, s = Math.sin((lat * Math.PI) / 180);
@@ -33,14 +54,14 @@ async function shrink(file: File): Promise<{ src: string; aspect: number }> {
 export const traceOf = (h: House): TraceSettings => h.trace ?? { mode: 'none', images: {}, sat: { lat: 0, lon: 0, zoom: ZOOM, opacity: 0.8 } };
 
 /** What to draw under the plan for the current tracing mode. */
-export function traceUnderlay(h: House, storey: number): ((to: (p: Pt) => Pt, S: number) => ReactNode) | undefined {
+export function traceUnderlay(h: House, storey: number, imagery: Imagery): ((to: (p: Pt) => Pt, S: number) => ReactNode) | undefined {
   const t = traceOf(h);
   if (t.mode === 'image') {
     const im = t.images[storey];
     if (!im) return undefined;
     return (to, S) => { const a = to([im.x, im.y]); return <image href={im.src} x={a[0]} y={a[1]} width={im.w * S} opacity={im.opacity} preserveAspectRatio="xMinYMin" />; };
   }
-  if (t.mode === 'sat' && t.sat.lat) {
+  if (t.mode === 'sat' && t.sat.lat && tileUrl(imagery, 0, 0, 0)) {
     return (to, S) => {
       const { lat, lon, zoom: z } = t.sat, m = metresPerPx(lat, z), P0 = worldPx(lat, lon, z), b = planBounds(h);
       // Tiles covering the plan plus 10 m round it; plan (0, 0) sits at the chosen latitude and longitude.
@@ -49,7 +70,7 @@ export function traceUnderlay(h: House, storey: number): ((to: (p: Pt) => Pt, S:
       const out: ReactNode[] = [];
       for (let tx = tx0; tx <= tx1; tx++) for (let ty = ty0; ty <= ty1; ty++) {
         const a = to([(tx * TILE - P0[0]) * m, (ty * TILE - P0[1]) * m]);
-        out.push(<image key={`${tx}-${ty}`} href={tileUrl(z, tx, ty)} x={a[0]} y={a[1]} width={TILE * m * S + 0.5} height={TILE * m * S + 0.5} opacity={t.sat.opacity} />);
+        out.push(<image key={`${tx}-${ty}`} href={tileUrl(imagery, z, tx, ty)!} x={a[0]} y={a[1]} width={TILE * m * S + 0.5} height={TILE * m * S + 0.5} opacity={t.sat.opacity} />);
       }
       return <g pointerEvents="none">{out}</g>;
     };
@@ -58,8 +79,10 @@ export function traceUnderlay(h: House, storey: number): ((to: (p: Pt) => Pt, S:
 }
 
 /** Tracing controls under the plan: a floor-plan image per storey, or satellite imagery. */
-export function TraceControls({ house, res, storey, upd, onMeasure, measuring }: {
+export function TraceControls({ house, res, storey, upd, onMeasure, measuring, imagery, setImagery }: {
   house: House; res: HouseResult; storey: number; upd: (fn: (h: House) => void) => void;
+  /** This browser's satellite provider and key (not part of the project). */
+  imagery: Imagery; setImagery: (v: Imagery) => void;
   /** Start picking two points on the plan that are `len` metres apart, to scale the image. */
   onMeasure: (len: number) => void; measuring: boolean;
 }) {
@@ -67,6 +90,7 @@ export function TraceControls({ house, res, storey, upd, onMeasure, measuring }:
   const set = (fn: (t: TraceSettings) => void) => upd((h) => { const x = structuredClone(traceOf(h)); fn(x); h.trace = x; });
   const [msg, setMsg] = useState('');
   const [known, setKnown] = useState('');
+
   const im = t.images[storey];
   const nudge = (dx: number, dy: number) => set((x) => {
     const m = 1 / 111320; // degrees of latitude per metre
@@ -122,7 +146,28 @@ export function TraceControls({ house, res, storey, upd, onMeasure, measuring }:
           <label className="hf"><span className="eyebrow">Show</span><input type="range" min={0.1} max={1} step={0.05} value={t.sat.opacity} onChange={(e) => set((x) => { x.sat.opacity = Number(e.target.value); })} /></label>
         </div>
       )}
-      {t.mode === 'sat' && <p className="small muted">Starts at the centre of postcode district {house.climate.postcode.toUpperCase()}: paste your house's latitude and longitude (right-click it in any online map), then nudge until the roof lines up with the plan. Tiles load from Esri; that tells Esri which area you are looking at. {SAT_CREDIT}.</p>}
+      {t.mode === 'sat' && (
+        <div className="hf-row">
+          <label className="hf"><span className="eyebrow">Imagery from</span>
+            <select className="select" value={imagery.provider} onChange={(e) => {
+              const provider = e.target.value as Imagery['provider'], pre = IMAGERY_PRESETS[provider];
+              setImagery({ ...imagery, provider, template: pre.template || imagery.template, credit: pre.credit || imagery.credit });
+            }}>
+              {(Object.keys(IMAGERY_PRESETS) as Imagery['provider'][]).map((k) => <option key={k} value={k}>{IMAGERY_PRESETS[k].label}</option>)}
+            </select>
+          </label>
+          {imagery.provider === 'custom' && <>
+            <label className="hf"><span className="eyebrow">Tile URL ({'{z} {x} {y}'}, and {'{key}'} if it needs one)</span><input className="h-text wide-text" value={imagery.template} placeholder="https://…/{z}/{x}/{y}.jpg?key={key}" onChange={(e) => setImagery({ ...imagery, template: e.target.value })} /></label>
+            <label className="hf"><span className="eyebrow">Credit to show</span><input className="h-text" value={imagery.credit} onChange={(e) => setImagery({ ...imagery, credit: e.target.value })} /></label>
+          </>}
+          <label className="hf"><span className="eyebrow">Your key / token</span><input className="h-text" type="password" autoComplete="off" value={imagery.key} onChange={(e) => setImagery({ ...imagery, key: e.target.value })} /></label>
+        </div>
+      )}
+      {t.mode === 'sat' && <p className="small muted">
+        {tileUrl(imagery, 0, 0, 0) ? `Imagery ${imagery.credit}. ` : 'Satellite tiles need your own account with an imagery provider, under its terms (paid use included). '}
+        The key stays in this browser only; it is never saved in the project or its exports. Starts at the centre of postcode district {house.climate.postcode.toUpperCase()}: paste your house's latitude and longitude (right-click it in any online map), then nudge until the roof lines up.
+        {imagery.provider === 'mapbox' && <> <a href={IMAGERY_PRESETS.mapbox.terms} target="_blank" rel="noreferrer">Mapbox terms</a>.</>}
+      </p>}
       {msg && <p className="small">{msg}</p>}
     </div>
   );

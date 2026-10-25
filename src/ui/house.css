@@ -157,3 +157,4 @@
 .file-btn { display: inline-flex; align-items: center; cursor: pointer; }
 .thk-input.wide { width: 110px; }
 .nudge { display: inline-grid; grid-template-columns: repeat(4, 36px); gap: 4px; }
+.h-text.wide-text { max-width: 420px; width: 420px; }
