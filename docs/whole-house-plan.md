@@ -190,29 +190,37 @@ These are sample data. The engine works them out from geometry, so expect them t
   - each window has a shading choice (none, light, overhang, heavy);
   - the hour-by-hour runs use g × glass share × shading for each window, and rooflights face the sky.
 
+## Round 2: answers and what was built
+
+1. **Postcode → station and region:** a bundled table of postcode-district centres (ONS and OS open data, OGL; 2,944 districts) finds the nearest MCS station and region by straight line. Both can be set by hand. Jersey and Guernsey use St Helier.
+2. **Room temperature defaults:** follow CIBSE DHDG 2026 Table 2-2 for the house's age band (A–J or K onwards). They can be edited per room type, and "Apply to every heated room" sets them all.
+3. **MVHR and the 0.5 ach minimum:** applies to fresh air supplied. Any top-up comes through the MVHR, so only its unrecovered share counts as loss.
+4. **Real weather:** an option in the year run to use PVGIS 5.2 typical meteorological years (EU JRC, CC BY 4.0). These are bundled for all 15 MCS stations and loaded on demand. They give hourly temperature plus measured direct and diffuse sun, with sun on surfaces worked out from the sun's position.
+5. **Too-warm threshold:** kept (25 °C, or 26 °C in bedrooms).
+6. **Adding rooms in scenarios:** allowed. A new or removed room switches on and off together with its windows, emitters and face choices.
+7. **Radiators:** generic outputs only.
+8. **UFH routes:** loops drawn on the plan (rectangle, pattern, feed corner), with tails to a draggable manifold. Loop length and area come from the drawing.
+9. **Pipe sizing:**
+   - a tree of runs from the heat pump, each with flow, velocity and Pa/m;
+   - limits flagged, and the index circuit checked against the pump head;
+   - a typical layout to start from.
+10. **Rooms of any shape:** polygon outlines. Edges anywhere along the same line become shared walls, each wall has its own bearing for sun, and polygon overlaps set floors and ceilings. Corners can be dragged or added; windows sit on a chosen wall.
+11. **Tracing:**
+    - a floor-plan image per storey, scaled from two points;
+    - or Esri World Imagery satellite tiles, free to view with attribution;
+    - the satellite view starts at the postcode district's centre and is nudged into place.
+12. **Style:** the whole app is in the Drafting Table style (`src/drafting.css`). The other two skins are dropped.
+13. **Smart meter:** CSV import of meter readings (supplier, n3rgy or Bright export; kWh or m³; any interval), added up into months.
+14. **Sharing:** PDF and JSON export is enough.
+
 ## Not built yet (from the design boards)
 
-- Hot water and its share of running cost (board 4c), as you asked: later.
-- Thermal bridges and junctions (boards 2b edge upstand, 2c junction methods), as you asked: later.
-- Survey mode (marking each input measured or assumed) and the version history list (board 1f). Undo and redo cover the history need for now.
-- UFH pipe routes and manifold placement drawn on the plan (board 1b); pipe sizing (board 3).
-- Rooms of any shape and plan tracing (board 1).
-- The three wall-tool skins (page "Wall tool skins"). These restyle the existing Single wall tool rather than the house model.
+- Hot water and junctions (thermal bridges): later, as asked.
+- Survey mode (marking each input measured or assumed) and a version history list beyond undo/redo (board 1f).
+- Room shapes (sloping ceilings) on polygon rooms: rectangles only for now.
 
 ## Open questions
 
-1. **Picking the weather station:** at present the user picks it from the list. MCS picks the nearest station to the postcode centre, which needs postcode coordinates. Should we use postcodes.io (a free external API, so the postcode is sent off-site), or bundle a table of postcode-area centres?
-2. **Default room temperatures:** MCS (CIBSE 2026 Table 2-2) defaults depend on the age band. Should the house have an age-band field so new rooms take 18 or 21 °C automatically? At present it's 21 °C, with the MCS figure shown as a hint.
-3. **MVHR and the 0.5 ach minimum:** at present the minimum applies to the effective rate after heat recovery. Should it apply to the supply rate instead? The MCS calculator's exact treatment isn't documented on its site.
-4. **Loft gable walls:** not counted in the loft's heat balance yet. The loft-temperature effect is small. Add them as faces when room-in-roof (phase 4) arrives?
-5. **Weather:** the typical year is synthetic, built from monthly means. Should we bundle real hourly test-reference-year data for the 14 MCS stations (CIBSE TRY files are paid; PVGIS TMY is free)?
-6. **Comfort thresholds:** too warm is above 25 °C, or 26 °C in bedrooms (a simplification of CIBSE TM59). Is that enough, or do you want TM59's full criteria?
-7. **Scenarios and the house plan:** a scenario can move or add rooms. Should structural changes be locked in scenarios, with only fabric and systems allowed to change?
-8. **Radiator catalogue:** outputs are generic per-metre figures. Is there a manufacturer range (Stelrad, Quinn, Myson…) you want built in, or is entering a rated output for "other" enough?
-9. **UFH pipe routes:** the design board draws spiral and serpentine routes, tails and manifold positions on the plan. Loops are numbers for now (area, spacing, covering, tail length). Is drawing the routes worth the effort, or is the loop length check enough?
-11. **Rooms of any shape:** rooms are still rectangles. L-shaped rooms are drawn as two rectangles of the same room type today. Do you want true polygon rooms (much more geometry work: walls at angles, bays), or is two-rectangle splitting acceptable for now?
-12. **Plan tracing:** the Plan board shows tracing over an uploaded floor-plan image. Worth doing next, or later?
-13. **Wall-tool skins:** the design has three skins for the Single wall tool (Drafting table, Instrument, Datasheet). Should one replace the current look, or should they be a user setting?
-14. **Bills from a smart meter:** the design imports half-hourly smart-meter data with consent (for example through the n3rgy or Glowmarkt APIs). Shall I wire that up, or keep manual monthly entry?
-15. **Report sharing:** the design shows sharing a report link with an installer. The app has no backend (it runs on GitHub Pages). Is export to PDF or JSON enough, or do you want hosted sharing?
-10. **Pipe sizing:** board 3's pipe table (velocity and pressure drop per run, index circuit) needs pipe runs drawn or entered. Should we enter them as a list (from, to, size, length), or leave pipe sizing out?
+1. **Satellite imagery terms:** Esri allows free viewing with attribution for non-commercial use. If the app will be used commercially (for example by installers), do you want to check Esri's terms, or switch to a paid provider?
+2. **Sloping ceilings on non-rectangular rooms:** worth doing, or are rooms in the roof always near-rectangular?
+3. **Survey mode:** still wanted? It would let a surveyor mark each value as measured, from the EPC, or assumed, and feed that into the uncertainty range.
