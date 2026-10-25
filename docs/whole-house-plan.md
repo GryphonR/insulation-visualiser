@@ -144,6 +144,23 @@ These are sample data. The engine works them out from geometry, so expect them t
 - **Hour-by-hour runs:** each room's heat is its emitters' output at the hour's flow temperature, on its zone's schedule.
 - **Saved houses** from before phase 3 get one K2 radiator per heated room, sized for the design loss.
 
+## Phase 4 status: built (room shapes and floor types)
+
+- **Room shapes** (`RoomShape` in `house.ts`, editor in `src/ui/HouseShape.tsx`, top-storey rooms only):
+  - presets: flat, coombed one side, coombed both sides, room in roof. Slopes run along either axis.
+  - each side is a full wall, coombed (wall to the plate, then slope) or a knee wall with an eaves void;
+  - inputs: pitch, knee or plate height, flat ceiling height (limited by the pitch), a rooflight, and a dormer per side (width, front height, window);
+  - a live cross-section with the 1.5 m headroom line.
+- **Geometry and heat paths:**
+  - the section area sets the room volume and the mean height of the gable walls;
+  - each slope is (ceiling − knee)/sin(pitch) × length, less the dormer cut;
+  - the flat collar goes to the loft;
+  - a knee wall is counted in series with the roof over its eaves void (cold tiles or warm), so the void temperature drops out.
+- **Floor types:**
+  - suspended timber (BS EN ISO 13370: deck in series with ground plus void walls and airbrick ventilation; airbrick area and void height are house inputs);
+  - basement (lowest storey's depth below ground: walls against the ground, basement floor formula).
+- **Storeys card:** names, ceiling heights, floor zones, adding and removing storeys. A loft conversion is a new top storey with a room-in-roof room.
+
 ## Open questions
 
 1. **Picking the weather station:** at present the user picks it from the list. MCS picks the nearest station to the postcode centre, which needs postcode coordinates. Should we use postcodes.io (a free external API, so the postcode is sent off-site), or bundle a table of postcode-area centres?
@@ -155,4 +172,6 @@ These are sample data. The engine works them out from geometry, so expect them t
 7. **Scenarios and the house plan:** a scenario can move or add rooms. Should structural changes be locked in scenarios, with only fabric and systems allowed to change?
 8. **Radiator catalogue:** outputs are generic per-metre figures. Is there a manufacturer range (Stelrad, Quinn, Myson…) you want built in, or is entering a rated output for "other" enough?
 9. **UFH pipe routes:** the design board draws spiral and serpentine routes, tails and manifold positions on the plan. Loops are numbers for now (area, spacing, covering, tail length). Is drawing the routes worth the effort, or is the loop length check enough?
+11. **Rooms of any shape:** rooms are still rectangles. L-shaped rooms are drawn as two rectangles of the same room type today. Do you want true polygon rooms (much more geometry work: walls at angles, bays), or is two-rectangle splitting acceptable for now?
+12. **Plan tracing:** the Plan board shows tracing over an uploaded floor-plan image. Worth doing next, or later?
 10. **Pipe sizing:** board 3's pipe table (velocity and pressure drop per run, index circuit) needs pipe runs drawn or entered. Should we enter them as a list (from, to, size, length), or leave pipe sizing out?

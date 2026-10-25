@@ -7,6 +7,7 @@ import { MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS } from '../engine/climate-mcs'
 import { SIDES, buildupU, calcHouse, deviceM3, onStorey } from '../engine/house';
 import type { Buildup, BuildupKind, DefaultKey, House, Room, RoomType, Side } from '../engine/house';
 import { Chip } from './controls';
+import { RoomShapeEditor } from './HouseShape';
 import { StackupModal } from './StackupModal';
 import type { StackupDraft } from './StackupModal';
 import './house.css';
@@ -17,6 +18,7 @@ const KIND_LABEL: Record<BuildupKind, string> = { wall: 'Wall', floor: 'Floor', 
 const DEFAULT_LABEL: Record<DefaultKey, [string, BuildupKind[]]> = {
   extWall: ['Outside walls', ['wall']], intWall: ['Internal walls', ['wall']], groundFloor: ['Ground floors', ['floor']], intFloor: ['Floors between storeys', ['floor']],
   loftCeiling: ['Ceilings to loft', ['roof', 'floor']], loftRoof: ['Loft roof', ['roof']], flatRoof: ['Flat roofs', ['roof']], exposedFloor: ['Exposed floors', ['floor']],
+  slope: ['Sloping ceilings', ['roof']], knee: ['Knee walls', ['wall']], dormerWall: ['Dormer fronts & cheeks', ['wall']], dormerRoof: ['Dormer roofs', ['roof']],
 };
 /** Which build-up kinds fit a face. */
 const fits = (faceKind: string): BuildupKind[] => (faceKind === 'wall' ? ['wall'] : faceKind === 'window' || faceKind === 'door' ? ['glazing', 'door'] : ['floor', 'roof']);
@@ -213,6 +215,10 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
                 </label>
               </div>
 
+              {room.storey + room.span === house.storeys.length && (
+                <RoomShapeEditor room={room} setShape={(s) => upd((h) => { const r = h.rooms.find((x) => x.id === room.id); if (r) { if (s) r.shape = s; else delete r.shape; } })} />
+              )}
+
               <div className="h-table-wrap">
                 <table className="h-table">
                   <thead><tr><th>Face</th><th>To</th><th>Build-up</th><th className="n">m²</th><th className="n">U</th><th className="n">ΔT</th><th className="n">W</th></tr></thead>
@@ -376,6 +382,37 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
             </>}
           </Card>
 
+          <Card title="Storeys and ground" note="Ceiling heights, the floor zone between storeys, and what the ground floor sits on.">
+            <div className="h-table-wrap">
+              <table className="h-table">
+                <thead><tr><th>Storey</th><th className="n">Ceiling m</th><th className="n">Floor zone above m</th><th className="n">Below ground m</th></tr></thead>
+                <tbody>
+                  {house.storeys.map((s, i) => (
+                    <tr key={i}>
+                      <td><input className="h-text" value={s.name} aria-label="Storey name" onChange={(e) => upd((h) => { h.storeys[i].name = e.target.value; })} /></td>
+                      <td className="n"><input type="number" className="thk-input" step={0.05} value={s.h} aria-label="Ceiling height" onChange={(e) => upd((h) => { h.storeys[i].h = Math.max(1, Number(e.target.value) || 1); })} /></td>
+                      <td className="n">{i < house.storeys.length - 1 ? <input type="number" className="thk-input" step={0.05} value={s.zone} aria-label="Floor zone" onChange={(e) => upd((h) => { h.storeys[i].zone = Math.max(0, Number(e.target.value) || 0); })} /> : '—'}</td>
+                      <td className="n">{i === 0 ? <input type="number" className="thk-input" step={0.1} min={0} value={s.below ?? 0} aria-label="Depth below ground" onChange={(e) => upd((h) => { h.storeys[0].below = Math.max(0, Number(e.target.value) || 0); })} /> : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="row-between">
+              <button type="button" className="btn-secondary" onClick={() => upd((h) => { h.storeys.push({ name: `Storey ${h.storeys.length + 1}`, h: 2.4, zone: 0.25 }); })}>Add storey on top</button>
+              {house.storeys.length > 1 && !house.rooms.some((r) => r.storey + r.span >= house.storeys.length) && (
+                <button type="button" className="btn-link" onClick={() => upd((h) => { h.storeys.pop(); })}>Remove top storey</button>
+              )}
+            </div>
+            <p className="small muted">{(house.storeys[0]?.below ?? 0) > 0
+              ? `Basement: the lowest storey's outside walls are in the ground (BS EN ISO 13370 basement walls) and its floor is a basement floor ${house.storeys[0].below} m down.`
+              : 'Ground floors are solid slabs unless their build-up is set to suspended timber in the Build-ups list.'}</p>
+            <div className="hf-row">
+              <Num label="Suspended floors: airbricks" unit="mm²/m" step={100} value={house.suspended.vent} onChange={(v) => upd((h) => { h.suspended.vent = Math.max(0, v); })} />
+              <Num label="Void height" unit="m" step={0.05} value={house.suspended.voidH} onChange={(v) => upd((h) => { h.suspended.voidH = Math.max(0.05, v); })} />
+            </div>
+          </Card>
+
           <Card title="Loft" note={res.loft ? `Settles at ${fmt(res.loft.T, 1)} °C on the design day.` : 'No loft: top-storey ceilings are flat roofs.'}>
             <div className="hf-row">
               <label className="small"><input type="checkbox" checked={house.loft.present} onChange={(e) => upd((h) => { h.loft.present = e.target.checked; })} /> Loft over the top storey</label>
@@ -431,6 +468,11 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
                           <select className="h-sel" value={b.kind} aria-label="Kind" onChange={(e) => set({ kind: e.target.value as BuildupKind })}>
                             {(Object.keys(KIND_LABEL) as BuildupKind[]).map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
                           </select>
+                          {b.kind === 'floor' && (
+                            <select className="h-sel" value={b.floorType ?? 'solid'} aria-label="Ground floor type" onChange={(e) => set({ floorType: e.target.value as Buildup['floorType'] })}>
+                              <option value="solid">on the ground: solid slab</option><option value="suspended">on the ground: suspended timber</option>
+                            </select>
+                          )}
                         </td>
                         <td className="n mono">
                           {b.u != null

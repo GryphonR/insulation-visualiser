@@ -15,6 +15,10 @@ export const DEFAULT_BUILDUPS: Buildup[] = [
   { id: 'loft', name: 'Cold roof ceiling, 270 mm loft', kind: 'roof', layers: preset('cold270') },
   { id: 'tiles', name: 'Pitched roof, tiles on felt', kind: 'roof', layers: [['m_roof_tile_concrete', 15]] },
   { id: 'flat', name: 'Lightweight timber flat roof', kind: 'roof', layers: preset('roofl') },
+  { id: 'slope', name: 'Rafters, 100 mm mineral wool', kind: 'roof', layers: [['pb', 12.5], ['mw', 100], ['vgap', 50], ['m_roof_tile_concrete', 15]] },
+  { id: 'knee', name: 'Knee wall, stud with 75 mm mineral wool', kind: 'wall', layers: [['pb', 12.5], ['mw', 75], ['pb', 12.5]] },
+  { id: 'dwall', name: 'Dormer, timber frame 75 mm mineral wool', kind: 'wall', layers: [['pb', 12.5], ['mw', 75], ['ply', 18], ['timber', 20]] },
+  { id: 'droof', name: 'Dormer flat roof, 50 mm between joists', kind: 'roof', layers: [['pb', 12.5], ['mw', 50], ['cavity', 100], ['ply', 18]] },
   { id: 'dg', name: 'Double glazed, 2010', kind: 'glazing', layers: [], u: 1.4 },
   { id: 'door', name: 'Composite door', kind: 'door', layers: [], u: 1.6 },
 ];
@@ -60,7 +64,11 @@ export function defaultHouse(): House {
     rooms: ROOMS.map((r) => ({ ...r })),
     openings: OPENINGS.map((o) => ({ ...o })),
     buildups: DEFAULT_BUILDUPS.map((b) => ({ ...b, layers: b.layers.map(([m, t]) => [m, t] as [string, number]) })),
-    defaults: { extWall: 'cav', intWall: 'stud', groundFloor: 'sf', intFloor: 'jf', loftCeiling: 'loft', loftRoof: 'tiles', flatRoof: 'flat', exposedFloor: 'jf' },
+    defaults: {
+      extWall: 'cav', intWall: 'stud', groundFloor: 'sf', intFloor: 'jf', loftCeiling: 'loft', loftRoof: 'tiles', flatRoof: 'flat', exposedFloor: 'jf',
+      slope: 'slope', knee: 'knee', dormerWall: 'dwall', dormerRoof: 'droof',
+    },
+    suspended: { vent: 1500, voidH: 0.3 },
     faceBuildup: { 'w:bed3:S:1': 'solid', 'w:bath:E:1': 'solid' },
     faceBoundary: {},
     neighbourT: 10,
@@ -113,6 +121,20 @@ function E(id: string, room: string, zone: string, type: RadType, len: number): 
   return { id, room, kind: 'radiator', zone, type, len, height: 600, rated: 0, area: 0, spacing: 150, cover: 'Tiles', tail: 5 };
 }
 
+/** Fill in anything an older save lacks (new settings, default build-ups, emitters) and drop layers whose material is gone. */
+export function upgradeHouse(p: House): House {
+  const d = defaultHouse();
+  const h: House = {
+    ...d, ...p, vent: { ...d.vent, ...p.vent }, loft: { ...d.loft, ...p.loft }, climate: { ...d.climate, ...p.climate }, hp: { ...d.hp, ...p.hp },
+    gains: { ...d.gains, ...p.gains }, suspended: { ...d.suspended, ...p.suspended }, defaults: { ...d.defaults, ...p.defaults }, heating: p.heating,
+  };
+  h.buildups = h.buildups.map((b) => ({ ...b, layers: (b.layers ?? []).filter(([m, t]) => !!MAT[m] && Number.isFinite(t) && t > 0) }));
+  for (const id of Object.values(h.defaults)) {
+    if (!h.buildups.some((b) => b.id === id)) { const b = d.buildups.find((x) => x.id === id); if (b) h.buildups.push(b); }
+  }
+  return withHeating(h);
+}
+
 /** A house saved before emitters existed: one radiator per heated room, sized for the design loss. */
 export function withHeating(h: House): House {
   if (h.heating && Array.isArray(h.heating.emitters)) return h;
@@ -128,11 +150,7 @@ export function loadHouse(): House {
   try {
     const p = JSON.parse(localStorage.getItem(KEY) ?? 'null');
     if (!p || p.v !== 1 || !Array.isArray(p.rooms) || !Array.isArray(p.storeys) || !Array.isArray(p.buildups) || !p.buildups.length) return defaultHouse();
-    const d = defaultHouse();
-    const h: House = { ...d, ...p, vent: { ...d.vent, ...p.vent }, loft: { ...d.loft, ...p.loft }, climate: { ...d.climate, ...p.climate }, hp: { ...d.hp, ...p.hp }, gains: { ...d.gains, ...p.gains } };
-    h.buildups = h.buildups.map((b) => ({ ...b, layers: (b.layers ?? []).filter(([m, t]) => !!MAT[m] && Number.isFinite(t) && t > 0) }));
-    h.heating = p.heating;
-    return withHeating(h);
+    return upgradeHouse(p);
   } catch {
     return defaultHouse();
   }
