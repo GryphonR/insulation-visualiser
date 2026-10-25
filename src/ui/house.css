@@ -144,3 +144,12 @@
 .vx-table { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .vx-row { display: inline-flex; align-items: center; gap: 4px; }
 .vx-row .thk-input { width: 60px; }
+.loop-box { fill: rgba(122, 69, 184, 0.06); stroke: #7a45b8; stroke-width: 1; stroke-dasharray: 4 3; cursor: move; touch-action: none; }
+.loop-box.on { stroke-width: 2; fill: rgba(122, 69, 184, 0.12); }
+.pipe-flow, .pipe-ret, .pipe-bend, .pipe-tail { fill: none; stroke-width: 1.6; pointer-events: none; }
+.pipe-flow { stroke: #c2410c; }
+.pipe-ret { stroke: #1f6fb5; }
+.pipe-bend { stroke: #7a45b8; }
+.pipe-tail { stroke: #55626e; stroke-dasharray: 5 3; }
+.manifold { cursor: move; touch-action: none; }
+.loop-label { paint-order: stroke; stroke: #fff; stroke-width: 3px; pointer-events: none; }

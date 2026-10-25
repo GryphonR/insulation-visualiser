@@ -5,6 +5,7 @@ import type { House } from '../engine/house';
 import { COVERS, RAD_LABEL, autoEmitters, emitterOut, loopLength, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
 import type { Emitter, RadType, Zone } from '../engine/house-heating';
 import { Chip } from './controls';
+import { HouseUfh } from './HouseUfh';
 import { MAX_PA_M, MAX_V, PIPE_SIZES, autoPipes, sizePipes } from '../engine/house-pipes';
 
 const fmt = (v: number, d = 0) => (Number.isFinite(v) ? v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—');
@@ -139,7 +140,7 @@ export function HouseHeating({ house, setHouse }: { house: House; setHouse: (fn:
                             <input type="number" className="thk-input" aria-label="Loop area m²" value={e.area} step={0.5} onChange={(ev) => setE(e.id, { area: Number(ev.target.value) })} /> m² ·{' '}
                             <select className="h-sel" aria-label="Pipe spacing" value={e.spacing} onChange={(ev) => setE(e.id, { spacing: Number(ev.target.value) })}>{[100, 150, 200, 300].map((s) => <option key={s} value={s}>{s} mm</option>)}</select>{' '}
                             <select className="h-sel" aria-label="Floor covering" value={e.cover} onChange={(ev) => setE(e.id, { cover: ev.target.value })}>{Object.keys(COVERS).map((s) => <option key={s}>{s}</option>)}</select>
-                            <br /><span className={`small ${loopLength(e) > 100 ? 'bad' : 'muted'}`}>loop {fmt(loopLength(e))} m incl. {e.tail} m tails</span>
+                            <br /><span className={`small ${loopLength(e, house) > 100 ? 'bad' : 'muted'}`}>loop {fmt(loopLength(e, house))} m{e.rect ? ', drawn' : ` incl. ${e.tail} m tails`}</span>
                           </>}
                           {e.kind !== 'ufh' && <span className="small muted"> · {fmt(ratedOf(e))} W at ΔT50</span>}
                         </td>
@@ -212,6 +213,8 @@ export function HouseHeating({ house, setHouse }: { house: House; setHouse: (fn:
             );
           })}
         </section>
+
+        <HouseUfh house={house} upd={upd} />
 
         <section className="card panel">
           <div className="section-head">

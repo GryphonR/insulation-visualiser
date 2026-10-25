@@ -601,7 +601,12 @@ export function calcHouse(h: House): HouseResult {
     else if (e.cover < 0.995) checks.push({ level: 'warn', text: `${name}: emitters give ${Math.round(e.out)} W at ${designFlow.toFixed(0)} °C flow, ${Math.round(e.need)} W needed (${Math.round(e.cover * 100)}%).` });
   }
   for (const e of h.heating.emitters) {
-    if (e.kind === 'ufh' && loopLength(e) > 100) checks.push({ level: 'warn', text: `UFH loop in ${h.rooms.find((r) => r.id === e.room)?.name ?? e.room} is ${Math.round(loopLength(e))} m; keep 16 mm loops under 100 m (split it in two).` });
+    if (e.kind === 'ufh' && loopLength(e, h) > 100) checks.push({ level: 'warn', text: `UFH loop in ${h.rooms.find((r) => r.id === e.room)?.name ?? e.room} is ${Math.round(loopLength(e, h))} m; keep 16 mm loops under 100 m (split it in two).` });
+    if (e.kind === 'ufh' && e.rect) {
+      const room = h.rooms.find((r) => r.id === e.room);
+      const rp: Pt[] = [[e.rect.x, e.rect.y], [e.rect.x + e.rect.w, e.rect.y], [e.rect.x + e.rect.w, e.rect.y + e.rect.h], [e.rect.x, e.rect.y + e.rect.h]];
+      if (room && overlapAreaPoly(rp, roomPoly(room)) < e.rect.w * e.rect.h * 0.98) checks.push({ level: 'warn', text: `UFH loop in ${room.name} runs outside the room.` });
+    }
   }
 
   return {

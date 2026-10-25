@@ -20,16 +20,18 @@ export function planBounds(h: House) {
  * The plan of one storey: rooms of any shape, windows and doors on their walls, the selected room outlined,
  * and corner handles to reshape a polygon room (drag a corner, click + on a wall to add one).
  */
-export function HousePlan({ house, storey, sel, setSel, fill, label, editOutline, onOutline, underlay, overlay }: {
+export function HousePlan({ house, storey, sel, setSel, fill, label, editOutline, onOutline, underlay, overlay, readOnly }: {
   house: House; storey: number; sel: string; setSel: (id: string) => void;
   fill: (r: Room) => string; label: (r: Room) => string;
   editOutline: boolean;
+  /** No room selection outline or corner handles (a plan used as a backdrop). */
+  readOnly?: boolean;
   /** New outline for a room; `insertedAfter` is the corner index a new corner was added after (walls after it renumber). */
   onOutline: (id: string, poly: Pt[], insertedAfter?: number) => void;
   /** Drawn under the rooms (a traced plan or satellite image), in plan coordinates via the `to` mapper. */
   underlay?: (to: (p: Pt) => Pt, S: number) => ReactNode;
-  /** Drawn over the rooms (UFH loops, pipes). */
-  overlay?: (to: (p: Pt) => Pt, S: number) => ReactNode;
+  /** Drawn over the rooms (UFH loops, pipes); `from` turns a pointer event into plan metres (snapped). */
+  overlay?: (to: (p: Pt) => Pt, S: number, from: (e: React.PointerEvent) => Pt | null) => ReactNode;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<{ id: string; i: number; poly: Pt[] } | null>(null);
@@ -76,9 +78,9 @@ export function HousePlan({ house, storey, sel, setSel, fill, label, editOutline
           });
         });
       })}
-      {overlay?.(to, S)}
-      {selRoom && <polygon points={pts(polyOf(selRoom))} fill="none" stroke="#c2410c" strokeWidth={3} pointerEvents="none" />}
-      {selRoom && editOutline && selRoom.poly && (() => {
+      {overlay?.(to, S, fromEvent)}
+      {!readOnly && selRoom && <polygon points={pts(polyOf(selRoom))} fill="none" stroke="#c2410c" strokeWidth={3} pointerEvents="none" />}
+      {!readOnly && selRoom && editOutline && selRoom.poly && (() => {
         const p = polyOf(selRoom);
         return <>
           {p.map((q, i) => {

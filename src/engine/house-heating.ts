@@ -1,6 +1,8 @@
 // Emitters, zones and flow temperature (boards 3, 3a, 1b). Types only from house.ts, so no import cycle.
 import type { House, Room } from './house';
 import type { Pipe } from './house-pipes';
+import { loopLayout } from './house-ufh';
+import type { Corner, LoopPattern, LoopRect } from './house-ufh';
 
 export type RadType = 'K1' | 'P1' | 'K2' | 'K3';
 /** Panel radiator output per metre length at 600 mm high, ΔT50, W/m (typical catalogue values). */
@@ -21,6 +23,8 @@ export interface Emitter {
   rated: number;
   /** UFH loop: heated area m², pipe spacing mm, covering, tail length to the manifold m. */
   area: number; spacing: number; cover: string; tail: number;
+  /** UFH loop drawn on the plan: its rectangle (m), pattern and feed corner. The drawn area replaces `area`. */
+  rect?: LoopRect; pattern?: LoopPattern; corner?: Corner;
 }
 export interface Zone {
   id: string; name: string; kind: 'rad' | 'ufh'; color: string; on: boolean;
@@ -28,6 +32,8 @@ export interface Zone {
   hours: number[] | null;
   /** UFH blending valve temperature, °C; 0 means connected direct to the system flow. */
   blend: number;
+  /** UFH manifold position on the plan, m (on the storey of its loops). */
+  manifold?: { x: number; y: number };
 }
 export interface Heating {
   emitters: Emitter[]; zones: Zone[];
@@ -45,7 +51,10 @@ export interface Heating {
 
 export const radRated = (e: Pick<Emitter, 'type' | 'len' | 'height'>) => (RAD_PER_M[e.type] ?? 1700) * (e.len / 1000) * (e.height / 600) ** 0.9;
 export const ratedOf = (e: Emitter) => (e.kind === 'radiator' ? radRated(e) : e.kind === 'towel' ? e.rated : 0);
-export const loopLength = (e: Emitter) => (e.area * 1000) / (e.spacing || 150) + 2 * e.tail;
+/** Loop length: from the drawn route and tails when the loop is on the plan, else area ÷ spacing plus tails. */
+export const loopLength = (e: Emitter, h?: Pick<House, 'heating'>) => (h && loopLayout(h, e)?.total) || (e.area * 1000) / (e.spacing || 150) + 2 * e.tail;
+/** Heated floor area of a loop: its drawn rectangle, or the area entered. */
+export const loopArea = (e: Emitter) => (e.rect ? e.rect.w * e.rect.h : e.area);
 export const lpm = (W: number, dT: number) => (W * 60) / (4186 * (dT || 5));
 
 /** Heat from one emitter, W, given the system flow temperature and the room air temperature. */
@@ -56,7 +65,7 @@ export function emitterOut(e: Emitter, flow: number, Troom: number, h: Pick<Hous
     const water = z && z.blend > 0 ? Math.min(flow, z.blend) : flow;
     const mean = water - dT / 2, k = UFH_K[e.spacing] ?? 6.0;
     const q = (mean - Troom) / (1 / k + (COVERS[e.cover] ?? 0.05));
-    return Math.max(0, Math.min(q, qMaxFloor(Troom))) * e.area;
+    return Math.max(0, Math.min(q, qMaxFloor(Troom))) * loopArea(e);
   }
   const mean = flow - dT / 2;
   return ratedOf(e) * Math.max(0, (mean - Troom) / 50) ** 1.3;
