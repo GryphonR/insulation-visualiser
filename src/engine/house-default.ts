@@ -47,6 +47,8 @@ const D = (id: string, room: string, name: string, fan: boolean, opts: Array<[st
 const CHIMNEY: Array<[string, number]> = [['Open', 80], ['Blocked (boarded fireplace)', 20], ['Closed fire', 10], ['Removed / sealed', 0]];
 const FAN: Array<[string, number]> = [['Fitted', 10], ['None', 0]];
 
+const hours = (on: number[]) => Array.from({ length: 24 }, (_, h) => (on.includes(h) ? 1 : 0));
+
 export function defaultHouse(): House {
   return {
     v: 1,
@@ -82,6 +84,11 @@ export function defaultHouse(): House {
       ],
     },
     hp: { capacity: 6, maxFlow: 45, elecP: 26.32, gasP: 7.97, gasSC: 29.68, boilerEff: 85 },
+    gains: {
+      people: 3, pattern: 'work', setback: 16, mass: 165, g: 0.45,
+      living: hours([6, 7, 8, 16, 17, 18, 19, 20, 21, 22]),
+      bedrooms: hours([6, 7, 21, 22]),
+    },
   };
 }
 
@@ -93,7 +100,7 @@ export function loadHouse(): House {
     const p = JSON.parse(localStorage.getItem(KEY) ?? 'null');
     if (!p || p.v !== 1 || !Array.isArray(p.rooms) || !Array.isArray(p.storeys) || !Array.isArray(p.buildups) || !p.buildups.length) return defaultHouse();
     const d = defaultHouse();
-    const h: House = { ...d, ...p, vent: { ...d.vent, ...p.vent }, loft: { ...d.loft, ...p.loft }, climate: { ...d.climate, ...p.climate }, hp: { ...d.hp, ...p.hp } };
+    const h: House = { ...d, ...p, vent: { ...d.vent, ...p.vent }, loft: { ...d.loft, ...p.loft }, climate: { ...d.climate, ...p.climate }, hp: { ...d.hp, ...p.hp }, gains: { ...d.gains, ...p.gains } };
     h.buildups = h.buildups.map((b) => ({ ...b, layers: (b.layers ?? []).filter(([m, t]) => !!MAT[m] && Number.isFinite(t) && t > 0) }));
     return h;
   } catch {

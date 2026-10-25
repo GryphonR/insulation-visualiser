@@ -105,10 +105,32 @@ These are sample data. The engine works them out from geometry, so expect them t
   - SCOP 3.6.
 - **Engine change from the design:** the COP uses refrigerant temperatures (condensing 5 K above flow, evaporating 6 K below outside). The plain flow-temperature Carnot fraction gave SCOP 4.9, which is too high.
 
+## Phase 2 status: built
+
+- **Scenarios** (`src/engine/house-scenarios.ts`):
+  - A project holds a tree of scenarios. Each is a full copy of the house plus its parent.
+  - A scenario's changes are the difference from its parent, matched by id for rooms, openings, build-ups, factors and devices.
+  - Changes are described in plain words and can be switched off. The waterfall applies them one at a time.
+  - Saved under `insulation-visualiser.house-project.v1`. An older single-house save becomes the base scenario.
+- **Workspace** (`src/ui/HouseWorkspace.tsx`):
+  - a scenario bar to rename a scenario, set it as a plan or what-if, branch or delete it;
+  - views: Model, Scenarios (tree, changes, step by step, all-scenarios matrix), and Compare A vs B (A, B, difference or side-by-side plans; room detail; what B changes).
+- **Hour-by-hour runs** (`src/engine/house-sim.ts`, `src/ui/HouseRuns.tsx`):
+  - **Model:** each room is two parts, air and mass. The mass is coupled at 9.1 W/m²K over 2.5 × the floor area, as in ISO 13790. The loft is one more node.
+  - **Heating:** follows the living-area and bedroom schedules, with a setback. Each room's emitter is sized as its design loss × (heat pump capacity / peak), and the heat pump total is capped.
+  - **Gains:** people, appliances, lighting and cooking from board 6a, plus sun through windows from the existing sun model.
+  - **Cases:** the design day, a summer peak day, a 5-day cold snap with the heating off, and a typical year. The year uses monthly means shifted to the region, plus daily swing and multi-day spells.
+  - **Year view:** monthly bars against a comparison scenario, a calendar of daily heat, a chart for the chosen day, and comfort hours for each room.
+- **Demo results:**
+  - typical year about 8,350 kWh (degree-day estimate 10,000), SCOP 3.5;
+  - with the setback, the design-day reheat runs the 6 kW heat pump flat out and leaves living rooms short for a few hours.
+
 ## Open questions
 
 1. **Picking the weather station:** at present the user picks it from the list. MCS picks the nearest station to the postcode centre, which needs postcode coordinates. Should we use postcodes.io (a free external API, so the postcode is sent off-site), or bundle a table of postcode-area centres?
 2. **Default room temperatures:** MCS (CIBSE 2026 Table 2-2) defaults depend on the age band. Should the house have an age-band field so new rooms take 18 or 21 °C automatically? At present it's 21 °C, with the MCS figure shown as a hint.
 3. **MVHR and the 0.5 ach minimum:** at present the minimum applies to the effective rate after heat recovery. Should it apply to the supply rate instead? The MCS calculator's exact treatment isn't documented on its site.
 4. **Loft gable walls:** not counted in the loft's heat balance yet. The loft-temperature effect is small. Add them as faces when room-in-roof (phase 4) arrives?
-5. **Next phase:** is phase 2 the right one (scenarios, compare and test conditions), or would you rather have emitters and zones (phase 3) first?
+5. **Weather:** the typical year is synthetic, built from monthly means. Should we bundle real hourly test-reference-year data for the 14 MCS stations (CIBSE TRY files are paid; PVGIS TMY is free)?
+6. **Comfort thresholds:** too warm is above 25 °C, or 26 °C in bedrooms (a simplification of CIBSE TM59). Is that enough, or do you want TM59's full criteria?
+7. **Scenarios and the house plan:** a scenario can move or add rooms. Should structural changes be locked in scenarios, with only fabric and systems allowed to change?

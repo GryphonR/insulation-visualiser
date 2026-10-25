@@ -10,7 +10,7 @@ import { BuildupSummary } from './ui/BuildupSummary';
 import { ComparePage } from './ui/ComparePage';
 import { EnvironmentPanel } from './ui/EnvironmentPanel';
 import { HeatMap } from './ui/HeatMap';
-import { HousePage } from './ui/HousePage';
+import { HouseWorkspace } from './ui/HouseWorkspace';
 import { LearnPage } from './ui/LearnPage';
 import { LineChart } from './ui/LineChart';
 import { MoisturePage } from './ui/MoisturePage';
@@ -132,7 +132,7 @@ export default function App() {
         {mode === 'learn' ? (
           <LearnPage onOpenSimulator={() => setMode('single')} />
         ) : mode === 'house' ? (
-          <HousePage customStackups={customStackups} />
+          <HouseWorkspace customStackups={customStackups} />
         ) : mode === 'moisture' ? (
           <MoisturePage customStackups={customStackups} setCustomStackups={setCustomStackups} />
         ) : mode === 'compare' ? (

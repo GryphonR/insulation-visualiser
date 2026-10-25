@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { MONTHS } from '../engine/data';
 import { BUILTIN_STACKUPS } from '../engine/library';
@@ -6,7 +6,6 @@ import type { Stackup } from '../engine/library';
 import { MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS } from '../engine/climate-mcs';
 import { SIDES, buildupU, calcHouse, deviceM3, onStorey } from '../engine/house';
 import type { Buildup, BuildupKind, DefaultKey, House, Room, RoomType, Side } from '../engine/house';
-import { defaultHouse, loadHouse, saveHouse } from '../engine/house-default';
 import { Chip } from './controls';
 import { StackupModal } from './StackupModal';
 import type { StackupDraft } from './StackupModal';
@@ -50,9 +49,7 @@ function Card({ title, note, children, right }: { title: string; note?: string; 
 
 const mix = (a: number[], b: number[], f: number) => `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * Math.min(1, Math.max(0, f)))).join(',')})`;
 
-export function HousePage({ customStackups }: { customStackups: Stackup[] }) {
-  const [house, setHouse] = useState<House>(loadHouse);
-  useEffect(() => saveHouse(house), [house]);
+export function HousePage({ house, setHouse, customStackups }: { house: House; setHouse: (fn: (h: House) => House) => void; customStackups: Stackup[] }) {
   const upd = (fn: (h: House) => void) => setHouse((prev) => { const n = structuredClone(prev); fn(n); return n; });
   const res = useMemo(() => calcHouse(house), [house]);
 
@@ -107,13 +104,7 @@ export function HousePage({ customStackups }: { customStackups: Stackup[] }) {
 
   return (
     <div className="house">
-      <div className="section-head">
-        <div>
-          <h2>{house.name}</h2>
-          <p className="muted small">Design-day heat loss room by room (MCS / CIBSE method). Rooms are rectangles on each storey; walls, floors and ceilings are found from how they touch.</p>
-        </div>
-        <button type="button" className="btn-secondary" onClick={() => { if (confirm('Replace your house with the demo house?')) { setHouse(defaultHouse()); setSel('living'); } }}>Reset to demo house</button>
-      </div>
+      <p className="muted small">Design-day heat loss room by room (MCS / CIBSE method). Rooms are rectangles on each storey; walls, floors and ceilings are found from how they touch.</p>
 
       <div className="tiles">
         {tiles.map(([l, v, u, n]) => (

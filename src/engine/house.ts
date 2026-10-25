@@ -45,6 +45,21 @@ export interface House {
     mech: 'none' | 'dmev' | 'mvhr'; mechFlow: number; eta: number; minAch: boolean;
   };
   hp: { capacity: number; maxFlow: number; elecP: number; gasP: number; gasSC: number; boilerEff: number };
+  gains: Gains;
+}
+
+/** Occupancy, heating schedule and gains for the hour-by-hour runs (board 6a). */
+export interface Gains {
+  people: number;
+  pattern: 'work' | 'home' | 'shift';
+  /** Heating on (1) or set back (0) for each hour, living areas and bedrooms. */
+  living: number[];
+  bedrooms: number[];
+  setback: number;
+  /** Thermal mass of rooms and their contents, kJ/m²K of floor (SAP TMP style). */
+  mass: number;
+  /** Solar transmittance of glazing including frame and curtains. */
+  g: number;
 }
 
 export type To = { k: 'out' } | { k: 'ground' } | { k: 'party' } | { k: 'room'; id: string } | { k: 'loft' };
@@ -214,6 +229,15 @@ export interface HouseResult {
 
 export function deviceM3(d: Device) { return d.opts[d.pick]?.[1] ?? 0; }
 
+/** Weather-compensated flow: 25 °C at 15 °C outside, rising to the max flow at the design temperature. */
+export const flowTemp = (maxFlow: number, Tdesign: number, Te: number) => 25 + (maxFlow - 25) * Math.min(1, Math.max(0, (15 - Te) / (15 - Tdesign || 1)));
+
+/** Carnot fraction 0.45 on refrigerant temperatures (condensing 5 K above flow, evaporating 6 K below outside), 0.93 for defrost between −4 and 6 °C. */
+export function heatPumpCop(maxFlow: number, Tdesign: number, Te: number): number {
+  const Tc = flowTemp(maxFlow, Tdesign, Te) + 5, Tev = Te - 6, c = (0.45 * (Tc + 273.15)) / Math.max(3, Tc - Tev);
+  return Math.min(7, c * (Te > -4 && Te < 6 ? 0.93 : 1));
+}
+
 export function calcHouse(h: House): HouseResult {
   const Tout = designTemp(h.climate.station, h.climate.altitude, h.climate.pct);
   const reg = MCS_MEAN_TEMPS[h.climate.region] ?? MCS_MEAN_TEMPS[0], Tg = reg[4];
@@ -312,12 +336,8 @@ export function calcHouse(h: House): HouseResult {
   // shortcut: degree-day estimate scales the whole design loss, ground loss included; replace with the year simulation (board 4b) in phase 2.
   const annualKWh = (htc * hdd * 24) / 1000;
   const wts = MEAN.map((m, i) => Math.max(0, 15.5 - m) * DAYS[i]), wsum = wts.reduce((a, b) => a + b, 0) || 1;
-  const flowAt = (Te: number) => 25 + (h.hp.maxFlow - 25) * Math.min(1, Math.max(0, (15 - Te) / (15 - Tout || 1)));
-  const copAt = (Te: number) => {
-    // Carnot fraction on refrigerant temperatures: condensing 5 K above flow, evaporating 6 K below outside air.
-    const Tc = flowAt(Te) + 5, Tev = Te - 6, c = (0.45 * (Tc + 273.15)) / Math.max(3, Tc - Tev);
-    return Math.min(7, c * (Te > -4 && Te < 6 ? 0.93 : 1));
-  };
+  const flowAt = (Te: number) => flowTemp(h.hp.maxFlow, Tout, Te);
+  const copAt = (Te: number) => heatPumpCop(h.hp.maxFlow, Tout, Te);
   const months = MEAN.map((m, i) => {
     const heat = (annualKWh * wts[i]) / wsum, cop = copAt(m);
     return { heat, Tout: m, flow: flowAt(m), cop, elec: heat / cop };
