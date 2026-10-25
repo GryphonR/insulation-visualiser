@@ -1,0 +1,107 @@
+/* Drafting Table theme (design canvas, skin A): paper and ink, square panels with dark header bars,
+   mono labels and figures, orange for what's selected. Loaded after styles.css, so it overrides it. */
+:root {
+  --bg: #f6f4ee;
+  --paper: #f6f4ee;
+  --card: #fffefb;
+  --ink: #1b2a3a;
+  --muted: #55626e;
+  --line: #d3d8dc;
+  --line-strong: #9aa6b0;
+  --rule: #e8e6de;
+  --accent: #c2410c;
+  --head-muted: #c9d1d8;
+  --bw: 1.5px;
+}
+
+body {
+  background-color: var(--paper);
+  background-image: linear-gradient(var(--rule) 1px, transparent 1px), linear-gradient(90deg, var(--rule) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+::selection { background: #f3c9a2; }
+
+/* Type: labels, table heads and figures in mono */
+.eyebrow, .tiles-head { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.big, .clock { font-family: var(--mono); }
+
+/* Panels: square, ink border; the first heading row becomes a dark header bar */
+.card, .tile, .modal, .compare-card, .layer, .pill, .callout, .eq { border-radius: 0; }
+.card { border: var(--bw) solid var(--ink); background: var(--card); }
+.panel > .section-head:first-child, .panel > h2:first-child, .chart-card > .section-head:first-child {
+  margin: -20px -20px 0; padding: 9px 20px; background: var(--ink); color: var(--paper); min-height: 40px;
+}
+.chart-card > .section-head:first-child { margin: -18px -18px 0; padding: 9px 18px; }
+.panel > .section-head:first-child h2, .panel > h2:first-child, .panel > .section-head:first-child h3, .chart-card > .section-head:first-child h2, .chart-card > .section-head:first-child h3 {
+  font-family: var(--sans); font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--paper);
+}
+.panel > .section-head:first-child .muted, .panel > .section-head:first-child .eyebrow, .chart-card > .section-head:first-child .muted { color: var(--head-muted); }
+.panel > .section-head:first-child p { margin-top: 2px; text-transform: none; letter-spacing: 0; }
+/* Controls sitting in a header bar read light-on-dark */
+.panel > .section-head:first-child .chip, .panel > .section-head:first-child .btn-secondary, .panel > .section-head:first-child .icon-btn {
+  background: transparent; color: var(--paper); border-color: var(--head-muted);
+}
+.panel > .section-head:first-child .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.panel > .section-head:first-child .btn-link { color: var(--paper); text-decoration-color: var(--head-muted); }
+.panel > .section-head:first-child .select, .panel > .section-head:first-child input:not([type='range']):not([type='checkbox']) { background: #fff; color: var(--ink); }
+.panel > .section-head:first-child label.small { color: var(--paper); }
+
+/* Tiles: square figures panel */
+.tile { background: var(--card); border: var(--bw) solid var(--ink); }
+.tile-value .big { font-weight: 500; }
+
+/* Chips, tabs and segmented choices */
+.chip { border-radius: 0; border: 1px solid var(--ink); background: var(--card); min-height: 40px; }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+[role='tablist'] .chip { min-height: 44px; font-weight: 500; }
+[role='tablist'] .chip.on { background: var(--ink); border-color: var(--ink); color: var(--paper); box-shadow: inset 0 -4px 0 var(--accent); }
+.picker-chip { border-radius: 0; border-color: var(--ink); }
+
+/* Buttons */
+.btn-primary, .btn-secondary, .btn-danger, .icon-btn { border-radius: 0; }
+.btn-primary { background: var(--ink); border: var(--bw) solid var(--ink); color: var(--paper); }
+.btn-secondary { background: var(--card); border: var(--bw) solid var(--ink); color: var(--ink); }
+.btn-danger { background: var(--card); border: var(--bw) solid #9a3412; color: #9a3412; }
+.icon-btn { border: var(--bw) solid var(--ink); background: var(--card); }
+.btn-link, .inline-link { color: var(--ink); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.btn-link:hover, .inline-link:hover { text-decoration-color: var(--accent); }
+.play { border-radius: 0; background: var(--accent); }
+
+/* Inputs */
+.select, .thk-input, .h-text, .h-sel, .picker-search { border-radius: 0; border: 1px solid var(--line-strong); background: #fff; }
+input[type='range'], input[type='checkbox'], input[type='radio'] { accent-color: var(--accent); }
+
+/* Tables */
+.h-table th, .learn-table th { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); border-bottom: var(--bw) solid var(--ink); }
+.h-table td { border-bottom-color: #dfe3e6; }
+.h-table tfoot td { border-top: var(--bw) solid var(--ink); }
+
+/* Notes and callouts: paper panel with an orange rule */
+.callout { background: var(--card); border: var(--bw) solid var(--ink); border-left: 5px solid var(--accent); }
+.eq { background: var(--card); border: 1px solid var(--ink); border-left: 4px solid var(--accent); }
+.learn-section code { border-radius: 0; background: var(--paper); }
+
+/* Modals */
+.modal { border: var(--bw) solid var(--ink); }
+.modal-head { background: var(--ink); color: var(--paper); border-bottom: 0; }
+.modal-head h2 { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--paper); }
+.modal-head .icon-btn { background: transparent; color: var(--paper); border-color: var(--head-muted); }
+.modal-backdrop { background: rgba(27, 42, 58, 0.55); }
+
+/* Everything else that was rounded */
+.layer { background: var(--paper); border-color: var(--ink); }
+.pill { background: var(--paper); border: 1px solid var(--line); }
+.strip, .sched, .badge, .picker-cat, .picker-item-btn, .swap-opt, .toc-link, .drag-handle, .cbar-grad, .range-bar, .range-fill, .node, .h-text { border-radius: 0; }
+.picker-cat.on, .toc-link.active { background: var(--ink); color: var(--paper); }
+.picker-cat.on .picker-count { color: var(--head-muted); }
+.picker-item.on .picker-item-btn, .swap-opt.on { background: #fdf3ea; }
+.swap-opt.on { border-color: var(--accent); }
+
+/* Charts and plan on paper */
+.grid { stroke: var(--rule); }
+.grid-v { stroke: #efede6; }
+.plan, .day-chart { background: var(--card); border: 1px solid var(--ink); border-radius: 0; }
+.node { border: var(--bw) solid var(--ink); background: var(--card); }
+.node.on { border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); background: #fdf3ea; }
+.shape-ed, .outline-ed { border-radius: 0; border-color: var(--ink); }

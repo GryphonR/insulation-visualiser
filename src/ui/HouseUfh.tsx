@@ -107,13 +107,15 @@ export function HouseUfh({ house, upd }: { house: House; upd: (fn: (h: House) =>
                   <td className="n mono">{fmt(loopArea(e), 1)}</td>
                   <td className={`n mono ${len > 100 ? 'bad' : ''}`}>{fmt(len)}{lay ? ` (${fmt(lay.route.inFloor)} in floor)` : ' est.'}</td>
                   <td>{e.rect ? <button type="button" className="btn-link" onClick={() => setE(e.id, { rect: undefined })}>Undraw</button>
-                    : <button type="button" className="btn-link" onClick={() => upd((h) => {
-                        const x = h.heating.emitters.find((y) => y.id === e.id)!;
-                        x.rect = defaultLoopRect(h, e.room);
-                        const z = h.heating.zones.find((y) => y.id === x.zone);
-                        if (z && !z.manifold) z.manifold = { x: x.rect.x, y: x.rect.y + x.rect.h + 0.3 };
-                        setSel(e.id); setStorey(h.rooms.find((r) => r.id === e.room)?.storey ?? 0);
-                      })}>Draw on plan</button>}</td>
+                    : <button type="button" className="btn-link" onClick={() => {
+                        upd((h) => {
+                          const x = h.heating.emitters.find((y) => y.id === e.id)!;
+                          x.rect = defaultLoopRect(h, e.room);
+                          const z = h.heating.zones.find((y) => y.id === x.zone);
+                          if (z && !z.manifold) z.manifold = { x: x.rect.x, y: x.rect.y + x.rect.h + 0.3 };
+                        });
+                        setSel(e.id); setStorey(house.rooms.find((r) => r.id === e.room)?.storey ?? 0);
+                      }}>Draw on plan</button>}</td>
                 </tr>
               );
             })}
