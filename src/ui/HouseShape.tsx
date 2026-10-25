@@ -1,5 +1,5 @@
-import { shapeGeo } from '../engine/house';
-import type { Room, RoomShape, SlopeSide } from '../engine/house';
+import { roomEdges, shapeGeo, shapeOf } from '../engine/house';
+import type { EdgeSlope, Room, RoomShape, SlopeSide } from '../engine/house';
 import { Chip } from './controls';
 
 const fmt = (v: number, d = 1) => v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -9,7 +9,12 @@ const PRESETS: Array<[string, string, [SlopeSide, SlopeSide] | null]> = [
 export const DEFAULT_SHAPE: RoomShape = { axis: 'ew', sides: ['knee', 'knee'], pitch: 40, knee: 1.0, ceiling: 2.3, eaves: ['cold', 'cold'], dormers: [null, null], rooflight: 0 };
 
 /** Sloping ceilings, knee walls and dormers for a top-storey room (board 1c), with a live cross-section. */
-export function RoomShapeEditor({ room, setShape }: { room: Room; setShape: (s: RoomShape | undefined) => void }) {
+export function RoomShapeEditor({ room, setShape, outside }: {
+  room: Room; setShape: (s: RoomShape | undefined) => void;
+  /** Which walls (in outline order) face outside: the presets slope those. */
+  outside?: boolean[];
+}) {
+  if (room.poly && room.poly.length >= 3) return <PolyShapeEditor room={room} setShape={setShape} outside={outside ?? []} />;
   const sh = room.shape;
   const preset = !sh ? 'flat' : PRESETS.find((p) => p[2] && p[2][0] === sh.sides[0] && p[2][1] === sh.sides[1])?.[0] ?? 'custom';
   const set = (patch: Partial<RoomShape>) => sh && setShape({ ...sh, ...patch });
@@ -93,6 +98,78 @@ export function RoomShapeEditor({ room, setShape }: { room: Room; setShape: (s: 
           </div>
         ))}
         <p className="small muted">Slopes, knee walls and dormers take their build-ups from the Build-ups defaults; change any one face in the table below. A knee wall is counted in series with the roof over its eaves void.</p>
+      </>}
+    </div>
+  );
+}
+
+const SIDE_LABEL: Record<SlopeSide, string> = { full: 'Full-height wall', plate: 'Coombed (wall to plate)', knee: 'Knee wall + eaves void' };
+
+/** Sloping ceilings on a room of any shape: one setting per wall, slopes rising inward from each sloped wall. */
+function PolyShapeEditor({ room, setShape, outside }: { room: Room; setShape: (s: RoomShape | undefined) => void; outside: boolean[] }) {
+  const sh = room.shape, es = roomEdges(room);
+  const edges: EdgeSlope[] = es.map((_, i) => sh?.edges?.[i] ?? { side: 'full', eaves: 'cold', dormer: null });
+  const only = (side: SlopeSide) => edges.every((e, i) => e.side === (outside[i] ? side : 'full'));
+  const preset = !sh ? 'flat' : only('plate') ? 'plate' : only('knee') ? 'knee' : 'custom';
+  const base: RoomShape = sh ?? { ...DEFAULT_SHAPE };
+  const all = (side: SlopeSide) => setShape({ ...base, edges: es.map((_, i) => ({ side: outside[i] ? side : 'full', eaves: 'cold', dormer: null })) });
+  const setEdge = (i: number, patch: Partial<EdgeSlope>) => setShape({ ...base, edges: edges.map((e, j) => (j === i ? { ...e, ...patch } : e)) });
+  const set = (patch: Partial<RoomShape>) => { if (sh) setShape({ ...sh, ...patch, edges }); };
+  const g = sh ? shapeOf(room, { ...sh, edges }) : null;
+  const FIELDS: Array<[string, 'pitch' | 'knee' | 'ceiling' | 'rooflight', number, string]> = [
+    ['Roof pitch', 'pitch', 1, '°'], ['Knee / wall plate height', 'knee', 0.05, 'm'], ['Flat ceiling height', 'ceiling', 0.05, 'm'], ['Rooflight (first slope)', 'rooflight', 0.1, 'm²'],
+  ];
+  return (
+    <div className="shape-ed">
+      <div className="eyebrow">Ceiling shape</div>
+      <div className="chips">
+        <Chip on={preset === 'flat'} onClick={() => setShape(undefined)}>Flat ceiling</Chip>
+        <Chip on={preset === 'plate'} onClick={() => all('plate')}>Coombed on outside walls</Chip>
+        <Chip on={preset === 'knee'} onClick={() => all('knee')}>Room in roof</Chip>
+        {preset === 'custom' && <Chip on onClick={() => {}}>Custom</Chip>}
+      </div>
+      {sh && g && <>
+        <div className="hf-row">
+          {FIELDS.map(([l, k, step, u]) => (
+            <label key={k} className="hf"><span className="eyebrow">{l}</span>
+              <span className="hf-in"><input type="number" className="thk-input" step={step} min={0} value={sh[k]} onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) set({ [k]: v }); }} /><span className="small muted">{u}</span></span>
+            </label>
+          ))}
+        </div>
+        <div className="h-table-wrap">
+          <table className="h-table">
+            <thead><tr><th>Wall</th><th>Meets the roof as</th><th>Eaves roof</th><th>Dormer: width, front height, window m²</th></tr></thead>
+            <tbody>
+              {es.map((e, i) => (
+                <tr key={i}>
+                  <td>Wall {i + 1} <span className="muted small">({e.side}, {fmt(e.len, 2)} m{outside[i] ? '' : ', inside'})</span></td>
+                  <td>
+                    <select className="h-sel" value={edges[i].side} aria-label={`Wall ${i + 1} slope`} onChange={(ev) => setEdge(i, { side: ev.target.value as SlopeSide, dormer: ev.target.value === 'full' ? null : edges[i].dormer })}>
+                      {(Object.keys(SIDE_LABEL) as SlopeSide[]).map((k) => <option key={k} value={k}>{SIDE_LABEL[k]}</option>)}
+                    </select>
+                  </td>
+                  <td>
+                    {edges[i].side === 'knee'
+                      ? <select className="h-sel" value={edges[i].eaves} aria-label={`Wall ${i + 1} eaves`} onChange={(ev) => setEdge(i, { eaves: ev.target.value as 'cold' | 'warm' })}><option value="cold">Cold (tiles only)</option><option value="warm">Warm (insulated)</option></select>
+                      : <span className="muted small">—</span>}
+                  </td>
+                  <td>
+                    {edges[i].side !== 'full' && (
+                      <span className="dormer-row small">
+                        <input type="checkbox" aria-label={`Wall ${i + 1} dormer`} checked={!!edges[i].dormer} onChange={(ev) => setEdge(i, { dormer: ev.target.checked ? { w: Math.max(0.6, Math.min(1.8, e.len - 0.3)), front: Math.min(2.3, g.hc), window: 1 } : null })} />
+                        {edges[i].dormer && (['w', 'front', 'window'] as const).map((k) => (
+                          <input key={k} type="number" className="thk-input" step={0.1} aria-label={`Wall ${i + 1} dormer ${k}`} value={edges[i].dormer![k]} onChange={(ev) => setEdge(i, { dormer: { ...edges[i].dormer!, [k]: Number(ev.target.value) || 0 } })} />
+                        ))}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="small mono">Volume {fmt(g.V)} m³ · flat ceiling {fmt(g.flatA, 1)} m² · slopes: {g.slopes.map((x) => `wall ${x.i + 1} ${fmt(x.area, 1)} m²`).join(', ') || 'none'}</p>
+        <p className="small muted">From each sloped wall the ceiling rises at the roof pitch from the knee or plate height; where slopes meet they form hips, and above the flat-ceiling height the ceiling is flat. Slopes, knee walls and dormers take their build-ups from the Build-ups defaults.</p>
       </>}
     </div>
   );

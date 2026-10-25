@@ -158,3 +158,4 @@
 .thk-input.wide { width: 110px; }
 .nudge { display: inline-grid; grid-template-columns: repeat(4, 36px); gap: 4px; }
 .h-text.wide-text { max-width: 420px; width: 420px; }
+.dormer-row { display: inline-flex; gap: 4px; align-items: center; } .dormer-row .thk-input { width: 52px; }

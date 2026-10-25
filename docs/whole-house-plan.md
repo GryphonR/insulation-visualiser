@@ -213,14 +213,25 @@ These are sample data. The engine works them out from geometry, so expect them t
 13. **Smart meter:** CSV import of meter readings (supplier, n3rgy or Bright export; kWh or m³; any interval), added up into months.
 14. **Sharing:** PDF and JSON export is enough.
 
+## Round 3: answers and what was built
+
+1. **Satellite imagery for a paid app:** the keyless Esri World Imagery tiles are gone, because their terms don't clearly allow commercial use. Satellite tracing is now bring-your-own:
+   - a Mapbox Satellite preset (the user's own access token, under Mapbox's terms), or any tile URL template the user is licensed for;
+   - the key stays in that browser and is never saved in the project or its exports;
+   - Esri's keyed static basemap tiles have no plain imagery style, so they aren't offered.
+2. **Sloping ceilings on rooms of any shape:**
+   - each wall of a polygon room is full height, coombed, or a knee wall with an eaves void, and has its own eaves setting and optional dormer;
+   - pitch, knee, flat-ceiling height and rooflight are shared;
+   - the ceiling is the lowest of the slopes rising inward from each sloped wall (hips form at corners), capped at the flat ceiling;
+   - volume, flat area, the slope area for each wall and the mean gable-wall heights come from a fine grid, cached per shape;
+   - a rectangle drawn as a polygon matches the exact rectangle figures within 2–3%;
+   - slope settings follow their walls when corners are added or removed, and convert both ways between rectangle and polygon where possible.
+3. **Survey mode:** not wanted; dropped.
+
 ## Not built yet (from the design boards)
 
 - Hot water and junctions (thermal bridges): later, as asked.
-- Survey mode (marking each input measured or assumed) and a version history list beyond undo/redo (board 1f).
-- Room shapes (sloping ceilings) on polygon rooms: rectangles only for now.
 
 ## Open questions
 
-1. **Satellite imagery terms:** Esri allows free viewing with attribution for non-commercial use. If the app will be used commercially (for example by installers), do you want to check Esri's terms, or switch to a paid provider?
-2. **Sloping ceilings on non-rectangular rooms:** worth doing, or are rooms in the roof always near-rectangular?
-3. **Survey mode:** still wanted? It would let a surveyor mark each value as measured, from the EPC, or assumed, and feed that into the uncertainty range.
+None outstanding.

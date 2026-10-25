@@ -4,7 +4,7 @@ import { MONTHS } from '../engine/data';
 import { BUILTIN_STACKUPS } from '../engine/library';
 import type { Stackup } from '../engine/library';
 import { MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS } from '../engine/climate-mcs';
-import { GLAZING_LIBRARY, SHADING, SIDES, buildupU, calcHouse, defaultTemp, deviceM3, roomArea, roomEdges, roomPoly, setOutline } from '../engine/house';
+import { GLAZING_LIBRARY, SHADING, SIDES, buildupU, calcHouse, defaultTemp, deviceM3, edgesToRectShape, rectShapeToEdges, roomArea, roomEdges, roomPoly, setOutline } from '../engine/house';
 import type { Buildup, BuildupKind, DefaultKey, House, Room, RoomType, Side } from '../engine/house';
 import { Chip } from './controls';
 import { RoomShapeEditor } from './HouseShape';
@@ -161,6 +161,7 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
               onOutline={(id, poly, after) => upd((h) => {
                 const r = h.rooms.find((x) => x.id === id);
                 if (!r) return;
+                if (after != null && r.shape?.edges) r.shape.edges.splice(after + 1, 0, { ...r.shape.edges[after], dormer: null });
                 setOutline(r, poly);
                 // Splitting wall `after` in two: a window on it stays on its first half, later walls move up one.
                 if (after != null) h.openings.forEach((o) => { if (o.room === id && o.edge != null && o.edge > after) o.edge += 1; });
@@ -228,10 +229,16 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
                   {room.poly
                     ? <span className="chips">
                         <label className="small"><input type="checkbox" checked={outlineMode} onChange={(e) => setOutlineMode(e.target.checked)} /> Corner handles on the plan</label>
-                        <button type="button" className="btn-link" onClick={() => upd((h) => { const r = h.rooms.find((x) => x.id === sel)!; setOutline(r, null); h.openings.forEach((o) => { if (o.room === r.id) delete o.edge; }); })}>Back to a rectangle</button>
+                        <button type="button" className="btn-link" onClick={() => upd((h) => {
+                          const r = h.rooms.find((x) => x.id === sel)!;
+                          if (r.shape?.edges) r.shape = edgesToRectShape(r.shape);
+                          if (!r.shape) delete r.shape;
+                          setOutline(r, null); h.openings.forEach((o) => { if (o.room === r.id) delete o.edge; });
+                        })}>Back to a rectangle</button>
                       </span>
                     : <button type="button" className="btn-secondary" onClick={() => upd((h) => {
                         const r = h.rooms.find((x) => x.id === sel)!;
+                        if (r.shape && !r.shape.edges) r.shape = { ...r.shape, edges: rectShapeToEdges(r.shape) };
                         setOutline(r, roomPoly(r));
                         // A rectangle's walls N, E, S, W become walls 1–4: keep each window on its wall.
                         h.openings.forEach((o) => { if (o.room === r.id) o.edge = ['N', 'E', 'S', 'W'].indexOf(o.side); });
@@ -247,6 +254,7 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
                         <input type="number" className="thk-input" step={0.05} value={y} aria-label={`Corner ${i + 1} y`} onChange={(e) => upd((h) => { const r = h.rooms.find((q) => q.id === sel)!; setOutline(r, r.poly!.map((p, j) => (j === i ? [p[0], Number(e.target.value) || 0] : p))); })} />
                         <button type="button" className="btn-link inline" disabled={room.poly!.length <= 3} onClick={() => upd((h) => {
                           const r = h.rooms.find((q) => q.id === sel)!;
+                          if (r.shape?.edges) r.shape.edges.splice(i, 1);
                           setOutline(r, r.poly!.filter((_, j) => j !== i));
                           h.openings.forEach((o) => { if (o.room === r.id && o.edge != null && o.edge >= i) o.edge = Math.max(0, o.edge - 1); });
                         })}>remove</button>
@@ -257,7 +265,8 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
               </div>
 
               {room.storey + room.span === house.storeys.length && (
-                <RoomShapeEditor room={room} setShape={(s) => upd((h) => { const r = h.rooms.find((x) => x.id === room.id); if (r) { if (s) r.shape = s; else delete r.shape; } })} />
+                <RoomShapeEditor room={room} setShape={(s) => upd((h) => { const r = h.rooms.find((x) => x.id === room.id); if (r) { if (s) r.shape = s; else delete r.shape; } })}
+                  outside={roomEdges(room).map((e) => rr.faces.some((f) => f.key.startsWith(`w:${room.id}:${e.id}:`) && f.to.k !== 'room'))} />
               )}
 
               <div className="h-table-wrap">
