@@ -41,11 +41,11 @@ describe('room shapes', () => {
     const kb = h.buildups.find((b) => b.id === 'knee')!, tiles = h.buildups.find((b) => b.id === 'tiles')!;
     expect(knee.U).toBeLessThan(buildupU(kb, 0.26));
     expect(knee.U).toBeCloseTo(1 / (1 / buildupU(kb, 0.26) + Math.sin((40 * Math.PI) / 180) / buildupU(tiles, 0.14)), 6);
-    expect(room.faces.find((x) => x.key === 'lc:attic')!.area).toBeCloseTo(shapeGeo(h.rooms.at(-1)!, rir).fw * 3.8, 6);
+    expect(room.faces.find((x) => x.key === 'lc:attic')!.area).toBeCloseTo(shapeGeo(h.rooms[h.rooms.length - 1], rir).fw * 3.8, 6);
     // The room below now has a heated room above part of it.
     const bed1 = res.rooms.find((x) => x.room.id === 'bed1')!;
     expect(bed1.faces.some((x) => x.kind === 'ceiling' && x.to.k === 'room' && x.to.id === 'attic')).toBe(true);
-    expect(room.V).toBeCloseTo(shapeGeo(h.rooms.at(-1)!, rir).V, 6);
+    expect(room.V).toBeCloseTo(shapeGeo(h.rooms[h.rooms.length - 1], rir).V, 6);
   });
 
   it('a dormer takes area out of the slope and adds a front, cheeks, roof and window', () => {
