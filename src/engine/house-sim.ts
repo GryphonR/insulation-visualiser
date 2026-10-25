@@ -115,7 +115,11 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
         if (j !== undefined) links.push([i, j, UA]);
       }
       // Windows in slopes or dormer roofs face the sky: treat as a flat roof light.
-      if (f.kind === 'window') solar.push({ node: i, area: f.area, g: f.gEff ?? g.g, orient: ORIENTS.find((o) => o.id === (f.key.startsWith('rl:') ? 'roof' : f.side))! });
+      if (f.kind === 'window') {
+        const orient = f.key.startsWith('rl:') ? ORIENTS.find((o) => o.id === 'roof')!
+          : f.az != null ? { id: `az${Math.round(f.az)}`, name: '', label: '', az: f.az, tilt: 90 } : ORIENTS.find((o) => o.id === f.side)!;
+        solar.push({ node: i, area: f.area, g: f.gEff ?? g.g, orient });
+      }
     }
     Hout[i] += 0.33 * r.n * r.V;
   });

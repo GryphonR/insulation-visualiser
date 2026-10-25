@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Stackup } from '../engine/library';
-import { calcHouse, onStorey } from '../engine/house';
+import { calcHouse, onStorey, roomPoly } from '../engine/house';
+import { centroid } from '../engine/geom';
+import type { Pt } from '../engine/geom';
+import { planBounds } from './HousePlan';
 import type { House, HouseResult } from '../engine/house';
 import { defaultHouse } from '../engine/house-default';
 import { applyChanges, chain, describe, diff, groupChanges, loadProject, newProject, sanitizeProject, saveProject, steps } from '../engine/house-scenarios';
@@ -277,9 +280,11 @@ function CompareView({ project, results, ordered }: { project: Project; results:
   const rowOf = (r: HouseResult, id: string) => r.rooms.find((x) => x.room.id === id);
 
   const plan = (h: House, r: HouseResult, kind: 'A' | 'B' | 'diff', scale: number) => {
-    const S = scale, PAD = 16, maxX = Math.max(1, ...h.rooms.map((x) => x.x + x.w)), maxY = Math.max(1, ...h.rooms.map((x) => x.y + x.d));
+    const S = scale, PAD = 16, bb = planBounds(h);
+    const to = (p: Pt): Pt => [PAD + (p[0] - bb.minX) * S, PAD + (p[1] - bb.minY) * S];
+    const pts = (p: Pt[]) => p.map((q) => to(q).join(',')).join(' ');
     return (
-      <svg className="plan" viewBox={`0 0 ${maxX * S + PAD * 2} ${maxY * S + PAD * 2}`}>
+      <svg className="plan" viewBox={`0 0 ${(bb.maxX - bb.minX) * S + PAD * 2} ${(bb.maxY - bb.minY) * S + PAD * 2}`}>
         {h.rooms.filter((x) => onStorey(x, storey)).map((room) => {
           const a = rowOf(rA, room.id), b = rowOf(rB, room.id), me = rowOf(r, room.id);
           let fill = '#fff', label = '';
@@ -291,17 +296,17 @@ function CompareView({ project, results, ordered }: { project: Project; results:
             fill = room.heated ? mix([247, 239, 225], [233, 150, 95], (me.perM2 - 20) / 70) : '#eceff1';
             label = room.heated ? `${fmt(me.totalW)} W` : `${fmt(me.T, 1)} °C`;
           }
-          const X = PAD + room.x * S, Y = PAD + room.y * S;
+          const c = to(centroid(roomPoly(room)));
           return (
             <g key={room.id} className="plan-room" onClick={() => setSel(room.id)}>
-              <rect x={X} y={Y} width={room.w * S} height={room.d * S} fill={fill} stroke="#14212b" strokeWidth={1.5} />
-              <text x={X + (room.w * S) / 2} y={Y + (room.d * S) / 2 - 3} textAnchor="middle" className="plan-t">{room.name}</text>
-              <text x={X + (room.w * S) / 2} y={Y + (room.d * S) / 2 + 13} textAnchor="middle" className="plan-s">{label}</text>
+              <polygon points={pts(roomPoly(room))} fill={fill} stroke="#14212b" strokeWidth={1.5} />
+              <text x={c[0]} y={c[1] - 3} textAnchor="middle" className="plan-t">{room.name}</text>
+              <text x={c[0]} y={c[1] + 13} textAnchor="middle" className="plan-s">{label}</text>
             </g>
           );
         })}
         {h.rooms.filter((x) => x.id === sel && onStorey(x, storey)).map((x) => (
-          <rect key="sel" x={PAD + x.x * S} y={PAD + x.y * S} width={x.w * S} height={x.d * S} fill="none" stroke="#c2410c" strokeWidth={3} pointerEvents="none" />
+          <polygon key="sel" points={pts(roomPoly(x))} fill="none" stroke="#c2410c" strokeWidth={3} pointerEvents="none" />
         ))}
       </svg>
     );

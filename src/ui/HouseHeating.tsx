@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { MONTHS } from '../engine/data';
-import { calcHouse } from '../engine/house';
+import { calcHouse, roomArea } from '../engine/house';
 import type { House } from '../engine/house';
 import { COVERS, RAD_LABEL, autoEmitters, emitterOut, loopLength, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
 import type { Emitter, RadType, Zone } from '../engine/house-heating';
@@ -48,7 +48,7 @@ export function HouseHeating({ house, setHouse }: { house: House; setHouse: (fn:
   const add = (room: string, kind: Emitter['kind']) => upd((h) => {
     const zone = h.heating.zones.find((z) => (kind === 'ufh' ? z.kind === 'ufh' : z.kind === 'rad'))?.id ?? '';
     const r = h.rooms.find((x) => x.id === room);
-    h.heating.emitters.push({ id: uid('e'), room, kind, zone, type: 'K2', len: 1000, height: 600, rated: 600, area: r ? +(r.w * r.d * 0.85).toFixed(1) : 10, spacing: 150, cover: 'Tiles', tail: 5 });
+    h.heating.emitters.push({ id: uid('e'), room, kind, zone, type: 'K2', len: 1000, height: 600, rated: 600, area: r ? +(roomArea(r) * 0.85).toFixed(1) : 10, spacing: 150, cover: 'Tiles', tail: 5 });
   });
 
   return (

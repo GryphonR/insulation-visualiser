@@ -4,10 +4,11 @@ import { MONTHS } from '../engine/data';
 import { BUILTIN_STACKUPS } from '../engine/library';
 import type { Stackup } from '../engine/library';
 import { MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS } from '../engine/climate-mcs';
-import { GLAZING_LIBRARY, SHADING, SIDES, buildupU, calcHouse, defaultTemp, deviceM3, onStorey } from '../engine/house';
+import { GLAZING_LIBRARY, SHADING, SIDES, buildupU, calcHouse, defaultTemp, deviceM3, roomArea, roomEdges, roomPoly, setOutline } from '../engine/house';
 import type { Buildup, BuildupKind, DefaultKey, House, Room, RoomType, Side } from '../engine/house';
 import { Chip } from './controls';
 import { RoomShapeEditor } from './HouseShape';
+import { HousePlan, planBounds } from './HousePlan';
 import { StackupModal } from './StackupModal';
 import type { StackupDraft } from './StackupModal';
 import './house.css';
@@ -67,9 +68,8 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
   const nameOf = (id: string) => house.rooms.find((r) => r.id === id)?.name ?? id;
 
   // Plan geometry, shared by all storeys so they line up.
-  const S = 48, PAD = 34;
-  const maxX = Math.max(1, ...house.rooms.map((r) => r.x + r.w)), maxY = Math.max(1, ...house.rooms.map((r) => r.y + r.d));
-  const onThis = house.rooms.filter((r) => onStorey(r, storey));
+  const { maxX, maxY, minX, minY } = planBounds(house);
+  const [outlineMode, setOutlineMode] = useState(true);
 
   const addRoom = () => {
     const id = uid('r');
@@ -107,7 +107,7 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
 
   return (
     <div className="house">
-      <p className="muted small">Design-day heat loss room by room (MCS / CIBSE method). Rooms are rectangles on each storey; walls, floors and ceilings are found from how they touch.</p>
+      <p className="muted small">Design-day heat loss room by room (MCS / CIBSE method). Rooms are drawn on each storey, any shape; walls, floors and ceilings are found from how they touch.</p>
 
       <div className="tiles">
         {tiles.map(([l, v, u, n]) => (
@@ -136,45 +136,28 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
               <Chip on={lens === 'cover'} onClick={() => setLens('cover')}>Emitter cover</Chip>
               <Chip on={lens === 'none'} onClick={() => setLens('none')}>None</Chip>
             </div>
-            <svg className="plan" viewBox={`0 0 ${maxX * S + PAD * 2} ${maxY * S + PAD * 2}`} role="img" aria-label={`${house.storeys[storey]?.name} plan`}>
-              <text x={PAD + (maxX * S) / 2} y={18} textAnchor="middle" className="plan-n">N</text>
-              {onThis.map((r) => {
-                const x = res.rooms.find((q) => q.room.id === r.id)!;
-                const cv = res.heat.rooms.find((q) => q.id === r.id);
-                const fill = lens === 'none' ? '#fff' : lens === 'loss' ? (r.heated ? mix([247, 239, 225], [233, 150, 95], (x.perM2 - 20) / 70) : '#eceff1')
+            <HousePlan house={house} storey={storey} sel={sel} setSel={setSel} editOutline={outlineMode}
+              onOutline={(id, poly, after) => upd((h) => {
+                const r = h.rooms.find((x) => x.id === id);
+                if (!r) return;
+                setOutline(r, poly);
+                // Splitting wall `after` in two: a window on it stays on its first half, later walls move up one.
+                if (after != null) h.openings.forEach((o) => { if (o.room === id && o.edge != null && o.edge > after) o.edge += 1; });
+              })}
+              fill={(r) => {
+                const x = res.rooms.find((q) => q.room.id === r.id)!, cv = res.heat.rooms.find((q) => q.id === r.id);
+                return lens === 'none' ? '#fff' : lens === 'loss' ? (r.heated ? mix([247, 239, 225], [233, 150, 95], (x.perM2 - 20) / 70) : '#eceff1')
                   : lens === 'cover' ? (!cv ? '#eceff1' : !cv.has || cv.cover < 0.995 ? '#f3c9a2' : '#dcebdf')
                   : mix([143, 179, 227], [247, 239, 225], (x.T - 5) / 16);
-                const label = lens === 'temp' ? `${fmt(x.T, 1)} °C` : lens === 'cover' ? (!cv ? 'unheated' : cv.has ? `${fmt(cv.cover * 100)}% cover` : 'no emitter')
+              }}
+              label={(r) => {
+                const x = res.rooms.find((q) => q.room.id === r.id)!, cv = res.heat.rooms.find((q) => q.id === r.id);
+                return lens === 'temp' ? `${fmt(x.T, 1)} °C` : lens === 'cover' ? (!cv ? 'unheated' : cv.has ? `${fmt(cv.cover * 100)}% cover` : 'no emitter')
                   : r.heated ? `${fmt(x.totalW)} W` : `unheated ${fmt(x.T, 1)} °C`;
-                const X = PAD + r.x * S, Y = PAD + r.y * S;
-                return (
-                  <g key={r.id} onClick={() => setSel(r.id)} className="plan-room">
-                    <rect x={X} y={Y} width={r.w * S} height={r.d * S} fill={fill} stroke="#14212b" strokeWidth={1.5} />
-                    <text x={X + (r.w * S) / 2} y={Y + (r.d * S) / 2 - 4} textAnchor="middle" className="plan-t">{r.name}</text>
-                    <text x={X + (r.w * S) / 2} y={Y + (r.d * S) / 2 + 12} textAnchor="middle" className="plan-s">{label}</text>
-                    {r.span > 1 && storey > r.storey && <text x={X + (r.w * S) / 2} y={Y + (r.d * S) / 2 + 26} textAnchor="middle" className="plan-s">(open to below)</text>}
-                  </g>
-                );
-              })}
-              {onThis.filter((r) => r.storey === storey).flatMap((r) => SIDES.flatMap((side) => {
-                const ops = house.openings.filter((o) => o.room === r.id && o.side === side);
-                const hz = side === 'N' || side === 'S', L = (hz ? r.w : r.d) * S;
-                return ops.map((o, i) => {
-                  const len = Math.min(L / ops.length - 6, o.w * S), c = (L * (i + 0.5)) / ops.length;
-                  const X = PAD + r.x * S + (side === 'E' ? r.w * S : 0), Y = PAD + r.y * S + (side === 'S' ? r.d * S : 0);
-                  const door = house.buildups.find((b) => b.id === o.buildup)?.kind === 'door';
-                  return hz
-                    ? <line key={o.id} x1={X + c - len / 2} x2={X + c + len / 2} y1={Y} y2={Y} className={door ? 'plan-door' : 'plan-win'} />
-                    : <line key={o.id} y1={Y + c - len / 2} y2={Y + c + len / 2} x1={X} x2={X} className={door ? 'plan-door' : 'plan-win'} />;
-                });
-              }))}
-              {onThis.filter((r) => r.id === sel).map((r) => (
-                <rect key="sel" x={PAD + r.x * S} y={PAD + r.y * S} width={r.w * S} height={r.d * S} fill="none" stroke="#c2410c" strokeWidth={3} pointerEvents="none" />
-              ))}
-            </svg>
+              }} />
             <div className="row-between">
               <button type="button" className="btn-secondary" onClick={addRoom}>Add room on this storey</button>
-              <span className="small muted mono">{fmt(maxX, 1)} × {fmt(maxY, 1)} m</span>
+              <span className="small muted mono">{fmt(maxX - minX, 1)} × {fmt(maxY - minY, 1)} m</span>
             </div>
           </Card>
 
@@ -199,10 +182,12 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
               </div>
               {room.heated && room.setpoint !== defaultTemp(house, room.type) && <p className="small muted">Default for a {room.type} in this house: {defaultTemp(house, room.type)} °C (Room temperatures card).</p>}
               <div className="hf-row">
-                <Num label="x (from west)" unit="m" value={room.x} onChange={(v) => setRoom({ x: v })} />
-                <Num label="y (from north)" unit="m" value={room.y} onChange={(v) => setRoom({ y: v })} />
-                <Num label="Width (E–W)" unit="m" value={room.w} min={0.1} onChange={(v) => setRoom({ w: v })} />
-                <Num label="Depth (N–S)" unit="m" value={room.d} min={0.1} onChange={(v) => setRoom({ d: v })} />
+                <Num label="x (from west)" unit="m" value={room.x} onChange={(v) => upd((h) => { const r = h.rooms.find((x) => x.id === sel)!; if (r.poly) setOutline(r, r.poly.map(([x, y]) => [x + v - r.x, y])); else r.x = v; })} />
+                <Num label="y (from north)" unit="m" value={room.y} onChange={(v) => upd((h) => { const r = h.rooms.find((x) => x.id === sel)!; if (r.poly) setOutline(r, r.poly.map(([x, y]) => [x, y + v - r.y])); else r.y = v; })} />
+                {!room.poly && <>
+                  <Num label="Width (E–W)" unit="m" value={room.w} min={0.1} onChange={(v) => setRoom({ w: v })} />
+                  <Num label="Depth (N–S)" unit="m" value={room.d} min={0.1} onChange={(v) => setRoom({ d: v })} />
+                </>}
                 <label className="hf"><span className="eyebrow">Storey</span>
                   <select className="select" value={room.storey} onChange={(e) => setRoom({ storey: Number(e.target.value) })}>
                     {house.storeys.map((s, i) => <option key={i} value={i}>{s.name}</option>)}
@@ -213,6 +198,40 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
                     {house.storeys.map((_, i) => <option key={i} value={i + 1}>{i + 1} storey{i ? 's' : ''}</option>)}
                   </select>
                 </label>
+              </div>
+
+              <div className="outline-ed">
+                <div className="row-between">
+                  <span className="eyebrow">Outline</span>
+                  {room.poly
+                    ? <span className="chips">
+                        <label className="small"><input type="checkbox" checked={outlineMode} onChange={(e) => setOutlineMode(e.target.checked)} /> Corner handles on the plan</label>
+                        <button type="button" className="btn-link" onClick={() => upd((h) => { const r = h.rooms.find((x) => x.id === sel)!; setOutline(r, null); h.openings.forEach((o) => { if (o.room === r.id) delete o.edge; }); })}>Back to a rectangle</button>
+                      </span>
+                    : <button type="button" className="btn-secondary" onClick={() => upd((h) => {
+                        const r = h.rooms.find((x) => x.id === sel)!;
+                        setOutline(r, roomPoly(r));
+                        // A rectangle's walls N, E, S, W become walls 1–4: keep each window on its wall.
+                        h.openings.forEach((o) => { if (o.room === r.id) o.edge = ['N', 'E', 'S', 'W'].indexOf(o.side); });
+                      })}>Make any shape</button>}
+                </div>
+                {room.poly && <>
+                  <p className="small muted">Drag a corner on the plan, or click + on a wall to add one. Corners snap to 5 cm. {fmt(roomArea(room), 2)} m².</p>
+                  <div className="vx-table">
+                    {room.poly.map(([x, y], i) => (
+                      <span key={i} className="vx-row small">
+                        <b>{i + 1}</b>
+                        <input type="number" className="thk-input" step={0.05} value={x} aria-label={`Corner ${i + 1} x`} onChange={(e) => upd((h) => { const r = h.rooms.find((q) => q.id === sel)!; setOutline(r, r.poly!.map((p, j) => (j === i ? [Number(e.target.value) || 0, p[1]] : p))); })} />
+                        <input type="number" className="thk-input" step={0.05} value={y} aria-label={`Corner ${i + 1} y`} onChange={(e) => upd((h) => { const r = h.rooms.find((q) => q.id === sel)!; setOutline(r, r.poly!.map((p, j) => (j === i ? [p[0], Number(e.target.value) || 0] : p))); })} />
+                        <button type="button" className="btn-link inline" disabled={room.poly!.length <= 3} onClick={() => upd((h) => {
+                          const r = h.rooms.find((q) => q.id === sel)!;
+                          setOutline(r, r.poly!.filter((_, j) => j !== i));
+                          h.openings.forEach((o) => { if (o.room === r.id && o.edge != null && o.edge >= i) o.edge = Math.max(0, o.edge - 1); });
+                        })}>remove</button>
+                      </span>
+                    ))}
+                  </div>
+                </>}
               </div>
 
               {room.storey + room.span === house.storeys.length && (
@@ -263,9 +282,17 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
                 return (
                   <div key={o.id} className="hf-row op-row">
                     <label className="hf"><span className="eyebrow">Name</span><input className="h-text" value={o.name} onChange={(e) => set({ name: e.target.value })} /></label>
-                    <label className="hf"><span className="eyebrow">Side</span>
-                      <select className="select" value={o.side} onChange={(e) => set({ side: e.target.value as Side })}>{SIDES.map((s) => <option key={s}>{s}</option>)}</select>
-                    </label>
+                    {room.poly ? (
+                      <label className="hf"><span className="eyebrow">Wall</span>
+                        <select className="select" value={o.edge ?? roomEdges(room).findIndex((x) => x.side === o.side)} onChange={(e) => { const i = Number(e.target.value); set({ edge: i, side: roomEdges(room)[i].side }); }}>
+                          {roomEdges(room).map((x) => <option key={x.idx} value={x.idx}>Wall {x.idx + 1} ({x.side}, {fmt(x.len, 2)} m)</option>)}
+                        </select>
+                      </label>
+                    ) : (
+                      <label className="hf"><span className="eyebrow">Side</span>
+                        <select className="select" value={o.side} onChange={(e) => set({ side: e.target.value as Side })}>{SIDES.map((s) => <option key={s}>{s}</option>)}</select>
+                      </label>
+                    )}
                     <Num label="Width" unit="m" value={o.w} min={0.1} onChange={(v) => set({ w: v })} />
                     <Num label="Height" unit="m" value={o.h} min={0.1} onChange={(v) => set({ h: v })} />
                     <label className="hf"><span className="eyebrow">Type</span>

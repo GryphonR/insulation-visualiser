@@ -2,6 +2,8 @@
 // Plan and rules: docs/whole-house-plan.md.
 import { MAT, MEAN } from './data';
 import { layerR } from './swap';
+import { compass, edges, overlapAreaPoly, polyArea, selfIntersects, sharedSpan } from './geom';
+import type { Edge, Pt } from './geom';
 import { MCS_HDD, MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS, climateFromPostcode, designTemp, postcodeArea } from './climate-mcs';
 
 /** The MCS station and region for a house: from its postcode unless set by hand, with a location for sun and weather. */
@@ -70,10 +72,16 @@ export interface Room {
   heated: boolean; setpoint: number;
   /** Air changes per hour, unheated rooms only. */
   ach: number;
-  /** Sloping ceilings, rooms on the top storey only. */
+  /** Sloping ceilings, rectangular rooms on the top storey only. */
   shape?: RoomShape;
+  /** Outline of a room of any shape, corners in metres; x, y, w, d then hold its bounding box. */
+  poly?: Pt[];
 }
-export interface Opening { id: string; room: string; side: Side; name: string; w: number; h: number; buildup: string; shade?: keyof typeof SHADING }
+export interface Opening {
+  id: string; room: string; side: Side; name: string; w: number; h: number; buildup: string; shade?: keyof typeof SHADING;
+  /** Wall index on a polygon room (its edges in order); otherwise the first wall facing `side`. */
+  edge?: number;
+}
 export interface Device { id: string; room: string; name: string; fan: boolean; opts: Array<[string, number]>; pick: number }
 export interface Factor { id: string; label: string; dq: number; on: boolean }
 export type Boundary = 'out' | 'party';
@@ -141,6 +149,8 @@ export type To = { k: 'out' } | { k: 'ground' } | { k: 'party' } | { k: 'room'; 
 export interface Face {
   key: string; label: string; kind: 'wall' | 'floor' | 'ceiling' | 'window' | 'door';
   side?: Side; to: To; area: number; buildup: Buildup; U: number;
+  /** Compass bearing the face looks out on, degrees from north (walls and windows). */
+  az?: number;
   /** Outside walls can be switched to a party wall. */
   canParty?: boolean;
   /** Windows: effective solar transmittance of the whole opening (glass g × glass share × shading), or undefined to use the house default. */
@@ -221,7 +231,25 @@ function subtract(a: number, b: number, cuts: Array<[number, number]>): Array<[n
   return segs;
 }
 const overlap1 = (a: number, b: number, c: number, d: number) => Math.max(0, Math.min(b, d) - Math.max(a, c));
-const overlapArea = (r: Room, o: Room) => overlap1(r.x, r.x + r.w, o.x, o.x + o.w) * overlap1(r.y, r.y + r.d, o.y, o.y + o.d);
+/** Give a room an outline (or drop it with null), keeping x, y, w, d as its bounding box. */
+export function setOutline(r: Room, poly: Pt[] | null): void {
+  if (!poly || poly.length < 3) { delete r.poly; return; }
+  const xs = poly.map((p) => p[0]), ys = poly.map((p) => p[1]);
+  r.poly = poly.map(([x, y]) => [+x.toFixed(3), +y.toFixed(3)] as Pt);
+  r.x = Math.min(...xs); r.y = Math.min(...ys); r.w = +(Math.max(...xs) - r.x).toFixed(3); r.d = +(Math.max(...ys) - r.y).toFixed(3);
+  delete r.shape; // sloping ceilings are for rectangles only
+}
+
+/** A room's outline: its polygon if it has one, else its rectangle (corners clockwise on the plan). */
+export const roomPoly = (r: Room): Pt[] => (r.poly && r.poly.length >= 3 ? r.poly : [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.d], [r.x, r.y + r.d]]);
+export const roomArea = (r: Room) => (r.poly && r.poly.length >= 3 ? polyArea(r.poly) : r.w * r.d);
+const overlapArea = (r: Room, o: Room) => (r.poly || o.poly
+  ? overlapAreaPoly(roomPoly(r), roomPoly(o))
+  : overlap1(r.x, r.x + r.w, o.x, o.x + o.w) * overlap1(r.y, r.y + r.d, o.y, o.y + o.d));
+/** A room's walls in plan: rectangles keep their N/E/S/W ids (and saved face choices); polygons number theirs e0, e1… */
+export function roomEdges(r: Room): Array<Edge & { side: Side; id: string; idx: number }> {
+  return edges(roomPoly(r)).map((e, i) => ({ ...e, side: compass(e.az), id: r.poly && r.poly.length >= 3 ? `e${i}` : compass(e.az), idx: i }));
+}
 export const onStorey = (r: Room, s: number) => r.storey <= s && s < r.storey + r.span;
 const topStorey = (r: Room) => r.storey + r.span - 1;
 
@@ -232,24 +260,13 @@ export function roomHeight(h: House, r: Room): number {
 }
 
 /** A room's shape applies only on the top storey of the house. */
-export const roomShape = (h: House, r: Room) => (r.shape && topStorey(r) === h.storeys.length - 1 ? r.shape : undefined);
+export const roomShape = (h: House, r: Room) => (r.shape && !r.poly && topStorey(r) === h.storeys.length - 1 ? r.shape : undefined);
 
 export function roomVolume(h: House, r: Room): number {
   const sh = roomShape(h, r);
-  if (!sh) return r.w * r.d * roomHeight(h, r);
+  if (!sh) return roomArea(r) * roomHeight(h, r);
   const g = shapeGeo(r, sh), below = roomHeight(h, r) - (h.storeys[topStorey(r)]?.h ?? 0);
   return g.V + r.w * r.d * below;
-}
-
-/** Edge of a room on one side: the range along the edge and the neighbour test and range. */
-function edge(r: Room, side: Side) {
-  const hz = side === 'N' || side === 'S';
-  const line = side === 'N' ? r.y : side === 'S' ? r.y + r.d : side === 'W' ? r.x : r.x + r.w;
-  return {
-    a: hz ? r.x : r.y, b: hz ? r.x + r.w : r.y + r.d,
-    touches: (o: Room) => (side === 'N' ? near(o.y + o.d, line) : side === 'S' ? near(o.y, line) : side === 'W' ? near(o.x + o.w, line) : near(o.x, line)),
-    range: (o: Room): [number, number] => (hz ? [o.x, o.x + o.w] : [o.y, o.y + o.d]),
-  };
 }
 
 export const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
@@ -276,26 +293,30 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
   };
   const ground = h.storeys[0]?.below ?? 0;
   const floorB = B(`gf:${r.id}`, 'groundFloor');
-  for (const side of SIDES) {
-    const ext: Face[] = [];
+  const myEdges = roomEdges(r);
+  const isPoly = !!(r.poly && r.poly.length >= 3);
+  for (const e of myEdges) {
+    const side = e.side, ext: Face[] = [];
     for (let s = r.storey; s <= top; s++) {
       const st = h.storeys[s];
       if (!st) continue;
-      const e = edge(r, side), cuts: Array<[number, number]> = [];
+      const cuts: Array<[number, number]> = [];
       for (const o of h.rooms) {
-        if (o.id === r.id || !onStorey(o, s) || !e.touches(o)) continue;
-        const [c, d] = e.range(o), len = overlap1(e.a, e.b, c, d);
-        if (len <= EPS) continue;
-        cuts.push([c, d]);
-        const key = `iw:${pairKey(r.id, o.id)}:${s}`, b = B(key, 'intWall');
-        faces.push({ key, label: `${side} wall`, kind: 'wall', side, to: { k: 'room', id: o.id }, area: len * wallH(side, s, false), buildup: b, U: buildupU(b, FILMS.intWall) });
+        if (o.id === r.id || !onStorey(o, s)) continue;
+        for (const f of roomEdges(o)) {
+          const span = sharedSpan(e, f);
+          if (!span) continue;
+          cuts.push(span);
+          const key = `iw:${pairKey(r.id, o.id)}:${s}`, b = B(key, 'intWall');
+          faces.push({ key, label: `${side} wall`, kind: 'wall', side, az: e.az, to: { k: 'room', id: o.id }, area: (span[1] - span[0]) * wallH(side, s, false), buildup: b, U: buildupU(b, FILMS.intWall) });
+        }
       }
-      const len = subtract(e.a, e.b, cuts).reduce((t, [a, b]) => t + b - a, 0);
+      const len = subtract(0, e.len, cuts).reduce((t, [a, b]) => t + b - a, 0);
       if (len <= EPS) continue;
-      const key = `w:${r.id}:${side}:${s}`, party = h.faceBoundary[key] === 'party';
+      const key = `w:${r.id}:${e.id}:${s}`, party = h.faceBoundary[key] === 'party';
       const si = g && sh && s === top ? g.slopeSides.indexOf(side) : -1, knee = si >= 0 && sh!.sides[si] === 'knee';
       const b = B(key, knee ? 'knee' : 'extWall'), area = len * wallH(side, s, true);
-      const label = `${side} ${knee ? 'knee wall (via eaves void)' : 'wall'}${r.span > 1 ? ` (${st.name.toLowerCase()})` : ''}`;
+      const label = `${isPoly ? `Wall ${e.idx + 1} (${side})` : `${side} ${knee ? 'knee wall (via eaves void)' : 'wall'}`}${r.span > 1 ? ` (${st.name.toLowerCase()})` : ''}`;
       let U = buildupU(b, FILMS.extWall), to: To = party ? { k: 'party' } : { k: 'out' };
       if (knee && !party) {
         // Knee wall and the roof over the eaves void in series: per m² of knee wall the roof is 1/sin(pitch) m².
@@ -305,10 +326,12 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
         to = { k: 'ground' };
         U = basementWallU(b, Math.min(ground, st.h), floorB);
       }
-      ext.push({ key, label, kind: 'wall', side, to, area, buildup: b, U, canParty: true, len });
+      ext.push({ key, label, kind: 'wall', side, az: e.az, to, area, buildup: b, U, canParty: true, len });
     }
-    // Openings come out of this side's outside walls, shared by area.
-    const ops = h.openings.filter((o) => o.room === r.id && o.side === side), gross = ext.reduce((t, f) => t + f.area, 0);
+    // Openings come out of this wall's outside area, shared by area. On a polygon room an opening sits on its
+    // chosen wall, or the first wall facing its compass side.
+    const ops = h.openings.filter((o) => o.room === r.id && (isPoly ? (o.edge ?? myEdges.findIndex((x) => x.side === o.side)) === e.idx : o.side === side));
+    const gross = ext.reduce((t, f) => t + f.area, 0);
     const opArea = Math.min(gross, ops.reduce((t, o) => t + o.w * o.h, 0));
     for (const f of ext) f.area -= gross > 0 ? opArea * (f.area / gross) : 0;
     faces.push(...ext);
@@ -316,11 +339,11 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
       const b = h.buildups.find((x) => x.id === o.buildup) ?? h.buildups[0];
       const shade = SHADING[o.shade ?? 'none']?.[1] ?? 1;
       const gEff = b.kind === 'glazing' && b.g != null ? b.g * (1 - (b.frame ?? 0.3)) * shade : undefined;
-      faces.push({ key: `op:${o.id}`, label: o.name, kind: b.kind === 'door' ? 'door' : 'window', side, to: ext[0]?.to ?? { k: 'out' }, area: o.w * o.h, buildup: b, U: buildupU(b), gEff });
+      faces.push({ key: `op:${o.id}`, label: o.name, kind: b.kind === 'door' ? 'door' : 'window', side, az: e.az, to: ext[0]?.to ?? { k: 'out' }, area: o.w * o.h, buildup: b, U: buildupU(b), gEff });
     }
   }
   // Floor
-  const A = r.w * r.d;
+  const A = roomArea(r);
   if (r.storey === 0) {
     const b = floorB;
     const U = ground > 0 ? groundFloorU(b, ctx.Bp, ground) : b.floorType === 'suspended' ? suspendedFloorU(b, ctx.Bp, h.suspended.vent, h.suspended.voidH) : groundFloorU(b, ctx.Bp);
@@ -428,7 +451,7 @@ export function calcHouse(h: House): HouseResult {
   const ground = h.rooms.filter((r) => r.storey === 0);
   const pre = ground.flatMap((r) => roomFaces(h, r, { Bp: 1 }));
   const P = pre.filter((f) => f.kind === 'wall' && (f.to.k === 'out' || f.to.k === 'ground') && f.key.startsWith('w:') && f.key.endsWith(':0')).reduce((t, f) => t + (f.len ?? 0), 0);
-  const gA = ground.reduce((t, r) => t + r.w * r.d, 0);
+  const gA = ground.reduce((t, r) => t + roomArea(r), 0);
   const Bp = P > EPS ? gA / (0.5 * P) : 1000;
   const ctx = { Bp };
 
@@ -463,7 +486,7 @@ export function calcHouse(h: House): HouseResult {
 
   // Ventilation (board 1d): one airtightness figure shared by exposure, plus devices and mechanical ventilation.
   const heated = h.rooms.filter((r) => r.heated);
-  const heatedV = heated.reduce((t, r) => t + vol(r), 0), heatedA = heated.reduce((t, r) => t + r.w * r.d * r.span, 0);
+  const heatedV = heated.reduce((t, r) => t + vol(r), 0), heatedA = heated.reduce((t, r) => t + roomArea(r) * r.span, 0);
   // Leakage envelope: heated rooms' faces to outside, ground, loft and unheated rooms.
   const toHeated = (to: To) => to.k === 'room' && !!h.rooms.find((o) => o.id === to.id)?.heated;
   const envelope = heated.reduce((t, r) => t + (faces.get(r.id) ?? []).filter((f) => f.to.k !== 'party' && !toHeated(f.to)).reduce((s, f) => s + f.area, 0), 0);
@@ -505,7 +528,7 @@ export function calcHouse(h: House): HouseResult {
     const ventW = r.heated ? 0.33 * n * V * (Ti - Tout) : 0;
     if (r.heated) rows.push({ key: `vent:${r.id}`, label: 'Ventilation', to: 'outside', buildup: `${n.toFixed(2)} ach · ${V.toFixed(1)} m³`, area: 0, U: 0, dT: Ti - Tout, W: ventW, kind: 'vent' });
     const fabricW = r.heated ? rows.filter((x) => x.kind !== 'vent').reduce((t, x) => t + x.W, 0) : 0;
-    const a = r.w * r.d;
+    const a = roomArea(r);
     return { room: r, area: a, V, T: Ti, n, nInf, nDev, nMech, fabricW, ventW, totalW: fabricW + ventW, perM2: a > EPS ? (fabricW + ventW) / a : 0, rows, faces: fs };
   });
 
@@ -557,13 +580,16 @@ export function calcHouse(h: House): HouseResult {
     }
   }
   for (const r of h.rooms) {
-    if (r.w <= 0 || r.d <= 0) checks.push({ level: 'error', text: `${r.name} has no floor area.` });
+    if (roomArea(r) <= 0.01) checks.push({ level: 'error', text: `${r.name} has no floor area.` });
+    if (r.poly && selfIntersects(r.poly)) checks.push({ level: 'error', text: `${r.name}'s outline crosses itself.` });
     if (r.storey + r.span > h.storeys.length) checks.push({ level: 'error', text: `${r.name} rises above the top storey.` });
-    for (const side of SIDES) {
-      const ops = h.openings.filter((o) => o.room === r.id && o.side === side);
+    // Openings must sit on outside wall: check each wall that has any.
+    const es = roomEdges(r), isPoly = !!(r.poly && r.poly.length >= 3);
+    for (const e of es) {
+      const ops = h.openings.filter((o) => o.room === r.id && (isPoly ? (o.edge ?? es.findIndex((x) => x.side === o.side)) === e.idx : o.side === e.side));
       if (!ops.length) continue;
-      const wall = (faces.get(r.id) ?? []).filter((f) => f.kind === 'wall' && f.side === side && f.to.k !== 'room').reduce((t, f) => t + f.area, 0);
-      if (wall < 0.05) checks.push({ level: 'error', text: `${r.name}: ${ops.map((o) => o.name).join(', ')} on the ${side} side, which has no outside wall left.` });
+      const wall = (faces.get(r.id) ?? []).filter((f) => f.kind === 'wall' && f.key.startsWith(`w:${r.id}:${e.id}:`)).reduce((t, f) => t + f.area, 0);
+      if (wall < 0.05) checks.push({ level: 'error', text: `${r.name}: ${ops.map((o) => o.name).join(', ')} on ${isPoly ? `wall ${e.idx + 1}` : `the ${e.side} side`}, which has no outside wall left.` });
     }
   }
   if (!hddKnown) checks.push({ level: 'warn', text: `Postcode area "${area || h.climate.postcode}" not in the MCS degree-day table; using 2,200 K·day.` });
