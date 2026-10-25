@@ -88,7 +88,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h))
   const links: Array<[number, number, number]> = [];
   const Hout = new Float64Array(N), Hg = new Float64Array(N), Hp = new Float64Array(N);
   const seen = new Set<string>();
-  const solar: Array<{ node: number; area: number; orient: (typeof ORIENTS)[number] }> = [];
+  const solar: Array<{ node: number; area: number; g: number; orient: (typeof ORIENTS)[number] }> = [];
   rooms.forEach((r, i) => {
     for (const f of r.faces) {
       const UA = f.U * f.area;
@@ -101,7 +101,8 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h))
         const j = idx.get(f.to.id);
         if (j !== undefined) links.push([i, j, UA]);
       }
-      if (f.kind === 'window' && f.side) solar.push({ node: i, area: f.area, orient: ORIENTS.find((o) => o.id === f.side)! });
+      // Windows in slopes or dormer roofs face the sky: treat as a flat roof light.
+      if (f.kind === 'window') solar.push({ node: i, area: f.area, g: f.gEff ?? g.g, orient: ORIENTS.find((o) => o.id === (f.key.startsWith('rl:') ? 'roof' : f.side))! });
     }
     Hout[i] += 0.33 * r.n * r.V;
   });
@@ -157,7 +158,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h))
     gain.fill(0);
     rooms.forEach((_, i) => { gain[i] = awake * sLiv[i] + asleep * sBed[i] + app * sLiv[i] + cook * sKit[i]; });
     const c = wx.c(tc), doy = wx.doy(tc);
-    for (const w of solar) gain[w.node] += solarAt(lat, doy, (tc % 24) + 0.5 / stepsPerH, c, w.orient) * w.area * g.g;
+    for (const w of solar) if (w.orient) gain[w.node] += solarAt(lat, doy, (tc % 24) + 0.5 / stepsPerH, c, w.orient) * w.area * w.g;
 
     // Air: balance of heat in and out given the mass and the neighbours' last air temperatures.
     for (let i = 0; i < N; i++) rhs[i] = gain[i] + Hout[i] * To + Hg[i] * base.Tg + Hp[i] * h.neighbourT + Hms[i] * Tm[i];

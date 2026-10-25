@@ -20,7 +20,7 @@ export const DEFAULT_BUILDUPS: Buildup[] = [
   { id: 'knee', name: 'Knee wall, stud with 75 mm mineral wool', kind: 'wall', layers: [['pb', 12.5], ['mw', 75], ['pb', 12.5]] },
   { id: 'dwall', name: 'Dormer, timber frame 75 mm mineral wool', kind: 'wall', layers: [['timber', 20], ['ply', 18], ['mw', 75], ['pb', 12.5]] },
   { id: 'droof', name: 'Dormer flat roof, 50 mm between joists', kind: 'roof', layers: [['ply', 18], ['cavity', 100], ['mw', 50], ['pb', 12.5]] },
-  { id: 'dg', name: 'Double glazed, 2010', kind: 'glazing', layers: [], u: 1.4 },
+  { id: 'dg', name: 'Double glazed, 2010', kind: 'glazing', layers: [], u: 1.4, g: 0.63, frame: 0.3 },
   { id: 'door', name: 'Composite door', kind: 'door', layers: [], u: 1.6 },
 ];
 

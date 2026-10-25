@@ -4,7 +4,7 @@ import { MONTHS } from '../engine/data';
 import { BUILTIN_STACKUPS } from '../engine/library';
 import type { Stackup } from '../engine/library';
 import { MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS } from '../engine/climate-mcs';
-import { SIDES, buildupU, calcHouse, deviceM3, onStorey } from '../engine/house';
+import { GLAZING_LIBRARY, SHADING, SIDES, buildupU, calcHouse, deviceM3, onStorey } from '../engine/house';
 import type { Buildup, BuildupKind, DefaultKey, House, Room, RoomType, Side } from '../engine/house';
 import { Chip } from './controls';
 import { RoomShapeEditor } from './HouseShape';
@@ -273,6 +273,13 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
                         {bOpts(['glazing', 'door']).map((b) => <option key={b.id} value={b.id}>{b.name} (U {fmt(buildupU(b), 2)})</option>)}
                       </select>
                     </label>
+                    {house.buildups.find((b) => b.id === o.buildup)?.kind === 'glazing' && (
+                      <label className="hf"><span className="eyebrow">Shading</span>
+                        <select className="select" value={o.shade ?? 'none'} onChange={(e) => set({ shade: e.target.value })}>
+                          {Object.entries(SHADING).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}
+                        </select>
+                      </label>
+                    )}
                     <button type="button" className="btn-link" onClick={() => upd((h) => { h.openings = h.openings.filter((x) => x.id !== o.id); })}>Remove</button>
                   </div>
                 );
@@ -478,6 +485,12 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
                           {b.u != null
                             ? <input type="number" className="thk-input" step={0.05} min={0.1} value={b.u} aria-label="U-value" onChange={(e) => { const v = Number(e.target.value); if (v > 0) set({ u: v }); }} />
                             : fmt(buildupU(b), 2)}
+                          {b.kind === 'glazing' && (
+                            <span className="small glz">
+                              g <input type="number" className="thk-input" step={0.01} min={0} max={1} value={b.g ?? ''} placeholder="—" aria-label="g-value" onChange={(e) => set({ g: e.target.value === '' ? undefined : Number(e.target.value) })} />
+                              frame <input type="number" className="thk-input" step={0.05} min={0} max={0.9} value={b.frame ?? 0.3} aria-label="Frame fraction" onChange={(e) => set({ frame: Number(e.target.value) })} />
+                            </span>
+                          )}
                         </td>
                         <td className="h-acts">
                           {b.u == null && <button type="button" className="btn-link" onClick={() => setEditing(b.id)}>Edit layers</button>}
@@ -500,7 +513,17 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
                   {library.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </label>
-              <button type="button" className="btn-secondary" onClick={() => upd((h) => { h.buildups.push({ id: uid('b'), name: 'New glazing', kind: 'glazing', layers: [], u: 1.4 }); })}>Add window / door type</button>
+              <label className="hf"><span className="eyebrow">Add from the glazing library</span>
+                <select className="select" value="" onChange={(e) => {
+                  const i = Number(e.target.value);
+                  if (e.target.value === 'door') upd((h) => { h.buildups.push({ id: uid('b'), name: 'New door', kind: 'door', layers: [], u: 1.8 }); });
+                  else if (GLAZING_LIBRARY[i]) upd((h) => { h.buildups.push({ id: uid('b'), kind: 'glazing', layers: [], ...GLAZING_LIBRARY[i] }); });
+                }}>
+                  <option value="">Choose…</option>
+                  {GLAZING_LIBRARY.map((x, i) => <option key={x.name} value={i}>{x.name} (U {x.u}, g {x.g})</option>)}
+                  <option value="door">External door (U 1.8)</option>
+                </select>
+              </label>
             </div>
           </Card>
         </div>

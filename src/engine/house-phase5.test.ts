@@ -4,6 +4,7 @@ import { defaultHouse } from './house-default';
 import { NO_KNOBS, bestFit, calibrate, demoBills } from './house-calibrate';
 import { buildupMoisture, dewPoint, roomMoisture, vsat } from './house-moisture';
 import { AGE_BANDS, TEMPLATES, newHouse } from './house-templates';
+import { simulate } from './house-sim';
 
 describe('bills calibration', () => {
   const h = defaultHouse(), res = calcHouse(h), eff = h.hp.boilerEff;
@@ -70,6 +71,22 @@ describe('room moisture', () => {
     const m = buildupMoisture(h, res);
     expect(m.map((x) => x.b.id).sort()).toEqual(['cav', 'loft', 'solid']);
     expect(m.every((x) => x.r !== null)).toBe(true);
+  });
+});
+
+describe('glazing g-values and shading', () => {
+  it('shading a south window cools the room on the summer day; better glass g lets in more sun', () => {
+    const peak = (fn: (h: ReturnType<typeof defaultHouse>) => void) => {
+      const h = defaultHouse();
+      fn(h);
+      const r = simulate(h, 'summer'), i = r.rooms.findIndex((x) => x.id === 'dining');
+      return Math.max(...r.T[i]);
+    };
+    const base = peak(() => {});
+    const shaded = peak((h) => { h.openings.filter((o) => o.room === 'dining').forEach((o) => { o.shade = 'heavy'; }); });
+    const clearer = peak((h) => { h.buildups.find((b) => b.id === 'dg')!.g = 0.85; });
+    expect(shaded).toBeLessThan(base);
+    expect(clearer).toBeGreaterThan(base);
   });
 });
 

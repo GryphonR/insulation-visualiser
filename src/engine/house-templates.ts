@@ -58,7 +58,7 @@ export function newHouse(inp: NewHouseInput): House {
   h.buildups = [
     wall, floor,
     { id: 'loftc', name: `Loft, ${loftMM} mm mineral wool`, kind: 'roof', layers: [['mw', loftMM], ['pb', 12.5]] },
-    { id: 'win', name: `Windows, U ${winU}`, kind: 'glazing', layers: [], u: winU },
+    { id: 'win', name: `Windows, U ${winU}`, kind: 'glazing', layers: [], u: winU, g: winU >= 4 ? 0.85 : winU >= 2.5 ? 0.76 : winU >= 1.8 ? 0.72 : 0.63, frame: 0.3 },
     { id: 'door', name: `External door, U ${a.doorU}`, kind: 'door', layers: [], u: a.doorU },
     ...h.buildups.filter((b) => keep.has(b.id)),
   ];

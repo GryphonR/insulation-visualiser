@@ -184,12 +184,16 @@ These are sample data. The engine works them out from geometry, so expect them t
   - shows the likely range of the design loss before creating.
 - **Undo and redo** for the whole project (50 steps, Ctrl+Z / Ctrl+Y outside text fields).
 - **Unheated room types** from board 1e: garage, conservatory, porch, cellar.
+- **Glazing library and shading** (board 2c):
+  - glazing build-ups carry a g-value and frame fraction;
+  - a library of seven typical types (single to triple, secondary, rooflight);
+  - each window has a shading choice (none, light, overhang, heavy);
+  - the hour-by-hour runs use g × glass share × shading for each window, and rooflights face the sky.
 
 ## Not built yet (from the design boards)
 
 - Hot water and its share of running cost (board 4c), as you asked: later.
 - Thermal bridges and junctions (boards 2b edge upstand, 2c junction methods), as you asked: later.
-- Glazing library with frame factors and shading (board 2c). Glazing is a U-value plus one house-wide g-value today.
 - Survey mode (marking each input measured or assumed) and the version history list (board 1f). Undo and redo cover the history need for now.
 - UFH pipe routes and manifold placement drawn on the plan (board 1b); pipe sizing (board 3).
 - Rooms of any shape and plan tracing (board 1).

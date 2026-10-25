@@ -14,7 +14,24 @@ export interface Buildup {
   id: string; name: string; kind: BuildupKind; layers: Array<[string, number]>; u?: number;
   /** Ground floors only: slab on ground (default) or suspended timber over a ventilated void. */
   floorType?: 'solid' | 'suspended';
+  /** Glazing only: total solar transmittance of the glass, and the share of the opening that is frame. */
+  g?: number; frame?: number;
 }
+
+/** Board 2c glazing library: typical U and g by type (SAP 10.2 Table 6b/6c style values). */
+export const GLAZING_LIBRARY: Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame'>> = [
+  { name: 'Single glazed, timber frame', u: 4.8, g: 0.85, frame: 0.3 },
+  { name: 'Double glazed, before 2002', u: 2.8, g: 0.76, frame: 0.3 },
+  { name: 'Double glazed, 2002–2021', u: 2.0, g: 0.72, frame: 0.3 },
+  { name: 'Double glazed, low-e argon', u: 1.4, g: 0.63, frame: 0.3 },
+  { name: 'Triple glazed', u: 0.9, g: 0.5, frame: 0.3 },
+  { name: 'Secondary glazing over single', u: 2.4, g: 0.76, frame: 0.3 },
+  { name: 'Rooflight, double glazed', u: 1.6, g: 0.6, frame: 0.2 },
+];
+/** Shading on a window: overhangs, neighbouring buildings and trees, net curtains. Multiplies its solar gain. */
+export const SHADING: Record<string, [string, number]> = {
+  none: ['Unshaded', 1], light: ['Light (nets, sparse trees)', 0.8], overhang: ['Overhang or reveal', 0.7], heavy: ['Heavy (buildings, dense trees)', 0.5],
+};
 export interface Storey {
   name: string; h: number; zone: number;
   /** Depth below ground, m (lowest storey only): its outside walls are in the ground and its floor is a basement floor. */
@@ -48,7 +65,7 @@ export interface Room {
   /** Sloping ceilings, rooms on the top storey only. */
   shape?: RoomShape;
 }
-export interface Opening { id: string; room: string; side: Side; name: string; w: number; h: number; buildup: string }
+export interface Opening { id: string; room: string; side: Side; name: string; w: number; h: number; buildup: string; shade?: keyof typeof SHADING }
 export interface Device { id: string; room: string; name: string; fan: boolean; opts: Array<[string, number]>; pick: number }
 export interface Factor { id: string; label: string; dq: number; on: boolean }
 export type Boundary = 'out' | 'party';
@@ -104,6 +121,8 @@ export interface Face {
   side?: Side; to: To; area: number; buildup: Buildup; U: number;
   /** Outside walls can be switched to a party wall. */
   canParty?: boolean;
+  /** Windows: effective solar transmittance of the whole opening (glass g × glass share × shading), or undefined to use the house default. */
+  gEff?: number;
   /** Edge length along the plan, outside walls only. */
   len?: number;
 }
@@ -273,7 +292,9 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
     faces.push(...ext);
     for (const o of ops) {
       const b = h.buildups.find((x) => x.id === o.buildup) ?? h.buildups[0];
-      faces.push({ key: `op:${o.id}`, label: o.name, kind: b.kind === 'door' ? 'door' : 'window', side, to: ext[0]?.to ?? { k: 'out' }, area: o.w * o.h, buildup: b, U: buildupU(b) });
+      const shade = SHADING[o.shade ?? 'none']?.[1] ?? 1;
+      const gEff = b.kind === 'glazing' && b.g != null ? b.g * (1 - (b.frame ?? 0.3)) * shade : undefined;
+      faces.push({ key: `op:${o.id}`, label: o.name, kind: b.kind === 'door' ? 'door' : 'window', side, to: ext[0]?.to ?? { k: 'out' }, area: o.w * o.h, buildup: b, U: buildupU(b), gEff });
     }
   }
   // Floor
@@ -319,19 +340,20 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
   }
   if (g && sh) {
     const rlB = h.buildups.find((b) => b.kind === 'glazing') ?? h.buildups[0];
+    const rlG = rlB.g != null ? rlB.g * (1 - (rlB.frame ?? 0.3)) : undefined;
     g.slopeSides.forEach((side, i) => {
       if (!g.sloped[i]) return;
       const d = g.dormers[i];
       const rl = i === 0 ? Math.min(sh.rooflight, g.slopeArea[i] * 0.8) : 0;
       const sb = B(`sl:${r.id}:${i}`, 'slope');
       faces.push({ key: `sl:${r.id}:${i}`, label: `${side} slope`, kind: 'ceiling', side, to: { k: 'out' }, area: g.slopeArea[i] - rl, buildup: sb, U: buildupU(sb, FILMS.roof) });
-      if (rl > EPS) faces.push({ key: `rl:${r.id}`, label: 'Rooflight', kind: 'window', to: { k: 'out' }, area: rl, buildup: rlB, U: buildupU(rlB) });
+      if (rl > EPS) faces.push({ key: `rl:${r.id}`, label: 'Rooflight', kind: 'window', to: { k: 'out' }, area: rl, buildup: rlB, U: buildupU(rlB), gEff: rlG });
       if (d) {
         const wb = B(`dw:${r.id}:${i}`, 'dormerWall'), rb = B(`dr:${r.id}:${i}`, 'dormerRoof');
         faces.push({ key: `dw:${r.id}:${i}`, label: `${side} dormer front`, kind: 'wall', side, to: { k: 'out' }, area: d.front - d.window, buildup: wb, U: buildupU(wb, FILMS.extWall) });
         faces.push({ key: `dc:${r.id}:${i}`, label: `${side} dormer cheeks (2)`, kind: 'wall', to: { k: 'out' }, area: d.cheeks, buildup: wb, U: buildupU(wb, FILMS.extWall) });
         faces.push({ key: `dr:${r.id}:${i}`, label: `${side} dormer roof`, kind: 'ceiling', to: { k: 'out' }, area: d.roof, buildup: rb, U: buildupU(rb, FILMS.roof) });
-        if (d.window > EPS) faces.push({ key: `dg:${r.id}:${i}`, label: `${side} dormer window`, kind: 'window', side, to: { k: 'out' }, area: d.window, buildup: rlB, U: buildupU(rlB) });
+        if (d.window > EPS) faces.push({ key: `dg:${r.id}:${i}`, label: `${side} dormer window`, kind: 'window', side, to: { k: 'out' }, area: d.window, buildup: rlB, U: buildupU(rlB), gEff: rlG });
       }
     });
   }

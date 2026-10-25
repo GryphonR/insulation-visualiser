@@ -133,3 +133,4 @@
   .report-body { padding: 0; }
   .h-table { font-size: 11px; }
 }
+.glz { display: inline-flex; gap: 4px; align-items: center; margin-left: 8px; } .glz .thk-input { width: 52px; }
