@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { calcHouse } from './house';
 import type { House } from './house';
 import { defaultHouse, withHeating } from './house-default';
-import { applyChanges, describe as describeChange, diff, steps } from './house-scenarios';
+import { applyChanges, describe as describeChange, diff, groupChanges, steps } from './house-scenarios';
 import { simulate, yearTotals } from './house-sim';
 import { TMY_FILES, loadTmy } from './weather-tmy';
 
@@ -27,6 +27,24 @@ describe('scenarios', () => {
     const d = diff(a, b).map((c) => describeChange(c, a, b));
     expect(d).toContainEqual({ what: 'Bedroom 3, south wall', from: 'Solid brick, 225 mm', to: 'Cavity wall, PIR filled' });
     expect(d).toContainEqual({ what: 'Airtightness: Doors draught-stripped', from: 'off', to: 'on' });
+  });
+
+  it('a new room travels with its window, emitter and face choices as one switchable change', () => {
+    const c = structuredClone(a);
+    c.rooms.push({ id: 'ext', name: 'Extension', type: 'dining', storey: 0, span: 1, x: 0, y: 7, w: 4.5, d: 3, heated: true, setpoint: 21, ach: 1 });
+    c.openings.push({ id: 'oX', room: 'ext', side: 'S', name: 'Bifold', w: 3, h: 2.1, buildup: 'dg' });
+    c.heating.emitters.push({ ...c.heating.emitters[0], id: 'RX', room: 'ext' });
+    c.faceBoundary['w:ext:W:0'] = 'party';
+    c.vent.q50 = 9;
+    const groups = groupChanges(diff(a, c));
+    expect(groups.length).toBe(2);
+    const g = groups.find((x) => x.head.key === 'rooms.#ext')!;
+    expect(g.extra).toBe(3);
+    expect(JSON.stringify(applyChanges(a, groups.flatMap((x) => x.changes)))).toBe(JSON.stringify(c));
+    // Without the room group, none of its window, radiator or face choices are left behind.
+    const without = applyChanges(a, groups.filter((x) => x !== g).flatMap((x) => x.changes));
+    expect(without.openings.some((o) => o.room === 'ext')).toBe(false);
+    expect(without.heating.emitters.some((e) => e.room === 'ext')).toBe(false);
   });
 
   it('step-by-step ends at the child result', () => {

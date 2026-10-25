@@ -3,7 +3,7 @@ import type { Stackup } from '../engine/library';
 import { calcHouse, onStorey } from '../engine/house';
 import type { House, HouseResult } from '../engine/house';
 import { defaultHouse } from '../engine/house-default';
-import { applyChanges, chain, describe, diff, loadProject, newProject, sanitizeProject, saveProject, steps } from '../engine/house-scenarios';
+import { applyChanges, chain, describe, diff, groupChanges, loadProject, newProject, sanitizeProject, saveProject, steps } from '../engine/house-scenarios';
 import type { Change, Project, Scenario } from '../engine/house-scenarios';
 import { Chip } from './controls';
 import { HouseBills } from './HouseBills';
@@ -136,11 +136,13 @@ function ScenariosView({ project, active, results, ordered, setProject }: {
   project: Project; active: Scenario; results: Map<string, HouseResult>; ordered: Scenario[]; setProject: (fn: (p: Project) => Project) => void;
 }) {
   const parent = project.scenarios.find((s) => s.id === active.parent);
-  const own = useMemo(() => (parent ? diff(parent.house, active.house) : []), [parent, active.house]);
+  // A new or removed room is one switchable step together with its windows, emitters and face choices.
+  const own = useMemo(() => (parent ? groupChanges(diff(parent.house, active.house)) : []), [parent, active.house]);
   const [off, setOff] = useState<Record<string, boolean>>({});
   const enabled = useMemo(() => own.filter((c) => !off[c.key]), [own, off]);
   const fall = useMemo(() => (parent ? steps(parent.house, enabled) : []), [parent, enabled]);
-  const effective = parent && enabled.length !== own.length ? calcHouse(applyChanges(parent.house, enabled)) : results.get(active.id)!;
+  const enabledFlat = useMemo(() => enabled.flatMap((g) => g.changes), [enabled]);
+  const effective = parent && enabled.length !== own.length ? calcHouse(applyChanges(parent.house, enabledFlat)) : results.get(active.id)!;
   const inherited: Array<{ c: Change; from: Scenario; a: House; b: House }> = [];
   const anc = chain(project, active.id);
   for (let i = 1; i < anc.length - 1; i++) diff(anc[i - 1].house, anc[i].house).forEach((c) => inherited.push({ c, from: anc[i], a: anc[i - 1].house, b: anc[i].house }));
@@ -209,7 +211,8 @@ function ScenariosView({ project, active, results, ordered, setProject }: {
                 <thead><tr><th /><th>Change</th><th>From</th><th>To</th><th className="n">Peak W</th><th className="n">kWh/yr</th></tr></thead>
                 <tbody>
                   {own.map((c) => {
-                    const d = describe(c, parent.house, active.house), k = enabled.indexOf(c);
+                    const d0 = describe(c.head, parent.house, active.house), k = enabled.indexOf(c);
+                    const d = c.extra ? { ...d0, what: `${d0.what} (with ${c.extra} linked change${c.extra > 1 ? 's' : ''}: windows, emitters, faces)` } : d0;
                     const dw = k >= 0 ? fall[k + 1].peakW - fall[k].peakW : 0, dk = k >= 0 ? fall[k + 1].kwh - fall[k].kwh : 0;
                     return (
                       <tr key={c.key} className={off[c.key] ? 'off' : ''}>
@@ -230,7 +233,7 @@ function ScenariosView({ project, active, results, ordered, setProject }: {
             <p className="small mono">With the changes switched on: {fmt(effective.peakW)} W, {fmt(effective.annualKWh)} kWh/yr ({sgn(effective.peakW - results.get(parent.id)!.peakW)} W against {parent.name}).</p>
             {Object.values(off).some(Boolean) && (
               <button type="button" className="btn-secondary" onClick={() => {
-                setProject((p) => ({ ...p, scenarios: p.scenarios.map((s) => (s.id === active.id ? { ...s, house: applyChanges(parent.house, enabled) } : s)) }));
+                setProject((p) => ({ ...p, scenarios: p.scenarios.map((s) => (s.id === active.id ? { ...s, house: applyChanges(parent.house, enabledFlat) } : s)) }));
                 setOff({});
               }}>Remove the switched-off changes from this scenario</button>
             )}
@@ -241,7 +244,7 @@ function ScenariosView({ project, active, results, ordered, setProject }: {
             <h2>Step by step</h2>
             <p className="muted small">Space heating from {parent.name}, adding each change in turn.</p>
             <div className="fall">
-              {[{ label: parent.name, v: fall[0].kwh, d: null as number | null }, ...enabled.map((c, i) => ({ label: describe(c, parent.house, active.house).what, v: fall[i + 1].kwh, d: fall[i + 1].kwh - fall[i].kwh })), { label: active.name, v: fall[fall.length - 1].kwh, d: null }].map((f, i, arr) => {
+              {[{ label: parent.name, v: fall[0].kwh, d: null as number | null }, ...enabled.map((c, i) => ({ label: describe(c.head, parent.house, active.house).what, v: fall[i + 1].kwh, d: fall[i + 1].kwh - fall[i].kwh })), { label: active.name, v: fall[fall.length - 1].kwh, d: null }].map((f, i, arr) => {
                 const prev = i > 0 && f.d != null ? arr[i - 1].v : null;
                 const l = prev == null ? 0 : pos(Math.min(prev, f.v)), w = prev == null ? pos(f.v) : Math.max(0.5, Math.abs(pos(prev) - pos(f.v)));
                 return (

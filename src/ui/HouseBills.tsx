@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { MONTHS } from '../engine/data';
 import { calcHouse } from '../engine/house';
 import type { House } from '../engine/house';
-import { NO_KNOBS, bestFit, calibrate, demoBills } from '../engine/house-calibrate';
+import { NO_KNOBS, bestFit, calibrate, demoBills, parseMeterCsv } from '../engine/house-calibrate';
 import type { Bills, Knobs } from '../engine/house-calibrate';
 
 const fmt = (v: number, d = 0) => (Number.isFinite(v) ? v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—');
@@ -15,6 +15,9 @@ export function HouseBills({ house, setHouse }: { house: House; setHouse: (fn: (
   const eff = house.hp.boilerEff;
   const bills = house.bills ?? EMPTY;
   const setBills = (b: Bills) => setHouse((h) => ({ ...h, bills: b }));
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [unit, setUnit] = useState<'kWh' | 'm3'>('kWh');
+  const [msg, setMsg] = useState('');
   const [k, setK] = useState<Knobs>(house.calib ? { dt: house.calib.dt, q: house.calib.q, hf: house.calib.hf } : NO_KNOBS);
   const fit = calibrate(res, bills, eff, k);
   const top = Math.max(1, ...fit.pred, ...fit.meas.filter(Number.isFinite));
@@ -34,10 +37,22 @@ export function HouseBills({ house, setHouse }: { house: House; setHouse: (fn: (
           <div className="section-head">
             <div><h2>Gas bills</h2><p className="muted small">Monthly gas in kWh for one year (from bills, meter readings or the smart meter app). Optional: that year's monthly mean outside temperatures, otherwise the typical year for {res.region} is used.</p></div>
             <div className="chips">
+              <button type="button" className="btn-secondary" onClick={() => fileRef.current?.click()}>Import meter readings (CSV)…</button>
+              <select className="h-sel" value={unit} aria-label="Units in the file" onChange={(e) => setUnit(e.target.value as 'kWh' | 'm3')}><option value="kWh">file in kWh</option><option value="m3">file in m³</option></select>
+              <input ref={fileRef} type="file" accept=".csv,text/csv,text/plain" hidden onChange={async (e) => {
+                const f = e.target.files?.[0]; e.target.value = '';
+                if (!f) return;
+                const r = parseMeterCsv(await f.text(), unit);
+                if (r.error) { setMsg(`Couldn't read ${f.name}: ${r.error}.`); return; }
+                setBills({ ...bills, gas: r.gas });
+                setMsg(`Read ${r.rows.toLocaleString('en-GB')} readings from ${f.name}: ${r.months[0]} to ${r.months[r.months.length - 1]}.`);
+              }} />
               <button type="button" className="btn-secondary" onClick={() => setBills(demoBills(res, eff))}>Fill with example bills</button>
               <button type="button" className="btn-link" onClick={() => setBills(EMPTY)}>Clear</button>
             </div>
           </div>
+          {msg && <p className="small">{msg}</p>}
+          <p className="small muted">Readings from a smart meter: download them as CSV from your supplier's account, n3rgy (consumer access) or the Bright app, then import here. Any interval works; they're added up into months.</p>
           <div className="h-table-wrap">
             <table className="h-table bills-t">
               <thead><tr><th />{MONTHS.map((m) => <th key={m} className="n">{m}</th>)}</tr></thead>

@@ -124,12 +124,38 @@ export function describe(c: Change, a: House, b: House): { what: string; from: s
   }
 }
 
-/** Peak and annual figures after each change in turn (the waterfall). */
-export function steps(parent: House, changes: Change[]) {
+/** Changes that belong together: a room added or removed travels with its windows, emitters, devices and face choices. */
+export interface ChangeGroup { key: string; head: Change; changes: Change[]; extra: number }
+
+export function groupChanges(changes: Change[]): ChangeGroup[] {
+  const roomOf = (c: Change) => (c.path[0] === 'rooms' && c.path.length === 2 && typeof c.path[1] !== 'string' && (c.from === undefined || c.to === undefined) ? c.path[1].id : null);
+  const whole = new Map<string, ChangeGroup>();
+  for (const c of changes) { const id = roomOf(c); if (id) whole.set(id, { key: c.key, head: c, changes: [c], extra: 0 }); }
+  const belongs = (c: Change): string | null => {
+    const v = (c.to ?? c.from) as { room?: string } | undefined;
+    if (v && typeof v === 'object' && typeof v.room === 'string' && whole.has(v.room) && (c.from === undefined || c.to === undefined)) return v.room;
+    if (c.path[0] === 'faceBuildup' || c.path[0] === 'faceBoundary') {
+      const k = String(c.path[1]);
+      for (const id of whole.keys()) if (k.split(/[:|]/).includes(id)) return id;
+    }
+    return null;
+  };
+  const out: ChangeGroup[] = [];
+  for (const c of changes) {
+    if (roomOf(c)) { out.push(whole.get(roomOf(c)!)!); continue; }
+    const id = belongs(c);
+    if (id) { const g = whole.get(id)!; g.changes.push(c); g.extra++; } else out.push({ key: c.key, head: c, changes: [c], extra: 0 });
+  }
+  return out;
+}
+
+/** Peak and annual figures after each change (or group of changes) in turn: the waterfall. */
+export function steps(parent: House, changes: Array<Change | ChangeGroup>) {
+  const flat = (x: Change | ChangeGroup) => ('changes' in x ? x.changes : [x]);
   const r0 = calcHouse(parent);
   const out = [{ peakW: r0.peakW, kwh: r0.annualKWh }];
   for (let i = 1; i <= changes.length; i++) {
-    const r = calcHouse(applyChanges(parent, changes.slice(0, i)));
+    const r = calcHouse(applyChanges(parent, changes.slice(0, i).flatMap(flat)));
     out.push({ peakW: r.peakW, kwh: r.annualKWh });
   }
   return out;

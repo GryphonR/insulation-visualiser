@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { calcHouse } from './house';
 import { defaultHouse } from './house-default';
-import { NO_KNOBS, bestFit, calibrate, demoBills } from './house-calibrate';
+import { KWH_PER_M3, NO_KNOBS, bestFit, calibrate, demoBills, parseMeterCsv } from './house-calibrate';
 import { buildupMoisture, dewPoint, roomMoisture, vsat } from './house-moisture';
 import { AGE_BANDS, TEMPLATES, newHouse } from './house-templates';
 import { simulate } from './house-sim';
@@ -36,6 +36,33 @@ describe('bills calibration', () => {
     expect(r2.annualKWh).toBeLessThan(res.annualKWh * 0.9);
     hh.calib.q = 1.2;
     expect(calcHouse(hh).peakW).toBeGreaterThan(res.peakW);
+  });
+});
+
+describe('meter CSV import', () => {
+  it('adds half-hourly kWh into months and keeps the last twelve', () => {
+    const rows = ['Start,End,Consumption (kWh)'];
+    for (let d = 0; d < 400; d++) {
+      const day = new Date(Date.UTC(2025, 0, 1) + d * 86400000).toISOString().slice(0, 10);
+      rows.push(`${day}T00:00:00Z,${day}T00:30:00Z,1.5`, `${day}T12:00:00Z,${day}T12:30:00Z,0.5`);
+    }
+    const r = parseMeterCsv(rows.join('\n'), 'kWh');
+    expect(r.error).toBeUndefined();
+    expect(r.months.length).toBe(12);
+    // 400 days from 1 Jan 2025 end on 4 Feb 2026: the last twelve months are Mar 2025 – Feb 2026.
+    expect(r.months[0]).toBe('2025-03');
+    expect(r.gas[2]).toBe(62);
+    expect(r.gas[1]).toBe(8);
+  });
+
+  it('reads UK dates and converts m³ to kWh', () => {
+    const r = parseMeterCsv('Date;Reading m3\n01/01/2025;10\n15/01/2025;5\n02/02/2025;2', 'm3');
+    expect(r.gas[0]).toBe(Math.round(15 * KWH_PER_M3));
+    expect(r.gas[1]).toBe(Math.round(2 * KWH_PER_M3));
+  });
+
+  it('explains a file it cannot read', () => {
+    expect(parseMeterCsv('a,b\n1,2', 'kWh').error).toMatch(/date column/);
   });
 });
 

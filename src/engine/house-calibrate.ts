@@ -78,6 +78,42 @@ export function bestFit(res: HouseResult, bills: Bills, eff: number): Knobs {
   return best?.[1] ?? NO_KNOBS;
 }
 
+/** Gas kWh per m³: calorific value 39.5 MJ/m³ × volume correction 1.02264 ÷ 3.6 (the factor on UK gas bills). */
+export const KWH_PER_M3 = (39.5 * 1.02264) / 3.6;
+
+/**
+ * Monthly totals from a meter-reading CSV (supplier, n3rgy or Bright export): a date or timestamp column and a
+ * consumption column, any interval (half-hourly, daily, monthly). Keeps the last 12 months of data.
+ */
+export function parseMeterCsv(text: string, unit: 'kWh' | 'm3'): { gas: number[]; months: string[]; rows: number; error?: string } {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const split = (l: string) => l.split(/[,;\t]/).map((x) => x.replace(/^"|"$/g, '').trim());
+  if (lines.length < 2) return { gas: Array(12).fill(NaN), months: [], rows: 0, error: 'the file has no data rows' };
+  const head = split(lines[0]).map((x) => x.toLowerCase());
+  const dateCol = head.findIndex((x) => /date|time|start|period|interval/.test(x));
+  const valCol = head.findIndex((x, i) => i !== dateCol && /kwh|consumption|usage|value|reading|m3|m³/.test(x));
+  if (dateCol < 0 || valCol < 0) return { gas: Array(12).fill(NaN), months: [], rows: 0, error: 'could not find a date column and a consumption column in the header' };
+  const parseDate = (s: string): Date | null => {
+    const uk = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})/);
+    if (uk) return new Date(Date.UTC(+uk[3], +uk[2] - 1, +uk[1]));
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+  const byMonth = new Map<string, number>();
+  let rows = 0;
+  for (const l of lines.slice(1)) {
+    const f = split(l), d = parseDate(f[dateCol] ?? ''), v = Number(f[valCol]);
+    if (!d || !Number.isFinite(v)) continue;
+    const k = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    byMonth.set(k, (byMonth.get(k) ?? 0) + v * (unit === 'm3' ? KWH_PER_M3 : 1));
+    rows++;
+  }
+  const keys = [...byMonth.keys()].sort().slice(-12);
+  const gas = Array(12).fill(NaN) as number[];
+  for (const k of keys) gas[+k.slice(5) - 1] = Math.round(byMonth.get(k)!);
+  return { gas, months: keys, rows, error: rows ? undefined : 'no rows had a readable date and number' };
+}
+
 /** Twelve months of gas for the demo house, so the view has something to fit. */
 export function demoBills(res: HouseResult, eff: number): Bills {
   const truth = { dt: -1.2, q: 1.12, hf: 0.93 }, noise = [1.03, 0.97, 1.02, 0.98, 1.05, 1, 0.99, 1.01, 0.96, 1.02, 0.98, 1.01];
