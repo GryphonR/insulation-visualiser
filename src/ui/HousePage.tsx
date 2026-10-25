@@ -324,10 +324,23 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
             </div>
           </Card>
 
-          <Card title="Climate" note="MCS design conditions: nearest weather station, altitude, postcode area for degree days.">
+          <Card title="Climate" note="MCS design conditions: the nearest weather station and region to the postcode, altitude, and degree days for the postcode area.">
+            <div className="hf-row">
+              <label className="hf"><span className="eyebrow">Postcode</span><input className="h-text short" value={house.climate.postcode} onChange={(e) => upd((h) => { h.climate.postcode = e.target.value; })} /></label>
+              <label className="small"><input type="checkbox" checked={house.climate.auto !== false} onChange={(e) => upd((h) => {
+                // Turning the lookup off keeps whatever it had found, ready to adjust by hand.
+                if (!e.target.checked) { h.climate.station = res.climate.station; h.climate.region = res.climate.region; }
+                h.climate.auto = e.target.checked;
+              })} /> Station and region from the postcode</label>
+            </div>
+            {house.climate.auto !== false && (
+              <p className="small">{res.climate.fromPostcode
+                ? `Nearest station ${res.station} (${MCS_STATIONS[res.climate.station][1]}), ${fmt(res.climate.km)} km away; ground temperature from ${res.region}.`
+                : `Postcode "${house.climate.postcode}" isn't in the bundled table, so the station and region below are used.`}</p>
+            )}
             <div className="hf-row">
               <label className="hf"><span className="eyebrow">Weather station</span>
-                <select className="select" value={house.climate.station} onChange={(e) => upd((h) => { h.climate.station = Number(e.target.value); })}>
+                <select className="select" disabled={res.climate.fromPostcode} value={res.climate.station} onChange={(e) => upd((h) => { h.climate.station = Number(e.target.value); })}>
                   {MCS_STATIONS.map((s, i) => <option key={i} value={i}>{s[0]} ({s[1]}, {s[4]} m)</option>)}
                 </select>
               </label>
@@ -337,9 +350,8 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
                 </select>
               </label>
               <Num label="Altitude" unit="m" step={10} value={house.climate.altitude} onChange={(v) => upd((h) => { h.climate.altitude = v; })} />
-              <label className="hf"><span className="eyebrow">Postcode</span><input className="h-text short" value={house.climate.postcode} onChange={(e) => upd((h) => { h.climate.postcode = e.target.value; })} /></label>
               <label className="hf"><span className="eyebrow">Region (ground temperature)</span>
-                <select className="select" value={house.climate.region} onChange={(e) => upd((h) => { h.climate.region = Number(e.target.value); })}>
+                <select className="select" disabled={res.climate.fromPostcode} value={res.climate.region} onChange={(e) => upd((h) => { h.climate.region = Number(e.target.value); })}>
                   {MCS_MEAN_TEMPS.map((s, i) => <option key={i} value={i}>{s[0]} ({s[4]} °C)</option>)}
                 </select>
               </label>

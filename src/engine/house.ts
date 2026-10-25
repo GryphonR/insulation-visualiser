@@ -2,7 +2,15 @@
 // Plan and rules: docs/whole-house-plan.md.
 import { MAT, MEAN } from './data';
 import { layerR } from './swap';
-import { MCS_HDD, MCS_MEAN_TEMPS, MCS_STATIONS, designTemp, postcodeArea } from './climate-mcs';
+import { MCS_HDD, MCS_MEAN_TEMPS, MCS_STATIONS, climateFromPostcode, designTemp, postcodeArea } from './climate-mcs';
+
+/** The MCS station and region for a house: from its postcode unless set by hand, with a location for sun and weather. */
+export function climateOf(h: House): { station: number; region: number; lat: number; lon: number; fromPostcode: boolean; km: number } {
+  const found = h.climate.auto !== false ? climateFromPostcode(h.climate.postcode) : null;
+  if (found) return { station: found.station, region: found.region, lat: found.latlon[0], lon: found.latlon[1], fromPostcode: true, km: found.km };
+  const s = MCS_STATIONS[h.climate.station] ?? MCS_STATIONS[0];
+  return { station: h.climate.station, region: h.climate.region, lat: s[2], lon: s[3], fromPostcode: false, km: 0 };
+}
 import { flowNeeded, loopLength, roomOut, systemFlow } from './house-heating';
 import type { Heating } from './house-heating';
 import type { Bills } from './house-calibrate';
@@ -87,7 +95,11 @@ export interface House {
   loft: { present: boolean; ach: number; height: number; pitch: number };
   /** Suspended floors: airbrick opening area per metre of exposed wall (mm²/m) and void height (m). */
   suspended: { vent: number; voidH: number };
-  climate: { station: number; pct: '99.6' | '99'; altitude: number; region: number; postcode: string };
+  climate: {
+    station: number; pct: '99.6' | '99'; altitude: number; region: number; postcode: string;
+    /** Pick the station and region from the postcode (MCS nearest-location rule); false to use the ones chosen by hand. */
+    auto?: boolean;
+  };
   vent: {
     method: 'model' | 'cibse'; source: 'est' | 'meas'; q50: number; factors: Factor[]; devices: Device[];
     mech: 'none' | 'dmev' | 'mvhr'; mechFlow: number; eta: number; minAch: boolean;
@@ -368,6 +380,8 @@ export interface RoomResult {
   rows: Row[]; faces: Face[];
 }
 export interface HouseResult {
+  /** Station and region in use, where the house is, and whether they came from the postcode. */
+  climate: ReturnType<typeof climateOf>;
   Tout: number; Tg: number; hdd: number; hddKnown: boolean; station: string; region: string;
   rooms: RoomResult[]; loft: { T: number; area: number; V: number } | null;
   q50: number; n50: number; envelope: number; heatedV: number; heatedA: number;
@@ -394,8 +408,9 @@ export function heatPumpCop(flow: number, Te: number): number {
 }
 
 export function calcHouse(h: House): HouseResult {
-  const Tout = designTemp(h.climate.station, h.climate.altitude, h.climate.pct);
-  const reg = MCS_MEAN_TEMPS[h.climate.region] ?? MCS_MEAN_TEMPS[0], Tg = reg[4];
+  const cl = climateOf(h);
+  const Tout = designTemp(cl.station, h.climate.altitude, h.climate.pct);
+  const reg = MCS_MEAN_TEMPS[cl.region] ?? MCS_MEAN_TEMPS[0], Tg = reg[4];
   const area = postcodeArea(h.climate.postcode), hddKnown = area in MCS_HDD, hdd = MCS_HDD[area] ?? 2200;
   const checks: HouseResult['checks'] = [];
 
@@ -545,7 +560,7 @@ export function calcHouse(h: House): HouseResult {
   }
 
   return {
-    Tout, Tg, hdd, hddKnown, station: MCS_STATIONS[h.climate.station]?.[0] ?? '?', region: reg[0],
+    Tout, Tg, hdd, hddKnown, station: MCS_STATIONS[cl.station]?.[0] ?? '?', region: reg[0], climate: cl,
     rooms, loft: hasLoft ? { T: T.loft, area: loftA, V: loftV } : null,
     q50, n50, envelope, heatedV, heatedA, peakW, paths, htc, hlp: heatedA > EPS ? htc / heatedA : 0, annualKWh, months, hp, checks,
     heat: { designFlow, rooms: emitRooms, gov: gov ? { id: gov.id, req: gov.req } : null },

@@ -1,6 +1,5 @@
 // Room moisture and mould risk on a mean January day (board 4f), and the interstitial check for each build-up in use.
 import { LOCATIONS, MEAN } from './data';
-import { MCS_STATIONS } from './climate-mcs';
 import { MOULD_RH, RH_OUT, runMoisture } from './moisture';
 import type { MoistureResult } from './moisture';
 import type { Buildup, House, HouseResult, RoomType } from './house';
@@ -80,7 +79,7 @@ export function roomMoisture(h: House, res: HouseResult, opt: MoistureOptions): 
 
 /** Interstitial condensation (EN ISO 13788 monthly, the app's moisture engine) for each outside wall and roof build-up in use. */
 export function buildupMoisture(h: House, res: HouseResult): Array<{ b: Buildup; where: string[]; r: MoistureResult | null }> {
-  const lat = MCS_STATIONS[h.climate.station]?.[2] ?? 53;
+  const lat = res.climate.lat;
   const loc = LOCATIONS.reduce((a, l) => (Math.abs(l.lat - lat) < Math.abs(a.lat - lat) ? l : a), LOCATIONS[0]).id;
   const used = new Map<string, { b: Buildup; where: Set<string> }>();
   for (const rr of res.rooms) {

@@ -1,7 +1,6 @@
 // Hour-by-hour whole-house runs (boards 6, 6a, 4b): one air-and-contents node per room plus the loft,
 // heating on a schedule with a setback, sun through windows, people, appliances and cooking.
 import { DOY, MEAN, ORIENTS, SWING } from './data';
-import { MCS_STATIONS } from './climate-mcs';
 import { solarAt } from './solar';
 import { calcHouse, heatPumpCop } from './house';
 import type { House, HouseResult, RoomType } from './house';
@@ -69,7 +68,7 @@ export interface SimResult {
 const DT = 600; // s
 
 export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h)): SimResult {
-  const lat = MCS_STATIONS[h.climate.station]?.[2] ?? 53;
+  const lat = base.climate.lat;
   const wx = weather(id, base, base.Tg);
   const heatingOn = id !== 'summer';
   const rooms = base.rooms;

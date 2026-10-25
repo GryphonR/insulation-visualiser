@@ -1,3 +1,5 @@
+import { DISTRICTS_RAW } from './postcode-districts';
+
 // MCS Heat Load Calculator design conditions:
 // https://heatloadcalculator.mcscertified.com/docs/reference-sources/design-conditions
 
@@ -60,6 +62,49 @@ export const MCS_HDD: Record<string, number> = {
 
 /** Postcode area = the leading letters of the postcode ("M14 5AB" -> "M"). */
 export const postcodeArea = (pc: string): string => (pc.trim().toUpperCase().match(/^[A-Z]{1,2}/)?.[0] ?? '');
+
+/** Postcode district (outward code): "M14 5AB" or "M145AB" -> "M14". */
+export function postcodeDistrict(pc: string): string {
+  const s = pc.trim().toUpperCase().replace(/\s+/g, ' ');
+  if (s.includes(' ')) return s.split(' ')[0];
+  return s.length > 4 ? s.slice(0, -3) : s;
+}
+
+let districts: Map<string, [number, number]> | null = null;
+/** Centre of a postcode district, or of its whole area if only the area is known; null if unknown. */
+export function postcodeLatLon(pc: string): [number, number] | null {
+  if (!districts) districts = new Map(DISTRICTS_RAW.split(';').map((r) => { const [k, v] = r.split(':'); const [a, b] = v.split(','); return [k, [+a, +b]]; }));
+  const d = districts.get(postcodeDistrict(pc));
+  if (d) return d;
+  const area = postcodeArea(pc);
+  if (!area) return null;
+  // Area only ("M"): average its districts. Districts in "M" start with M then a digit, so "ME1" isn't counted.
+  const re = new RegExp(`^${area}\\d`);
+  const pts = [...districts].filter(([k]) => re.test(k)).map(([, v]) => v);
+  return pts.length ? [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length] : null;
+}
+
+/** Straight-line distance, km (MCS: nearest reference location by straight line). */
+export function distanceKm(a: [number, number], b: [number, number]): number {
+  const r = Math.PI / 180, dLat = (b[0] - a[0]) * r, dLon = (b[1] - a[1]) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(h));
+}
+
+/** Nearest MCS design-temperature station and mean-temperature region to a postcode, or null if the postcode isn't known. */
+export function climateFromPostcode(pc: string): { station: number; region: number; latlon: [number, number]; km: number } | null {
+  // The district table has no Channel Islands; they use the St Helier data anyway.
+  const ciArea = /^(JE|GY)/.test(postcodeArea(pc));
+  const p: [number, number] | null = ciArea ? [MCS_STATIONS[MCS_STATIONS.length - 1][2], MCS_STATIONS[MCS_STATIONS.length - 1][3]] : postcodeLatLon(pc);
+  if (!p) return null;
+  const near = <T extends unknown[]>(list: T[], lat: (x: T) => number, lon: (x: T) => number) =>
+    list.reduce((best, x, i) => { const d = distanceKm(p, [lat(x), lon(x)]); return d < best.d ? { i, d } : best; }, { i: 0, d: Infinity });
+  // Channel Islands use their own standard data (JE, GY).
+  const ci = /^(JE|GY)/.test(postcodeArea(pc));
+  const st = ci ? { i: MCS_STATIONS.length - 1, d: 0 } : near(MCS_STATIONS.slice(0, -1), (s) => s[2], (s) => s[3]);
+  const rg = ci ? { i: MCS_MEAN_TEMPS.length - 1, d: 0 } : near(MCS_MEAN_TEMPS.slice(0, -1), (s) => s[2], (s) => s[3]);
+  return { station: st.i, region: rg.i, latlon: p, km: st.d };
+}
 
 /** MCS rule: 0.6 °C colder for every whole 100 m the property sits above the station; no uplift below it. */
 export function designTemp(station: number, altitude: number, pct: '99.6' | '99'): number {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MAT } from './data';
 import { buildupU, calcHouse, groundFloorU } from './house';
 import { defaultHouse } from './house-default';
-import { designTemp, postcodeArea } from './climate-mcs';
+import { MCS_MEAN_TEMPS, MCS_STATIONS, climateFromPostcode, designTemp, postcodeArea } from './climate-mcs';
 
 describe('whole-house model', () => {
   const h = defaultHouse();
@@ -73,6 +73,21 @@ describe('whole-house model', () => {
     expect(designTemp(7, 300, '99.6')).toBe(-5.7); // 212 m above Woodford: two whole 100 m steps
     expect(postcodeArea('m14 5ab')).toBe('M');
     expect(res.hdd).toBe(2228);
+  });
+
+  it('postcode picks the nearest MCS station and region (bundled district table)', () => {
+    const st = (pc: string) => { const c = climateFromPostcode(pc); return c && [MCS_STATIONS[c.station][0], MCS_MEAN_TEMPS[c.region][0]]; };
+    expect(st('M14 5AB')).toEqual(['Manchester', 'West Pennines']);
+    expect(st('PL1 2AB')).toEqual(['Plymouth', 'South West England']);
+    expect(st('EH1 1AA')![0]).toBe('Edinburgh');
+    expect(st('JE2 3AB')![0]).toMatch(/St Helier/);
+    expect(st('M')![0]).toBe('Manchester');
+    expect(climateFromPostcode('ZZ9 9ZZ')).toBeNull();
+    const hh = defaultHouse();
+    hh.climate.postcode = 'PL4 8AA';
+    expect(calcHouse(hh).Tout).toBe(-1.5);
+    hh.climate.auto = false;
+    expect(calcHouse(hh).Tout).toBe(-4.5);
   });
 
   it('ground floor U falls with a larger floor', () => {
