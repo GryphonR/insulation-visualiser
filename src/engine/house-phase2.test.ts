@@ -4,6 +4,7 @@ import type { House } from './house';
 import { defaultHouse, withHeating } from './house-default';
 import { applyChanges, describe as describeChange, diff, steps } from './house-scenarios';
 import { simulate, yearTotals } from './house-sim';
+import { TMY_FILES, loadTmy } from './weather-tmy';
 
 describe('scenarios', () => {
   const a = defaultHouse();
@@ -77,6 +78,18 @@ describe('hour-by-hour runs', () => {
     const i = r.rooms.findIndex((x) => x.id === 'bed3');
     const avg = (a: Float32Array) => a.reduce((s, v) => s + v, 0) / a.length;
     expect(avg(r.T[i])).toBeGreaterThan(avg(r.out));
+  });
+
+  it('typical year from the bundled PVGIS weather: loads for every station and gives a sensible year', async () => {
+    const tmy = await loadTmy(7);
+    expect(tmy.T.length).toBe(8760);
+    expect(tmy.T.reduce((a, b) => a + b, 0) / 8760).toBeCloseTo(9.0, 0);
+    expect(Math.max(...tmy.dni)).toBeGreaterThan(500);
+    for (let i = 0; i < TMY_FILES.length; i++) expect((await loadTmy(i)).T.length).toBe(8760);
+    const real = simulate(h, 'year', calcHouse(h), tmy), synth = simulate(h, 'year');
+    expect(real.heatKWh).toBeGreaterThan(synth.heatKWh * 0.7);
+    expect(real.heatKWh).toBeLessThan(synth.heatKWh * 1.4);
+    expect(Math.min(...real.out)).toBeLessThan(-2);
   });
 
   it('typical year: heat mostly in winter, total in the same range as the degree-day estimate', () => {

@@ -1,7 +1,8 @@
 // Hour-by-hour whole-house runs (boards 6, 6a, 4b): one air-and-contents node per room plus the loft,
 // heating on a schedule with a setback, sun through windows, people, appliances and cooking.
 import { DOY, MEAN, ORIENTS, SWING } from './data';
-import { solarAt } from './solar';
+import { solarAt, solarFromData } from './solar';
+import type { Tmy } from './weather-tmy';
 import { calcHouse, heatPumpCop } from './house';
 import type { House, HouseResult, RoomType } from './house';
 import { roomOut, roomSchedule, systemFlow } from './house-heating';
@@ -36,9 +37,21 @@ const DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 const MONTH_OF_DAY = DAYS.flatMap((n, m) => Array(n).fill(m) as number[]);
 const UK_MEAN = MEAN.reduce((a, b) => a + b, 0) / 12;
 
-interface Weather { T: (t: number) => number; c: (t: number) => number; doy: (t: number) => number; hours: number; warmup: number }
+interface Weather {
+  T: (t: number) => number; c: (t: number) => number; doy: (t: number) => number; hours: number; warmup: number;
+  /** Measured sun on a surface for this hour, when the weather comes from a file. */
+  sol?: (t: number, orient: (typeof ORIENTS)[number]) => number;
+}
 
-function weather(id: CaseId, res: HouseResult, regionMean: number): Weather {
+function weather(id: CaseId, res: HouseResult, regionMean: number, tmy?: Tmy): Weather {
+  if (id === 'year' && tmy) {
+    // Hourly data, hour k = k hours after 1 Jan 00:00 UTC (≈ GMT); interpolate between readings.
+    const at = (a: Float32Array, t: number) => { const k = Math.floor(t), f = t - k; return a[k % 8760] * (1 - f) + a[(k + 1) % 8760] * f; };
+    return {
+      T: (t) => at(tmy.T, t), c: () => 0.5, doy: (t) => (Math.floor(t / 24) % 365) + 1, hours: 8760, warmup: 24 * 14,
+      sol: (t, o) => { const k = Math.floor(t) % 8760; return solarFromData(tmy.lat, (Math.floor(t / 24) % 365) + 1, (t % 24) + 0.5 + tmy.lon / 15, tmy.dni[k], tmy.dhi[k], o); },
+    };
+  }
   const sine = (t: number, mean: number, amp: number) => mean + amp * Math.sin(((t % 24) - 9) / 24 * 2 * Math.PI);
   if (id === 'design') return { T: (t) => sine(t, res.Tout + 2.5, 2.5), c: () => 0.15, doy: () => 21, hours: 24, warmup: 24 * 6 };
   if (id === 'summer') return { T: (t) => sine(t, 22, 7), c: () => 0.9, doy: () => 202, hours: 24, warmup: 24 * 6 };
@@ -67,9 +80,10 @@ export interface SimResult {
 
 const DT = 600; // s
 
-export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h)): SimResult {
+/** One run of a test case. Pass a typical meteorological year to drive the year case with real hourly weather. */
+export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h), tmy?: Tmy): SimResult {
   const lat = base.climate.lat;
-  const wx = weather(id, base, base.Tg);
+  const wx = weather(id, base, base.Tg, tmy);
   const heatingOn = id !== 'summer';
   const rooms = base.rooms;
   const N = rooms.length + (base.loft ? 1 : 0), LOFT = rooms.length;
@@ -157,7 +171,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h))
     gain.fill(0);
     rooms.forEach((_, i) => { gain[i] = awake * sLiv[i] + asleep * sBed[i] + app * sLiv[i] + cook * sKit[i]; });
     const c = wx.c(tc), doy = wx.doy(tc);
-    for (const w of solar) if (w.orient) gain[w.node] += solarAt(lat, doy, (tc % 24) + 0.5 / stepsPerH, c, w.orient) * w.area * w.g;
+    for (const w of solar) if (w.orient) gain[w.node] += (wx.sol ? wx.sol(tc, w.orient) : solarAt(lat, doy, (tc % 24) + 0.5 / stepsPerH, c, w.orient)) * w.area * w.g;
 
     // Air: balance of heat in and out given the mass and the neighbours' last air temperatures.
     for (let i = 0; i < N; i++) rhs[i] = gain[i] + Hout[i] * To + Hg[i] * base.Tg + Hp[i] * h.neighbourT + Hms[i] * Tm[i];

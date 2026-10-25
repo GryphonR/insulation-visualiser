@@ -1,6 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { MONTHS, MONTHS_FULL } from '../engine/data';
+import { calcHouse } from '../engine/house';
 import type { House } from '../engine/house';
+import { MCS_STATIONS } from '../engine/climate-mcs';
+import { loadTmy } from '../engine/weather-tmy';
+import type { Tmy } from '../engine/weather-tmy';
 import type { Project, Scenario } from '../engine/house-scenarios';
 import { CASES, hourGains, simulate, yearTotals } from '../engine/house-sim';
 import type { CaseId, SimResult } from '../engine/house-sim';
@@ -42,9 +46,19 @@ export function HouseRuns({ house, setHouse, project, ordered }: { house: House;
   const [roomId, setRoom] = useState('living');
   const [day, setDay] = useState(14);
   const [cmpId, setCmp] = useState('');
-  const sim = useMemo(() => simulate(house, caseId), [house, caseId]);
+  const base = useMemo(() => calcHouse(house), [house]);
+  const useTmy = house.climate.weather === 'tmy';
+  const [tmy, setTmy] = useState<Tmy | null>(null);
+  useEffect(() => {
+    if (!useTmy) return;
+    let live = true;
+    loadTmy(base.climate.station).then((t) => { if (live) setTmy(t); });
+    return () => { live = false; };
+  }, [useTmy, base.climate.station]);
+  const yearTmy = useTmy && tmy?.station === base.climate.station ? tmy : undefined;
+  const sim = useMemo(() => simulate(house, caseId, base, caseId === 'year' ? yearTmy : undefined), [house, caseId, base, yearTmy]);
   const cmpHouse = project.scenarios.find((s) => s.id === cmpId)?.house;
-  const cmp = useMemo<SimResult | null>(() => (caseId === 'year' && cmpHouse ? simulate(cmpHouse, 'year') : null), [cmpHouse, caseId]);
+  const cmp = useMemo<SimResult | null>(() => (caseId === 'year' && cmpHouse ? simulate(cmpHouse, 'year', calcHouse(cmpHouse), yearTmy) : null), [cmpHouse, caseId, yearTmy]);
   const g = house.gains;
   const ri = Math.max(0, sim.rooms.findIndex((r) => r.id === roomId));
   const room = sim.rooms[ri];
@@ -139,6 +153,15 @@ export function HouseRuns({ house, setHouse, project, ordered }: { house: House;
             <p className="small muted">Grey: outside air. Orange: {room?.name}. Thin lines: other rooms. Shaded: heat delivered.</p>
           </>}
 
+          {caseId === 'year' && (
+            <div className="hf-row">
+              <div className="chips" role="group" aria-label="Weather for the year">
+                <Chip on={!useTmy} onClick={() => upd((h) => { h.climate.weather = 'synthetic'; })}>Synthetic (monthly means)</Chip>
+                <Chip on={useTmy} onClick={() => upd((h) => { h.climate.weather = 'tmy'; })}>Typical year, real hourly weather</Chip>
+              </div>
+              <p className="small muted">{useTmy ? (yearTmy ? `${MCS_STATIONS[base.climate.station][0]}: ${yearTmy.source}.` : 'Loading weather…') : `Monthly means for ${base.region}, a daily swing and multi-day spells.`}</p>
+            </div>
+          )}
           {year && <>
             <div className="months-bars" role="img" aria-label="Heat by month">
               {year.months.map((v, m) => {

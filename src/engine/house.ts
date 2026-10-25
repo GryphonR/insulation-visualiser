@@ -99,6 +99,8 @@ export interface House {
     station: number; pct: '99.6' | '99'; altitude: number; region: number; postcode: string;
     /** Pick the station and region from the postcode (MCS nearest-location rule); false to use the ones chosen by hand. */
     auto?: boolean;
+    /** Weather for the year run: synthetic from monthly means, or the station's typical meteorological year (PVGIS). */
+    weather?: 'synthetic' | 'tmy';
   };
   vent: {
     method: 'model' | 'cibse'; source: 'est' | 'meas'; q50: number; factors: Factor[]; devices: Device[];
