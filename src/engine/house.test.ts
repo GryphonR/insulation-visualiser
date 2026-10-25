@@ -31,6 +31,16 @@ describe('whole-house model', () => {
     expect(Math.abs(net)).toBeLessThan(1e-6);
   });
 
+  it('MVHR: the 0.5 ach minimum is fresh air supplied, so only the unrecovered share counts as loss', () => {
+    const hh = defaultHouse();
+    hh.vent.source = 'meas'; hh.vent.q50 = 1; hh.vent.devices = [];
+    hh.vent.mech = 'mvhr'; hh.vent.mechFlow = 30; hh.vent.eta = 90;
+    const bed = calcHouse(hh).rooms.find((x) => x.room.id === 'bed1')!;
+    // Supplied air is topped up to 0.5 ach; loss = infiltration + 10% of the mechanical supply.
+    expect(bed.nInf + (0.5 - bed.nInf) * 0.1).toBeCloseTo(bed.n, 6);
+    expect(bed.n).toBeLessThan(0.15);
+  });
+
   it('derives each face once per side: living room has two outside walls, kitchen above-floor neighbour', () => {
     const lr = room('living');
     expect(new Set(lr.faces.filter((f) => f.to.k === 'out' && f.kind === 'wall').map((f) => f.side))).toEqual(new Set(['N', 'W']));

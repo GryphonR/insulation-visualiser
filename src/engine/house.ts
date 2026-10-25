@@ -2,7 +2,7 @@
 // Plan and rules: docs/whole-house-plan.md.
 import { MAT, MEAN } from './data';
 import { layerR } from './swap';
-import { MCS_HDD, MCS_MEAN_TEMPS, MCS_STATIONS, climateFromPostcode, designTemp, postcodeArea } from './climate-mcs';
+import { MCS_HDD, MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS, climateFromPostcode, designTemp, postcodeArea } from './climate-mcs';
 
 /** The MCS station and region for a house: from its postcode unless set by hand, with a location for sun and weather. */
 export function climateOf(h: House): { station: number; region: number; lat: number; lon: number; fromPostcode: boolean; km: number } {
@@ -111,7 +111,15 @@ export interface House {
   calib?: { dt: number; q: number; hf: number; note: string };
   /** Monthly gas bills for the calibration check. */
   bills?: Bills;
+  /** EPC age band group for default room temperatures (CIBSE DHDG 2026 Table 2-2): A–J (before 2007) or K onwards. */
+  ageBand?: 'AJ' | 'K';
+  /** The user's own default temperature for each room type, overriding the table. */
+  roomTemps?: Partial<Record<RoomType, number>>;
 }
+
+/** Default setpoint for a room type: the user's own figure, else MCS / CIBSE Table 2-2 for the house's age band. */
+export const defaultTemp = (h: Pick<House, 'ageBand' | 'roomTemps'>, type: RoomType) =>
+  h.roomTemps?.[type] ?? (ROOM_TEMPS[type] ?? ROOM_TEMPS.other)[h.ageBand === 'K' ? 1 : 0];
 
 /** Occupancy, heating schedule and gains for the hour-by-hour runs (board 6a). */
 export interface Gains {
@@ -478,10 +486,19 @@ export function calcHouse(h: House): HouseResult {
       const underRoof = fs.some((f) => f.kind === 'ceiling' && (f.to.k === 'loft' || f.to.k === 'out')) ? 1 : 0;
       nInf = base * (0.5 + 0.25 * extSides + 0.15 * underRoof);
       nDev = v.devices.filter((d) => d.room === r.id && !(fansOff && d.fan)).reduce((t, d) => t + deviceM3(d), 0) / V;
-      nMech = fansOff && heatedV > EPS ? (v.mechFlow * (V / heatedV) * (v.mech === 'mvhr' ? 1 - v.eta / 100 : 1)) / V : 0;
+      const lossShare = v.mech === 'mvhr' ? 1 - v.eta / 100 : 1;
+      const supplied = fansOff && heatedV > EPS ? (v.mechFlow * (V / heatedV)) / V : 0;
+      nMech = supplied * lossShare;
       n = v.method === 'cibse' ? CIBSE_ACH[r.type] : nInf + nDev + nMech;
-      // shortcut: MCS 0.5 ach floor applied to the effective rate, also under MVHR; check against the MCS calculator when MVHR is modelled in detail.
-      if (v.minAch && HABITABLE.includes(r.type)) n = Math.max(n, 0.5);
+      // MCS 0.5 ach minimum for habitable rooms applies to the fresh air supplied. Any top-up comes through the
+      // mechanical system, so under MVHR only its unrecovered share counts as heat loss.
+      if (v.minAch && HABITABLE.includes(r.type)) {
+        if (v.method === 'cibse') n = Math.max(n, 0.5);
+        else {
+          const air = nInf + nDev + supplied;
+          if (air < 0.5) { const top = 0.5 - air; nMech += top * lossShare; n += top * lossShare; }
+        }
+      }
     } else if (!r.heated) n = r.ach;
     const ventW = r.heated ? 0.33 * n * V * (Ti - Tout) : 0;
     if (r.heated) rows.push({ key: `vent:${r.id}`, label: 'Ventilation', to: 'outside', buildup: `${n.toFixed(2)} ach · ${V.toFixed(1)} m³`, area: 0, U: 0, dT: Ti - Tout, W: ventW, kind: 'vent' });

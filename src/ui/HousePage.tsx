@@ -4,7 +4,7 @@ import { MONTHS } from '../engine/data';
 import { BUILTIN_STACKUPS } from '../engine/library';
 import type { Stackup } from '../engine/library';
 import { MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS } from '../engine/climate-mcs';
-import { GLAZING_LIBRARY, SHADING, SIDES, buildupU, calcHouse, deviceM3, onStorey } from '../engine/house';
+import { GLAZING_LIBRARY, SHADING, SIDES, buildupU, calcHouse, defaultTemp, deviceM3, onStorey } from '../engine/house';
 import type { Buildup, BuildupKind, DefaultKey, House, Room, RoomType, Side } from '../engine/house';
 import { Chip } from './controls';
 import { RoomShapeEditor } from './HouseShape';
@@ -73,7 +73,7 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
 
   const addRoom = () => {
     const id = uid('r');
-    upd((h) => { h.rooms.push({ id, name: 'New room', type: 'other', storey, span: 1, x: maxX, y: 0, w: 3, d: 3, heated: true, setpoint: 21, ach: 1 }); });
+    upd((h) => { h.rooms.push({ id, name: 'New room', type: 'other', storey, span: 1, x: maxX, y: 0, w: 3, d: 3, heated: true, setpoint: defaultTemp(h, 'other'), ach: 1 }); });
     setSel(id);
   };
   const delRoom = () => {
@@ -184,7 +184,7 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
               <div className="hf-row">
                 <label className="hf"><span className="eyebrow">Name</span><input className="h-text" value={room.name} onChange={(e) => setRoom({ name: e.target.value })} /></label>
                 <label className="hf"><span className="eyebrow">Type</span>
-                  <select className="select" value={room.type} onChange={(e) => setRoom({ type: e.target.value as RoomType })}>
+                  <select className="select" value={room.type} onChange={(e) => { const type = e.target.value as RoomType; setRoom({ type, setpoint: defaultTemp(house, type) }); }}>
                     {ROOM_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </label>
@@ -197,7 +197,7 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
                   ? <Num label="Setpoint" unit="°C" value={room.setpoint} step={0.5} onChange={(v) => setRoom({ setpoint: v })} />
                   : <Num label="Air changes" unit="ach" value={room.ach} step={0.1} min={0} onChange={(v) => setRoom({ ach: v })} />}
               </div>
-              {room.heated && <p className="small muted">MCS / CIBSE default for this type: {ROOM_TEMPS[room.type][0]} °C (age bands A–J), {ROOM_TEMPS[room.type][1]} °C (K onwards).</p>}
+              {room.heated && room.setpoint !== defaultTemp(house, room.type) && <p className="small muted">Default for a {room.type} in this house: {defaultTemp(house, room.type)} °C (Room temperatures card).</p>}
               <div className="hf-row">
                 <Num label="x (from west)" unit="m" value={room.x} onChange={(v) => setRoom({ x: v })} />
                 <Num label="y (from north)" unit="m" value={room.y} onChange={(v) => setRoom({ y: v })} />
@@ -321,6 +321,30 @@ export function HousePage({ house, setHouse, customStackups }: { house: House; s
                 </tbody>
                 <tfoot><tr><td colSpan={5}>Heated rooms</td><td className="n mono">{fmt(res.peakW)}</td><td /></tr></tfoot>
               </table>
+            </div>
+          </Card>
+
+          <Card title="Room temperatures" note="Default setpoint for each room type: MCS / CIBSE DHDG 2026 Table 2-2 by age band, or your own. Each room can still have its own setpoint.">
+            <div className="hf-row">
+              <label className="hf"><span className="eyebrow">Age band (EPC)</span>
+                <select className="select" value={house.ageBand ?? 'AJ'} onChange={(e) => upd((h) => { h.ageBand = e.target.value as 'AJ' | 'K'; })}>
+                  <option value="AJ">A–J (built before 2007)</option><option value="K">K onwards (2007 or later)</option>
+                </select>
+              </label>
+              <button type="button" className="btn-secondary" onClick={() => upd((h) => { h.rooms.forEach((r) => { if (r.heated) r.setpoint = defaultTemp(h, r.type); }); })}>Apply to every heated room</button>
+            </div>
+            <div className="temps">
+              {ROOM_TYPES.map((t) => {
+                const own = house.roomTemps?.[t];
+                return (
+                  <label key={t} className="small temp">
+                    <span>{t}</span>
+                    <input type="number" className="thk-input" step={0.5} value={defaultTemp(house, t)} aria-label={`${t} default temperature`}
+                      onChange={(e) => upd((h) => { h.roomTemps = { ...h.roomTemps, [t]: Number(e.target.value) }; })} />
+                    {own != null ? <button type="button" className="btn-link inline" onClick={() => upd((h) => { const r = { ...h.roomTemps }; delete r[t]; h.roomTemps = r; })}>reset</button> : <span className="muted">MCS</span>}
+                  </label>
+                );
+              })}
             </div>
           </Card>
 

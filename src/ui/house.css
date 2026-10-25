@@ -134,3 +134,4 @@
   .h-table { font-size: 11px; }
 }
 .glz { display: inline-flex; gap: 4px; align-items: center; margin-left: 8px; } .glz .thk-input { width: 52px; }
+.temps { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px 14px; } .temp { display: grid; grid-template-columns: 1fr 64px 40px; gap: 6px; align-items: center; text-transform: capitalize; }

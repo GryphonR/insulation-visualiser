@@ -1,5 +1,5 @@
 // New-house templates and age-band defaults (board 0a): a whole starting model from a few facts.
-import { calcHouse } from './house';
+import { calcHouse, defaultTemp } from './house';
 import type { Buildup, House, Opening, Room, Side } from './house';
 import { defaultHouse } from './house-default';
 import { autoEmitters } from './house-heating';
@@ -42,6 +42,7 @@ export function newHouse(inp: NewHouseInput): House {
   const W = Math.max(4, inp.W), D = Math.max(4, inp.D), n = t.storeys ?? Math.min(3, Math.max(1, Math.round(inp.storeys)));
   const h = defaultHouse();
   h.name = `${t.label}, ${a.label}`;
+  h.ageBand = a.id === '2007+' ? 'K' : 'AJ';
   h.storeys = Array.from({ length: n }, (_, i) => ({ name: ['Ground floor', 'First floor', 'Second floor'][i], h: 2.4, zone: 0.25 }));
 
   // Build-ups from the age band, with EPC facts on top.
@@ -67,7 +68,7 @@ export function newHouse(inp: NewHouseInput): House {
   // Rooms: front (south, y = D) and back halves; the hall and landing rise through every storey.
   const rooms: Room[] = [];
   const R = (id: string, name: string, type: Room['type'], storey: number, x: number, y: number, w: number, d: number, extra: Partial<Room> = {}) =>
-    rooms.push({ id, name, type, storey, span: 1, x: +x.toFixed(2), y: +y.toFixed(2), w: +w.toFixed(2), d: +d.toFixed(2), heated: true, setpoint: type === 'bathroom' ? 22 : ['hall', 'landing', 'wc', 'utility'].includes(type) ? 18 : 21, ach: 1, ...extra });
+    rooms.push({ id, name, type, storey, span: 1, x: +x.toFixed(2), y: +y.toFixed(2), w: +w.toFixed(2), d: +d.toFixed(2), heated: true, setpoint: defaultTemp(h, type), ach: 1, ...extra });
   if (n === 1) {
     const yb = 0.45 * D;
     R('bed1', 'Bedroom 1', 'bedroom', 0, 0, 0, 0.4 * W, yb); R('bath', 'Bathroom', 'bathroom', 0, 0.4 * W, 0, 0.2 * W, yb); R('kitchen', 'Kitchen', 'kitchen', 0, 0.6 * W, 0, 0.4 * W, yb);
