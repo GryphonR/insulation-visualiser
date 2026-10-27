@@ -240,6 +240,11 @@ p { margin: 0; }
 .learn-toc ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .toc-link { background: none; border: 0; padding: 6px 8px; margin: 0 -8px; border-radius: 6px; text-align: left; width: calc(100% + 16px); font-size: 14px; color: var(--ink); cursor: pointer; }
 .toc-link:hover { background: #f5f7f8; color: var(--accent); }
+.toc-link.active { background: #eaf2fa; color: var(--accent); font-weight: 600; }
+.toc-head { display: flex; gap: 6px; align-items: center; background: none; border: 0; padding: 4px 0; text-align: left; cursor: pointer; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.toc-head:hover { color: var(--accent); }
+.learn-pager { display: flex; justify-content: space-between; gap: 12px; padding-top: 20px; border-top: 1px solid var(--line); }
+.learn-section[hidden] { display: none; }
 .learn-body { flex: 999 1 520px; min-width: 0; padding: 12px 32px 32px; }
 .learn-section { padding: 24px 0; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 14px; scroll-margin-top: 16px; max-width: 76ch; }
 .learn-section:last-child { border-bottom: 0; }

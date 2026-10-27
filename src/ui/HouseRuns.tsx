@@ -64,7 +64,6 @@ export function HouseRuns({ house, setHouse, project, ordered }: { house: House;
   const room = sim.rooms[ri];
   const year = caseId === 'year' ? yearTotals(sim) : null;
   const cyear = cmp ? yearTotals(cmp) : null;
-  const gainsDay = Array.from({ length: 24 }, (_, h) => hourGains(g, h, false).reduce((a, b) => a + b, 0));
 
   const lines = sim.rooms.map((r, i) => ({ name: r.name, T: sim.T[i], on: i === ri }));
   const caseInfo = CASES.find((c) => c.id === caseId)!;
@@ -83,46 +82,7 @@ export function HouseRuns({ house, setHouse, project, ordered }: { house: House;
           </div>
         </section>
 
-        <section className="card panel">
-          <h2>Occupancy, heating times and gains</h2>
-          <div className="hf-row">
-            <label className="hf"><span className="eyebrow">People</span>
-              <input type="number" className="thk-input" min={0} max={10} value={g.people} onChange={(e) => upd((h) => { h.gains.people = Math.max(0, Number(e.target.value) || 0); })} />
-            </label>
-            <div className="hf"><span className="eyebrow">Pattern</span>
-              <div className="chips">
-                {([['work', 'Out at work'], ['home', 'Home all day'], ['shift', 'Shift work']] as const).map(([k, l]) => <Chip key={k} on={g.pattern === k} onClick={() => upd((h) => { h.gains.pattern = k; })}>{l}</Chip>)}
-              </div>
-            </div>
-          </div>
-          <div className="sched">
-            {(['living', 'bedrooms'] as const).map((k) => (
-              <div key={k} className="sched-row">
-                <span className="small">{k === 'living' ? 'Living areas' : 'Bedrooms & bath'}</span>
-                <div className="sched-cells">
-                  {g[k].map((on, h) => (
-                    <button key={h} type="button" className={on ? 'sc on' : 'sc'} aria-pressed={!!on} aria-label={`${k} ${h}:00 ${on ? 'heating on' : 'setback'}`}
-                      onClick={() => upd((x) => { x.gains[k][h] = on ? 0 : 1; })} />
-                  ))}
-                </div>
-              </div>
-            ))}
-            <div className="sched-row"><span /><div className="sched-cells sched-ax">{Array.from({ length: 24 }, (_, h) => <span key={h}>{h % 3 === 0 ? String(h).padStart(2, '0') : ''}</span>)}</div></div>
-          </div>
-          <p className="small muted">Orange hours heat to each room's setpoint; the rest hold the setback. Click an hour to switch it.</p>
-          <div className="hf-row">
-            <label className="hf"><span className="eyebrow">Setback</span>
-              <span className="hf-in"><input type="number" className="thk-input" step={0.5} value={g.setback} onChange={(e) => upd((h) => { h.gains.setback = Number(e.target.value); })} /><span className="small muted">°C</span></span>
-            </label>
-            <label className="hf"><span className="eyebrow">Thermal mass</span>
-              <select className="select" value={g.mass} onChange={(e) => upd((h) => { h.gains.mass = Number(e.target.value); })}>{MASS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-            </label>
-            <label className="hf"><span className="eyebrow">Glazing g (with frame, curtains)</span>
-              <input type="number" className="thk-input" step={0.05} min={0} max={0.9} value={g.g} onChange={(e) => upd((h) => { h.gains.g = Number(e.target.value); })} />
-            </label>
-          </div>
-          <p className="small mono">Gains on a weekday: {fmt(gainsDay.reduce((a, b) => a + b, 0) / 1000, 1)} kWh, peak {fmt(Math.max(...gainsDay))} W (people, appliances, lighting, cooking).</p>
-        </section>
+        <GainsCard house={house} upd={upd} />
       </div>
 
       <div className="house-col">
@@ -223,5 +183,53 @@ export function HouseRuns({ house, setHouse, project, ordered }: { house: House;
         </section>
       </div>
     </div>
+  );
+}
+
+/** Board 6a: who is home, when the heating runs and the gains that follow. Used by the occupancy page and the test conditions. */
+export function GainsCard({ house, upd }: { house: House; upd: (fn: (h: House) => void) => void }) {
+  const g = house.gains;
+  const gainsDay = Array.from({ length: 24 }, (_, h) => hourGains(g, h, false).reduce((a, b) => a + b, 0));
+  return (
+  <section className="card panel">
+    <h2>Occupancy, heating times and gains</h2>
+    <div className="hf-row">
+      <label className="hf"><span className="eyebrow">People</span>
+        <input type="number" className="thk-input" min={0} max={10} value={g.people} onChange={(e) => upd((h) => { h.gains.people = Math.max(0, Number(e.target.value) || 0); })} />
+      </label>
+      <div className="hf"><span className="eyebrow">Pattern</span>
+        <div className="chips">
+          {([['work', 'Out at work'], ['home', 'Home all day'], ['shift', 'Shift work']] as const).map(([k, l]) => <Chip key={k} on={g.pattern === k} onClick={() => upd((h) => { h.gains.pattern = k; })}>{l}</Chip>)}
+        </div>
+      </div>
+    </div>
+    <div className="sched">
+      {(['living', 'bedrooms'] as const).map((k) => (
+        <div key={k} className="sched-row">
+          <span className="small">{k === 'living' ? 'Living areas' : 'Bedrooms & bath'}</span>
+          <div className="sched-cells">
+            {g[k].map((on, h) => (
+              <button key={h} type="button" className={on ? 'sc on' : 'sc'} aria-pressed={!!on} aria-label={`${k} ${h}:00 ${on ? 'heating on' : 'setback'}`}
+                onClick={() => upd((x) => { x.gains[k][h] = on ? 0 : 1; })} />
+            ))}
+          </div>
+        </div>
+      ))}
+      <div className="sched-row"><span /><div className="sched-cells sched-ax">{Array.from({ length: 24 }, (_, h) => <span key={h}>{h % 3 === 0 ? String(h).padStart(2, '0') : ''}</span>)}</div></div>
+    </div>
+    <p className="small muted">Orange hours heat to each room's setpoint; the rest hold the setback. Click an hour to switch it.</p>
+    <div className="hf-row">
+      <label className="hf"><span className="eyebrow">Setback</span>
+        <span className="hf-in"><input type="number" className="thk-input" step={0.5} value={g.setback} onChange={(e) => upd((h) => { h.gains.setback = Number(e.target.value); })} /><span className="small muted">°C</span></span>
+      </label>
+      <label className="hf"><span className="eyebrow">Thermal mass</span>
+        <select className="select" value={g.mass} onChange={(e) => upd((h) => { h.gains.mass = Number(e.target.value); })}>{MASS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+      </label>
+      <label className="hf"><span className="eyebrow">Glazing g (with frame, curtains)</span>
+        <input type="number" className="thk-input" step={0.05} min={0} max={0.9} value={g.g} onChange={(e) => upd((h) => { h.gains.g = Number(e.target.value); })} />
+      </label>
+    </div>
+    <p className="small mono">Gains on a weekday: {fmt(gainsDay.reduce((a, b) => a + b, 0) / 1000, 1)} kWh, peak {fmt(Math.max(...gainsDay))} W (people, appliances, lighting, cooking).</p>
+  </section>
   );
 }

@@ -1,5 +1,6 @@
 // Emitters, zones and flow temperature (boards 3, 3a, 1b). Types only from house.ts, so no import cycle.
 import type { House, Room } from './house';
+import type { Pt } from './geom';
 import type { Pipe } from './house-pipes';
 import { loopLayout } from './house-ufh';
 import type { Corner, LoopPattern, LoopRect } from './house-ufh';
@@ -25,6 +26,8 @@ export interface Emitter {
   area: number; spacing: number; cover: string; tail: number;
   /** UFH loop drawn on the plan: its rectangle (m), pattern and feed corner. The drawn area replaces `area`. */
   rect?: LoopRect; pattern?: LoopPattern; corner?: Corner;
+  /** Where the emitter was placed on the plan (its centre, m) and the angle of a radiator along its wall, degrees (drawing only). */
+  at?: Pt; ang?: number;
 }
 export interface Zone {
   id: string; name: string; kind: 'rad' | 'ufh'; color: string; on: boolean;

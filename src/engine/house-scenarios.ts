@@ -181,6 +181,15 @@ export function sanitizeProject(p: unknown): Project | null {
   return { v: 1, scenarios, active: scenarios.some((s) => s.id === q.active) ? q.active : scenarios[0].id };
 }
 
+/** True once a project (or an older single-house save) has been stored: false on a first visit, which opens the start screen. */
+export function hasSavedProject(): boolean {
+  try {
+    return !!(localStorage.getItem(KEY) || localStorage.getItem('insulation-visualiser.house.v1'));
+  } catch {
+    return false;
+  }
+}
+
 /** Saved project; an older single-house save becomes the base scenario. */
 export function loadProject(): Project {
   try {

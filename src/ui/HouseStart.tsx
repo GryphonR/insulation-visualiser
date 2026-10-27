@@ -7,7 +7,9 @@ import { Chip } from './controls';
 const fmt = (v: number, d = 1) => v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d });
 
 /** Board 0a: start a project from a template, the house's age and what the EPC says. */
-export function HouseStart({ onCreate, onCancel }: { onCreate: (h: House) => void; onCancel: () => void }) {
+export function HouseStart({ onCreate, onCancel, onDemo }: { onCreate: (h: House) => void; onCancel?: () => void; onDemo?: () => void }) {
+  const [name, setName] = useState('');
+  const [postcode, setPostcode] = useState('');
   const [template, setTemplate] = useState('semi');
   const [age, setAge] = useState('1950-66');
   const [W, setW] = useState(8);
@@ -20,10 +22,14 @@ export function HouseStart({ onCreate, onCancel }: { onCreate: (h: House) => voi
   const pc = (w: number) => Math.max(0, Math.min(100, ((w / 1000 - 2) / 12) * 100));
 
   return (
-    <section className="card panel start">
+    <section className="card panel start start-wide">
       <div className="section-head">
         <div><h2>New project</h2><p className="muted small">A starting model from a few facts: shape, age and anything the EPC or a quick look tells you. Every room, wall and radiator can be edited afterwards.</p></div>
-        <button type="button" className="btn-link" onClick={onCancel}>Cancel</button>
+        {onCancel && <button type="button" className="btn-link" onClick={onCancel}>Cancel</button>}
+      </div>
+      <div className="hf-row">
+        <label className="hf"><span className="eyebrow">Project name</span><input className="h-text" placeholder={house.name} value={name} onChange={(e) => setName(e.target.value)} /></label>
+        <label className="hf"><span className="eyebrow">Postcode (sets weather and ground temperature)</span><input className="h-text short" placeholder="e.g. B15 2TT" value={postcode} onChange={(e) => setPostcode(e.target.value)} /></label>
       </div>
       <div className="eyebrow">House type</div>
       <div className="chips">{TEMPLATES.map((t) => <Chip key={t.id} on={template === t.id} onClick={() => setTemplate(t.id)}>{t.label}</Chip>)}</div>
@@ -51,7 +57,8 @@ export function HouseStart({ onCreate, onCancel }: { onCreate: (h: House) => voi
       </div>
       <p className="small muted">Creates {house.rooms.length} rooms over {house.storeys.length} storey{house.storeys.length > 1 ? 's' : ''}, {house.openings.length} windows and doors, {house.buildups.length} build-ups and a radiator in each heated room, sized for the loss.</p>
       <div className="chips">
-        <button type="button" className="btn-primary" onClick={() => onCreate(house)}>Create project</button>
+        <button type="button" className="btn-primary" onClick={() => onCreate({ ...house, name: name.trim() || house.name, climate: postcode.trim() ? { ...house.climate, postcode: postcode.trim(), auto: true } : house.climate })}>Create project</button>
+        {onDemo && <button type="button" className="btn-secondary" onClick={onDemo}>Open the demo house instead</button>}
       </div>
     </section>
   );

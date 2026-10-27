@@ -12,7 +12,17 @@ const fmt = (v: number, d = 0) => (Number.isFinite(v) ? v.toLocaleString('en-GB'
 const uid = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 const ZCOL = ['#c2410c', '#1f6fb5', '#1f7a4d', '#7a45b8', '#b45309', '#be185d'];
 
-export function HouseHeating({ house, setHouse }: { house: House; setHouse: (fn: (h: House) => House) => void }) {
+/** An emitter for a room in the first matching zone: a K2 radiator, towel rail or UFH loop. */
+export function addEmitter(h: House, room: string, kind: Emitter['kind']): void {
+  const zone = h.heating.zones.find((z) => (kind === 'ufh' ? z.kind === 'ufh' : z.kind === 'rad'))?.id ?? '';
+  const r = h.rooms.find((x) => x.id === room);
+  h.heating.emitters.push({ id: uid('e'), room, kind, zone, type: 'K2', len: 1000, height: 600, rated: 600, area: r ? +(roomArea(r) * 0.85).toFixed(1) : 10, spacing: 150, cover: 'Tiles', tail: 5 });
+}
+
+export type HeatingSection = 'system' | 'emitters' | 'zones' | 'pipes';
+
+export function HouseHeating({ house, setHouse, section }: { house: House; setHouse: (fn: (h: House) => House) => void; section?: HeatingSection }) {
+  const show = (x: HeatingSection) => !section || section === x;
   const upd = (fn: (h: House) => void) => setHouse((prev) => { const n = structuredClone(prev); fn(n); return n; });
   const res = useMemo(() => calcHouse(house), [house]);
   const c = house.heating;
@@ -46,15 +56,12 @@ export function HouseHeating({ house, setHouse }: { house: House; setHouse: (fn:
   const gov = res.heat.gov;
   const pipesRes = sizePipes(house, res);
 
-  const add = (room: string, kind: Emitter['kind']) => upd((h) => {
-    const zone = h.heating.zones.find((z) => (kind === 'ufh' ? z.kind === 'ufh' : z.kind === 'rad'))?.id ?? '';
-    const r = h.rooms.find((x) => x.id === room);
-    h.heating.emitters.push({ id: uid('e'), room, kind, zone, type: 'K2', len: 1000, height: 600, rated: 600, area: r ? +(roomArea(r) * 0.85).toFixed(1) : 10, spacing: 150, cover: 'Tiles', tail: 5 });
-  });
+  const add = (room: string, kind: Emitter['kind']) => upd((h) => addEmitter(h, room, kind));
 
   return (
     <div className="house-grid">
       <div className="house-col">
+        {show('system') && (
         <section className="card panel">
           <h2>Flow temperature</h2>
           <div className="chips">
@@ -102,7 +109,9 @@ export function HouseHeating({ house, setHouse }: { house: House; setHouse: (fn:
             </table>
           </div>
         </section>
+        )}
 
+        {show('emitters') && (
         <section className="card panel">
           <div className="section-head">
             <div><h2>Emitters</h2><p className="muted small">Output at the design-day flow of {fmt(designFlow, 1)} °C against each room's heat loss.</p></div>
@@ -171,9 +180,11 @@ export function HouseHeating({ house, setHouse }: { house: House; setHouse: (fn:
           </div>
           <p className="small muted">Radiator outputs are typical catalogue figures per metre at 600 mm high, ΔT50, exponent 1.3. UFH: 16 mm pipe in 65 mm screed, EN 1264 style, capped at a 29 °C floor surface.</p>
         </section>
+        )}
       </div>
 
       <div className="house-col">
+        {show('zones') && (
         <section className="card panel">
           <div className="section-head">
             <h2>Zones</h2>
@@ -213,9 +224,11 @@ export function HouseHeating({ house, setHouse }: { house: House; setHouse: (fn:
             );
           })}
         </section>
+        )}
 
-        <HouseUfh house={house} upd={upd} />
+        {show('zones') && <HouseUfh house={house} upd={upd} />}
 
+        {show('pipes') && (
         <section className="card panel">
           <div className="section-head">
             <div><h2>Pipework</h2><p className="muted small">Pipe runs from the heat pump. Each run carries the design flow of every emitter beyond it ({c.dT} K flow − return). Limits: about 1 m/s (0.8 in microbore) and {MAX_PA_M} Pa/m.</p></div>
@@ -262,7 +275,9 @@ export function HouseHeating({ house, setHouse }: { house: House; setHouse: (fn:
             {pipesRes.unpiped.length > 0 && <p className="small warn">Not piped yet: {pipesRes.unpiped.map((id) => { const e = c.emitters.find((x) => x.id === id); return e ? `${roomName(e.room)} ${e.kind === 'ufh' ? 'UFH' : id}` : id; }).join(', ')}.</p>}
           </>}
         </section>
+        )}
 
+        {show('system') && (
         <section className="card panel">
           <h2>Heat pump flow by hour</h2>
           <div className="hf-row">
@@ -279,6 +294,7 @@ export function HouseHeating({ house, setHouse }: { house: House; setHouse: (fn:
           <p className="small muted">Design flow from the zones calling each hour, at {c.dT} K flow − return. Orange hours are below the heat pump's minimum: merge small zones, overlap their hours, or add a buffer or low-loss header.</p>
           {lowHours > 0 && <p className="small warn">{lowHours} hour{lowHours > 1 ? 's' : ''} a day below {c.minFlow} l/min.</p>}
         </section>
+        )}
       </div>
     </div>
   );

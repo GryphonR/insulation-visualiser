@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 interface Section {
   id: string;
@@ -139,12 +139,22 @@ function PressureFigure() {
 }
 
 export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) {
+  const [active, setActive] = useState(SECTIONS[0].id);
+  const [closed, setClosed] = useState<Set<string>>(new Set());
+  const bodyRef = useRef<HTMLElement>(null);
+
+  // Sections are authored inline below; show only the active page.
+  useEffect(() => {
+    bodyRef.current?.querySelectorAll<HTMLElement>('.learn-section').forEach((el) => { el.hidden = el.id !== active; });
+    bodyRef.current?.scrollIntoView({ block: 'start' });
+  }, [active]);
+
   const jump = (id: string) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    setActive(id);
+    const g = SECTIONS.find((s) => s.id === id)?.group;
+    if (g) setClosed((c) => { const n = new Set(c); n.delete(g); return n; });
   };
+  const toggle = (name: string) => setClosed((c) => { const n = new Set(c); if (!n.delete(name)) n.add(name); return n; });
 
   const groups = SECTIONS.reduce<Array<{ name: string; items: Section[] }>>((acc, s) => {
     const last = acc[acc.length - 1];
@@ -153,24 +163,36 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
     return acc;
   }, []);
 
+  const idx = SECTIONS.findIndex((s) => s.id === active);
+  const prev = SECTIONS[idx - 1];
+  const next = SECTIONS[idx + 1];
+
   return (
     <div className="learn">
       <nav aria-label="Learn contents" className="learn-toc card">
-        {groups.map((g) => (
-          <div key={g.name} className="learn-toc-group">
-            <div className="eyebrow">{g.name}</div>
-            <ul>
-              {g.items.map((s) => (
-                <li key={s.id}>
-                  <button type="button" className="toc-link" onClick={() => jump(s.id)}>{s.title}</button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+        {groups.map((g) => {
+          const open = !closed.has(g.name);
+          return (
+            <div key={g.name} className="learn-toc-group">
+              <button type="button" className="toc-head" aria-expanded={open} onClick={() => toggle(g.name)}>
+                <span className="toc-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
+                {g.name}
+              </button>
+              {open && (
+                <ul>
+                  {g.items.map((s) => (
+                    <li key={s.id}>
+                      <button type="button" className={`toc-link${s.id === active ? ' active' : ''}`} aria-current={s.id === active ? 'page' : undefined} onClick={() => jump(s.id)}>{s.title}</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
       </nav>
 
-      <article className="learn-body card">
+      <article className="learn-body card" ref={bodyRef}>
         {/* ------------------------------------------------------------ OVERVIEW */}
         <section id="planning" className="learn-section">
           <h2>Planning your insulation</h2>
@@ -1017,6 +1039,11 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
           </dl>
           <p><button type="button" className="btn-primary" onClick={onOpenSimulator}>Back to the simulator</button></p>
         </section>
+
+        <div className="learn-pager">
+          {prev ? <button type="button" className="btn-secondary" onClick={() => jump(prev.id)}>← {prev.title}</button> : <span />}
+          {next ? <button type="button" className="btn-secondary" onClick={() => jump(next.id)}>{next.title} →</button> : <span />}
+        </div>
       </article>
     </div>
   );

@@ -101,3 +101,28 @@ export function selfIntersects(p: Pt[]): boolean {
   }
   return false;
 }
+
+/** Even-odd point-in-polygon test. */
+export function pointInPoly(p: Pt, poly: Pt[]): boolean {
+  let c = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < ((b[0] - a[0]) * (p[1] - a[1])) / (b[1] - a[1]) + a[0]) c = !c;
+  }
+  return c;
+}
+
+/** Area common to three simple polygons. */
+export function overlapArea3(p: Pt[], q: Pt[], r: Pt[]): number {
+  const box = (x: Pt[]) => [Math.min(...x.map((v) => v[0])), Math.min(...x.map((v) => v[1])), Math.max(...x.map((v) => v[0])), Math.max(...x.map((v) => v[1]))];
+  const [A, B, C] = [box(p), box(q), box(r)];
+  if (Math.max(A[0], B[0], C[0]) >= Math.min(A[2], B[2], C[2]) || Math.max(A[1], B[1], C[1]) >= Math.min(A[3], B[3], C[3])) return 0;
+  const tr = triangulate(r);
+  let s = 0;
+  for (const a of triangulate(p)) for (const b of triangulate(q)) {
+    const c = clipConvex(a, b);
+    if (c.length < 3) continue;
+    for (const t of tr) { const d = clipConvex(c, t); if (d.length >= 3) s += polyArea(d); }
+  }
+  return s;
+}

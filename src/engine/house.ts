@@ -2,7 +2,7 @@
 // Plan and rules: docs/whole-house-plan.md.
 import { MAT, MEAN } from './data';
 import { layerR } from './swap';
-import { compass, edges, overlapAreaPoly, polyArea, selfIntersects, sharedSpan } from './geom';
+import { compass, edges, overlapArea3, overlapAreaPoly, polyArea, selfIntersects, sharedSpan } from './geom';
 import type { Edge, Pt } from './geom';
 import { MCS_HDD, MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS, climateFromPostcode, designTemp, postcodeArea } from './climate-mcs';
 
@@ -85,7 +85,16 @@ export interface Opening {
   id: string; room: string; side: Side; name: string; w: number; h: number; buildup: string; shade?: keyof typeof SHADING;
   /** Wall index on a polygon room (its edges in order); otherwise the first wall facing `side`. */
   edge?: number;
+  /** An inside door: the room it leads to. Such a door sits on a wall shared with that room and is not part of the outside wall. */
+  to?: string;
+  /** Where the opening's centre sits along its wall, metres from the wall's first corner (drawing only); evenly spread if unset. */
+  t?: number;
 }
+/**
+ * A patch of a floor or ceiling with its own build-up: an insulated strip, a different slab. Band n is the floor of storey n and the
+ * ceiling of storey n - 1; the top band is the ceiling or roof over the top storey.
+ */
+export interface FloorZone { id: string; band: number; name: string; poly: Pt[]; buildup: string }
 export interface Device { id: string; room: string; name: string; fan: boolean; opts: Array<[string, number]>; pick: number }
 export interface Factor { id: string; label: string; dq: number; on: boolean }
 export type Boundary = 'out' | 'party';
@@ -103,6 +112,8 @@ export interface House {
   /** Per-face build-up and boundary choices, keyed by Face.key. */
   faceBuildup: Record<string, string>;
   faceBoundary: Record<string, Boundary>;
+  /** Drawn patches of floors and ceilings with a different build-up. */
+  zones?: FloorZone[];
   neighbourT: number;
   loft: { present: boolean; ach: number; height: number; pitch: number };
   /** Suspended floors: airbrick opening area per metre of exposed wall (mm²/m) and void height (m). */
@@ -425,6 +436,7 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
   const floorB = B(`gf:${r.id}`, 'groundFloor');
   const myEdges = roomEdges(r);
   const isPoly = !!(r.poly && r.poly.length >= 3);
+  const doorsDone = new Set<string>();
   for (const e of myEdges) {
     const side = e.side, ext: Face[] = [];
     for (let s = r.storey; s <= top; s++) {
@@ -438,7 +450,16 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
           if (!span) continue;
           cuts.push(span);
           const key = `iw:${pairKey(r.id, o.id)}:${s}`, b = B(key, 'intWall');
-          faces.push({ key, label: `${side} wall`, kind: 'wall', side, az: e.az, to: { k: 'room', id: o.id }, area: (span[1] - span[0]) * wallH(e, s, false), buildup: b, U: buildupU(b, FILMS.intWall) });
+          // Inside doors between this pair come out of the first stretch of shared wall, on the storey where both rooms exist.
+          const doors = s === Math.max(r.storey, o.storey) && !doorsDone.has(key)
+            ? h.openings.filter((d) => d.to && ((d.room === r.id && d.to === o.id) || (d.room === o.id && d.to === r.id))) : [];
+          doorsDone.add(key);
+          const doorA = Math.min(doors.reduce((t, d) => t + d.w * d.h, 0), (span[1] - span[0]) * wallH(e, s, false));
+          faces.push({ key, label: `${side} wall`, kind: 'wall', side, az: e.az, to: { k: 'room', id: o.id }, area: (span[1] - span[0]) * wallH(e, s, false) - doorA, buildup: b, U: buildupU(b, FILMS.intWall) });
+          for (const d of doors) {
+            const db = h.buildups.find((x) => x.id === d.buildup) ?? h.buildups[0];
+            faces.push({ key: `op:${d.id}`, label: d.name, kind: 'door', side, az: e.az, to: { k: 'room', id: o.id }, area: d.w * d.h, buildup: db, U: buildupU(db, FILMS.intWall) });
+          }
         }
       }
       const len = subtract(0, e.len, cuts).reduce((t, [a, b]) => t + b - a, 0);
@@ -461,7 +482,7 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
     }
     // Openings come out of this wall's outside area, shared by area. On a polygon room an opening sits on its
     // chosen wall, or the first wall facing its compass side.
-    const ops = h.openings.filter((o) => o.room === r.id && (isPoly ? (o.edge ?? myEdges.findIndex((x) => x.side === o.side)) === e.idx : o.side === side));
+    const ops = h.openings.filter((o) => !o.to && o.room === r.id && (isPoly ? (o.edge ?? myEdges.findIndex((x) => x.side === o.side)) === e.idx : o.side === side));
     const gross = ext.reduce((t, f) => t + f.area, 0);
     const opArea = Math.min(gross, ops.reduce((t, o) => t + o.w * o.h, 0));
     for (const f of ext) f.area -= gross > 0 ? opArea * (f.area / gross) : 0;
@@ -474,12 +495,27 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
     }
   }
   // Floor
-  const A = roomArea(r);
+  const A = roomArea(r), rp = roomPoly(r);
+  // Drawn floor and ceiling zones take their share of a face, by the area they cover. shortcut: a zone is taken to cover each
+  // stretch of the room's floor by the area it overlaps there; overlapping zones in one band are flagged by a check.
+  const zoned = (f: Face, band: number, area: (z: FloorZone) => number, uOf: (b: Buildup) => number) => {
+    let rest = f.area;
+    const extra: Face[] = [];
+    for (const z of h.zones ?? []) {
+      const zb = z.band === band && z.poly.length >= 3 ? h.buildups.find((x) => x.id === z.buildup) : undefined;
+      const a = zb ? Math.min(rest, area(z)) : 0;
+      if (!zb || a <= EPS) continue;
+      rest -= a;
+      extra.push({ ...f, key: `${f.key}~${z.id}`, label: `${f.label}, ${z.name}`, area: a, buildup: zb, U: uOf(zb) });
+    }
+    if (rest > EPS) faces.push({ ...f, area: rest });
+    faces.push(...extra);
+  };
   if (r.storey === 0) {
     const b = floorB;
-    const U = ground > 0 ? groundFloorU(b, ctx.Bp, ground) : b.floorType === 'suspended' ? suspendedFloorU(b, ctx.Bp, h.suspended.vent, h.suspended.voidH) : groundFloorU(b, ctx.Bp);
+    const groundU = (x: Buildup) => (ground > 0 ? groundFloorU(x, ctx.Bp, ground) : x.floorType === 'suspended' ? suspendedFloorU(x, ctx.Bp, h.suspended.vent, h.suspended.voidH) : groundFloorU(x, ctx.Bp));
     const label = ground > 0 ? 'Basement floor' : b.floorType === 'suspended' ? 'Suspended floor' : 'Floor';
-    faces.push({ key: `gf:${r.id}`, label, kind: 'floor', to: { k: 'ground' }, area: A, buildup: b, U });
+    zoned({ key: `gf:${r.id}`, label, kind: 'floor', to: { k: 'ground' }, area: A, buildup: b, U: groundU(b) }, 0, (z) => overlapAreaPoly(z.poly, rp), groundU);
   } else {
     let covered = 0;
     for (const o of h.rooms) {
@@ -488,31 +524,35 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
       if (a <= EPS) continue;
       covered += a;
       const key = `f:${pairKey(r.id, o.id)}`, b = B(key, 'intFloor');
-      faces.push({ key, label: 'Floor', kind: 'floor', to: { k: 'room', id: o.id }, area: a, buildup: b, U: buildupU(b, FILMS.intFloor) });
+      zoned({ key, label: 'Floor', kind: 'floor', to: { k: 'room', id: o.id }, area: a, buildup: b, U: buildupU(b, FILMS.intFloor) }, r.storey, (z) => overlapArea3(z.poly, rp, roomPoly(o)), (x) => buildupU(x, FILMS.intFloor));
     }
     if (A - covered > EPS) {
-      const b = B(`xf:${r.id}`, 'exposedFloor');
-      faces.push({ key: `xf:${r.id}`, label: 'Exposed floor', kind: 'floor', to: { k: 'out' }, area: A - covered, buildup: b, U: buildupU(b, FILMS.exposedFloor) });
+      const b = B(`xf:${r.id}`, 'exposedFloor'), below = h.rooms.filter((o) => o.id !== r.id && onStorey(o, r.storey - 1));
+      zoned({ key: `xf:${r.id}`, label: 'Exposed floor', kind: 'floor', to: { k: 'out' }, area: A - covered, buildup: b, U: buildupU(b, FILMS.exposedFloor) }, r.storey,
+        (z) => Math.max(0, overlapAreaPoly(z.poly, rp) - below.reduce((t, o) => t + overlapArea3(z.poly, rp, roomPoly(o)), 0)), (x) => buildupU(x, FILMS.exposedFloor));
     }
   }
   // Ceiling
   let covered = 0;
+  const above: Room[] = [];
   if (top < last) {
     for (const o of h.rooms) {
       if (o.id === r.id || !onStorey(o, top + 1)) continue;
       const a = overlapArea(r, o);
       if (a <= EPS) continue;
       covered += a;
+      above.push(o);
       const key = `f:${pairKey(r.id, o.id)}`, b = B(key, 'intFloor');
-      faces.push({ key, label: 'Ceiling', kind: 'ceiling', to: { k: 'room', id: o.id }, area: a, buildup: b, U: buildupU(b, FILMS.intFloor) });
+      zoned({ key, label: 'Ceiling', kind: 'ceiling', to: { k: 'room', id: o.id }, area: a, buildup: b, U: buildupU(b, FILMS.intFloor) }, top + 1, (z) => overlapArea3(z.poly, rp, roomPoly(o)), (x) => buildupU(x, FILMS.intFloor));
     }
   }
   const flatA = g ? g.flatA : A - covered;
   if (flatA > EPS) {
     const toLoft = top === last && h.loft.present;
     const key = toLoft ? `lc:${r.id}` : `fr:${r.id}`, b = B(key, toLoft ? 'loftCeiling' : 'flatRoof');
-    faces.push({ key, label: g ? (toLoft ? 'Flat ceiling (collar) to loft' : 'Flat roof') : toLoft ? 'Ceiling to loft' : 'Flat roof', kind: 'ceiling', to: toLoft ? { k: 'loft' } : { k: 'out' }, area: flatA, buildup: b,
-      U: buildupU(b, toLoft ? FILMS.loftCeiling : FILMS.roof) });
+    const films = toLoft ? FILMS.loftCeiling : FILMS.roof;
+    zoned({ key, label: g ? (toLoft ? 'Flat ceiling (collar) to loft' : 'Flat roof') : toLoft ? 'Ceiling to loft' : 'Flat roof', kind: 'ceiling', to: toLoft ? { k: 'loft' } : { k: 'out' }, area: flatA, buildup: b, U: buildupU(b, films) },
+      top + 1, (z) => (g ? (overlapAreaPoly(z.poly, rp) / (A || 1)) * flatA : Math.max(0, overlapAreaPoly(z.poly, rp) - above.reduce((t, o) => t + overlapArea3(z.poly, rp, roomPoly(o)), 0))), (x) => buildupU(x, films));
   }
   if (g && sh) {
     const rlB = h.buildups.find((b) => b.kind === 'glazing') ?? h.buildups[0];
@@ -710,6 +750,10 @@ export function calcHouse(h: House): HouseResult {
       if (overlapArea(on[i], on[j]) > 0.01) checks.push({ level: 'error', text: `${on[i].name} and ${on[j].name} overlap on the ${h.storeys[s].name.toLowerCase()}.` });
     }
   }
+  const zs = h.zones ?? [];
+  for (let i = 0; i < zs.length; i++) for (let j = i + 1; j < zs.length; j++) {
+    if (zs[i].band === zs[j].band && overlapAreaPoly(zs[i].poly, zs[j].poly) > 0.01) checks.push({ level: 'warn', text: `Floor zones ${zs[i].name} and ${zs[j].name} overlap; the first one drawn gets the shared area.` });
+  }
   for (const r of h.rooms) {
     if (roomArea(r) <= 0.01) checks.push({ level: 'error', text: `${r.name} has no floor area.` });
     if (r.poly && selfIntersects(r.poly)) checks.push({ level: 'error', text: `${r.name}'s outline crosses itself.` });
@@ -717,7 +761,7 @@ export function calcHouse(h: House): HouseResult {
     // Openings must sit on outside wall: check each wall that has any.
     const es = roomEdges(r), isPoly = !!(r.poly && r.poly.length >= 3);
     for (const e of es) {
-      const ops = h.openings.filter((o) => o.room === r.id && (isPoly ? (o.edge ?? es.findIndex((x) => x.side === o.side)) === e.idx : o.side === e.side));
+      const ops = h.openings.filter((o) => !o.to && o.room === r.id && (isPoly ? (o.edge ?? es.findIndex((x) => x.side === o.side)) === e.idx : o.side === e.side));
       if (!ops.length) continue;
       const wall = (faces.get(r.id) ?? []).filter((f) => f.kind === 'wall' && f.key.startsWith(`w:${r.id}:${e.id}:`)).reduce((t, f) => t + f.area, 0);
       if (wall < 0.05) checks.push({ level: 'error', text: `${r.name}: ${ops.map((o) => o.name).join(', ')} on ${isPoly ? `wall ${e.idx + 1}` : `the ${e.side} side`}, which has no outside wall left.` });

@@ -4,7 +4,7 @@ Design canvas: https://claude.ai/artifact/PEwA7xUd6LdQC4RmwpZJwB (28 boards; the
 
 ## Phase 1 (this branch)
 
-A new "Whole house" tab alongside Single wall / Compare / Moisture.
+A new "Whole house" tab alongside Single wall / Compare / Moisture. **Superseded: see "UI rebuild" below. The design is a multi-page app that replaces the old tabs.**
 
 - `src/engine/house.ts`: the data model and the design-day calculation, with no React.
 - `src/engine/house-default.ts`: the reference house (layout from board 1).
@@ -235,3 +235,53 @@ These are sample data. The engine works them out from geometry, so expect them t
 ## Open questions
 
 None outstanding.
+
+
+## UI rebuild (replaces the single Whole house tab)
+
+The phases above built the engine and its features, but put them all into one extra tab of the old app. The design boards describe a different app: board 0 (structure) and board 1a (room drill-down) are the specification for navigation.
+
+**Structure:** one spine drilled by level, with results at each level.
+
+| Level | Model | Results at that level |
+| --- | --- | --- |
+| House | location, design day, scenarios | whole-house kW and kWh, compare |
+| Floor plan | rooms drawn per storey | plan lens |
+| Room | a box of faces | loss by face |
+| Element | one wall, floor, roof or window | the old single-wall simulator |
+
+**Shell (`src/ui/Shell.tsx`):** project, scenario and conditions in the header; workflow 1 Model, 2 Build-ups, 3 Heating, 4 Results (a badge counts emitters that fall short); a sub-navigation for each step; a breadcrumb below the plan. The old Single wall, Compare and Moisture tabs are gone as top-level pages.
+
+**Routes** (hash, `src/ui/route.ts`; no hash opens `#/start` on a first visit, otherwise `#/plan`):
+
+| Route | Page | Board |
+| --- | --- | --- |
+| `#/start` | New project (name, postcode, template, age, EPC) | 0a |
+| `#/plan[/room]` | Floor plan, lens, tracing, selected-room summary | 1 |
+| `#/room/<id>[/details\|openings]` | Room as a box of faces; room and outline; windows and doors | 1a, 1c |
+| `#/site`, `#/storeys`, `#/vent` | Climate and temperatures; storeys, ground and loft; ventilation | 1d, 1f |
+| `#/buildups[/id]`, `#/materials` | Build-up library with layers, where used, defaults; material reference | 2, 2a |
+| `#/compare-buildups` | The old Compare build-ups page, under the library | |
+| `#/wall/<buildup id>` | Element level: the old single-wall simulator (heat flow, moisture over a year), loaded with that build-up | |
+| `#/heating` | Flow temperature, emitters, zones, UFH, pipes | 3, 3a, 1b |
+| `#/results`, `#/year`, `#/energy`, `#/bills`, `#/moisture`, `#/report` | Design-day results by room; test conditions and year; heat pump and cost; bills; moisture; report | 4, 4b, 6, 4c, 4d, 4f, 4e |
+| `#/scenarios`, `#/compare` | Scenario tree; A vs B on the plan | 5, 5a |
+
+**State:** `src/ui/project.tsx` holds the project, undo/redo, the active scenario and the results for every page. The first visit does not save the demo house until something changes, so the start screen shows again on reload.
+
+### Added in the second pass
+
+- Room page: 24-hour air temperature against outside and the setpoint (design-day run).
+- Plan page: an add bar (room, window, door, radiator, UFH loop on the selected room; links to pipe runs and manifolds).
+- New pages: Floors (2b), Windows & doors (2c), Unheated spaces (1e), Checks & history (1f), Occupancy & gains (6a, the same card as in the test conditions).
+- Heating is split into System & flow, Emitters, Zones & UFH and Pipework.
+- Materials: custom materials (saved in this browser, usable in any build-up); build-up layers change material inline and add layers.
+
+### Still not built
+
+- Internal doors open, shut or on a schedule: the engine has no door model, so there is no control.
+- Floor edge upstand and junction values (2b), junction list and y-value (2c): junctions were deferred (decision 5).
+- Window sun gain per month and curtains (2c); hot water, cylinder and the energy-board hot-water inputs (4c); named restore points and survey mode (1f; survey was dropped).
+- Plan: free-form wall, pipe and manifold drawing tools; the shared clock dock; "storey below" ghost.
+- Custom materials are not exported with a project; a shared project opens with their layers dropped.
+- Not checked at phone width.

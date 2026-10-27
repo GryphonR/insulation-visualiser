@@ -14,7 +14,6 @@ import { WallSection } from './WallSection';
 import { useClock } from './useClock';
 
 const COLORS = ['#0b63b5', '#c75b00', '#2d7a4d', '#a23b72'];
-const MAX_COMPARE = 4;
 const NEW_OPTION = '__new__';
 
 const DEFAULT_SLOTS = ['preset:cavity_old', 'preset:cavity_new'];
@@ -22,6 +21,37 @@ const DEFAULT_SLOTS = ['preset:cavity_old', 'preset:cavity_new'];
 interface Props {
   customStackups: Stackup[];
   setCustomStackups: (updater: (prev: Stackup[]) => Stackup[]) => void;
+}
+
+type Result = { stackup: Stackup; color: string; res: ReturnType<typeof runScenario> };
+
+/** One plain sentence per measure: which wall is ahead, and by how much. */
+function TextComparison({ a, b }: { a: Result; b: Result }) {
+  const A = a.res.sim;
+  const B = b.res.sim;
+  const na = <b style={{ color: a.color }}>{a.stackup.name}</b>;
+  const nb = <b style={{ color: b.color }}>{b.stackup.name}</b>;
+  const rows: { key: string; text: React.ReactNode }[] = [];
+  const pair = (key: string, va: number, vb: number, d: number, fmt: (n: number) => string, lowWins: boolean, what: string, better: string) => {
+    if (Math.abs(va - vb) < 0.5 * 10 ** -d) {
+      rows.push({ key, text: <>{what}: both about {fmt(va)}.</> });
+      return;
+    }
+    const aWins = lowWins ? va < vb : va > vb;
+    rows.push({ key, text: <>{what}: {aWins ? na : nb} is {better} at {fmt(aWins ? va : vb)} against {fmt(aWins ? vb : va)} for {aWins ? nb : na}.</> });
+  };
+  pair('U', A.U, B.U, 2, (n) => `${n.toFixed(2)} W/m²K`, true, 'U-value', 'better insulated');
+  pair('decr', A.decr, B.decr, 2, (n) => n.toFixed(2), true, 'Decrement factor', 'steadier');
+  pair('lag', A.lag, B.lag, 1, (n) => `${n.toFixed(1)} h`, false, 'Decrement delay', 'slower to pass heat on');
+  pair('in', A.gain, B.gain, 0, (n) => `${n.toFixed(0)} Wh/m²`, true, 'Heat into the room over the day', 'lower');
+  pair('out', A.loss, B.loss, 0, (n) => `${n.toFixed(0)} Wh/m²`, true, 'Heat out of the room over the day', 'lower');
+  pair('swing', A.timax - A.timin, B.timax - B.timin, 1, (n) => `${n.toFixed(1)} K`, true, 'Inner face temperature swing', 'steadier');
+  return (
+    <section className="card panel" aria-label="Written comparison">
+      <h2>In words</h2>
+      <ul className="stack-10">{rows.map((r) => <li key={r.key}>{r.text}</li>)}</ul>
+    </section>
+  );
 }
 
 export function ComparePage({ customStackups, setCustomStackups }: Props) {
@@ -53,16 +83,6 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
       slot,
       draft: { id: s.builtin ? undefined : s.id, name: s.builtin ? `${s.name} (copy)` : s.name, layers: s.layers, orient: s.orient },
     });
-  };
-
-  const addColumn = () => {
-    if (slots.length >= MAX_COMPARE) return;
-    const unused = library.find((s) => !slots.includes(s.id));
-    setSlots((prev) => [...prev, (unused ?? library[0]).id]);
-  };
-
-  const removeColumn = (slot: number) => {
-    setSlots((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== slot) : prev));
   };
 
   // Drives the "set the day" summary text; needs no wall, so no simulation.
@@ -142,7 +162,7 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
         <div className="section-head">
           <div>
             <h2>Heat moving through each wall</h2>
-            <p className="muted small">Pick a build-up for each column below. They all run under the one day set above. Press play or drag the clock.</p>
+            <p className="muted small">Pick two build-ups to compare. Both run under the one day set above. Press play or drag the clock.</p>
           </div>
           <Player frame={f} playing={playing} setPlaying={setPlaying} scrub={scrub} />
         </div>
@@ -170,11 +190,6 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
                       <svg width={14} height={14} viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4 12 12M12 4 4 12" fill="none" stroke="#a02828" strokeWidth={1.6} strokeLinecap="round" /></svg>
                     </button>
                   )}
-                  {slots.length > 1 && (
-                    <button type="button" className="icon-btn small" aria-label={`Remove column ${i + 1}`} onClick={() => removeColumn(i)}>
-                      <svg width={14} height={14} viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10" fill="none" stroke="#51606c" strokeWidth={1.6} strokeLinecap="round" /></svg>
-                    </button>
-                  )}
                 </div>
                 {r && (
                   <>
@@ -182,6 +197,8 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
                       <span><b className="mono">{r.res.sim.U.toFixed(2)}</b> W/m²K U-value</span>
                       <span><b className="mono">{r.res.sim.decr.toFixed(2)}</b> decrement</span>
                       <span><b className="mono">{r.res.sim.lag.toFixed(1)}</b> h delay</span>
+                      <span><b className="mono">{r.res.sim.gain.toFixed(0)}</b> Wh/m² into the room</span>
+                      <span><b className="mono">{r.res.sim.loss.toFixed(0)}</b> Wh/m² out of the room</span>
                       <span><b className="mono">{sgn(r.res.sim.gain - r.res.sim.loss, 0)}</b> Wh/m² net</span>
                       <span><b className="mono">{sgn(r.res.sim.qmin, 1)} to {sgn(r.res.sim.qmax, 1)}</b> W/m² range</span>
                     </div>
@@ -193,9 +210,6 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
           })}
         </div>
 
-        {slots.length < MAX_COMPARE && (
-          <button type="button" className="btn-link" onClick={addColumn}>+ Add a build-up to compare</button>
-        )}
       </section>
 
       {valid.length > 0 && (
@@ -204,6 +218,8 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
           {flowChart && <LineChart spec={flowChart} frame={f} />}
         </section>
       )}
+
+      {valid.length === 2 && <TextComparison a={valid[0]} b={valid[1]} />}
 
       {modal && (
         <StackupModal

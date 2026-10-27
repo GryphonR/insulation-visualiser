@@ -1,209 +1,99 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MONTHS_FULL, PRESETS } from './engine/data';
-import { BUILTIN_STACKUPS, loadCustomStackups, loadScenario, saveCustomStackups, saveScenario } from './engine/library';
+import { useEffect, useState } from 'react';
+import { loadCustomStackups, saveCustomStackups } from './engine/library';
 import type { Stackup } from './engine/library';
-import { DEFAULT_SCENARIO, runScenario } from './engine/scenario';
-import type { Scenario } from './engine/scenario';
-import { N_FRAMES } from './engine/simulate';
-import { clamp, sgn } from './lib/util';
-import { BuildupSummary } from './ui/BuildupSummary';
+import { defaultHouse } from './engine/house-default';
+import { hasSavedProject, newProject } from './engine/house-scenarios';
+import { BuildupsPage } from './ui/BuildupsPage';
 import { ComparePage } from './ui/ComparePage';
-import { EnvironmentPanel } from './ui/EnvironmentPanel';
-import { HeatMap } from './ui/HeatMap';
-import { HouseWorkspace } from './ui/HouseWorkspace';
+import { EnergyPage, SitePage, StoreysPage, VentPage } from './ui/HouseSettings';
+import { HouseBills } from './ui/HouseBills';
+import { HouseHeating } from './ui/HouseHeating';
+import { HouseMoisture } from './ui/HouseMoisture';
+import { HouseReport } from './ui/HouseReport';
+import { HouseRuns } from './ui/HouseRuns';
+import { ChecksPage, FloorPage, GainsPage, OpeningsPage, SpacesPage } from './ui/HouseMore';
+import { HouseStart } from './ui/HouseStart';
+import { CompareAB, ScenariosPage } from './ui/HouseWorkspace';
 import { LearnPage } from './ui/LearnPage';
-import { LineChart } from './ui/LineChart';
-import { MoisturePage } from './ui/MoisturePage';
-import { Player } from './ui/Player';
-import { StackupModal } from './ui/StackupModal';
-import type { StackupDraft } from './ui/StackupModal';
-import { Stats } from './ui/Stats';
-import { WallSection } from './ui/WallSection';
-import { buildCharts } from './ui/charts';
-import { useClock } from './ui/useClock';
-
-type Mode = 'single' | 'compare' | 'moisture' | 'house' | 'learn';
-
-const MODES: Mode[] = ['single', 'compare', 'moisture', 'house', 'learn'];
-// Hash routes (#/compare, #/learn): GitHub Pages can't rewrite deep links to index.html.
-const modeFromHash = (): Mode => MODES.find((m) => location.hash === `#/${m}`) ?? 'single';
+import { MaterialsPage } from './ui/MaterialsPage';
+import { PlanPage } from './ui/PlanPage';
+import { ResultsPage } from './ui/ResultsPage';
+import { RoomPage } from './ui/RoomPage';
+import { Shell } from './ui/Shell';
+import { WallPage } from './ui/WallPage';
+import { ProjectProvider, useProject } from './ui/project';
+import { go, useRoute } from './ui/route';
+import { sanitizeProject } from './engine/house-scenarios';
+import './ui/house.css';
+import './ui/shell.css';
 
 export default function App() {
-  const [mode, setModeState] = useState<Mode>(modeFromHash);
-  useEffect(() => {
-    const onHash = () => setModeState(modeFromHash());
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
-  }, []);
-  const setMode = (m: Mode) => {
-    location.hash = m === 'single' ? '' : `/${m}`;
-    setModeState(m);
-  };
-
   const [customStackups, setCustomStackups] = useState<Stackup[]>(() => loadCustomStackups());
   // Don't write back what we just loaded: if the stored JSON was unreadable, that would wipe it.
   const [loadedStackups] = useState(customStackups);
   useEffect(() => {
     if (customStackups !== loadedStackups) saveCustomStackups(customStackups);
   }, [customStackups, loadedStackups]);
-
-  const library = useMemo(() => [...BUILTIN_STACKUPS, ...customStackups], [customStackups]);
-
-  const idRef = useRef(100);
-  const nextId = useCallback(() => idRef.current++, []);
-  const mkLayers = useCallback(
-    (layers: Array<[string, number]>) => layers.map(([mat, t]) => ({ id: nextId(), mat, t })),
-    [nextId],
-  );
-
-  const [saved] = useState(loadScenario);
-  const [notice, setNotice] = useState(saved.dropped);
-  const [sc, setSc] = useState<Scenario>(() => saved.sc ?? ({
-    ...DEFAULT_SCENARIO,
-    layers: PRESETS[0].layers.map(([mat, t], i) => ({ id: i + 1, mat, t })),
-  }));
-  useEffect(() => saveScenario(sc), [sc]);
-
-  const { frame, playing, setPlaying, scrub } = useClock(90); // 15:00
-
-  const res = useMemo(() => runScenario(sc), [sc]);
-  const charts = useMemo(() => buildCharts(res), [res]);
-  const f = clamp(frame, 0, N_FRAMES - 1);
-  const fr = res.sim.fr;
-  const set = useCallback((patch: Partial<Scenario>) => setSc((s) => ({ ...s, ...patch })), []);
-
-  const [editing, setEditing] = useState(false);
-  const applyDraft = (draft: StackupDraft) => {
-    setSc((s) => ({ ...s, layers: mkLayers(draft.layers), orient: draft.orient ?? (s.orient === 'roof' ? 'W' : s.orient) }));
-    setEditing(false);
-  };
-  const saveAndApply = (draft: StackupDraft) => {
-    const id = `custom:${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setCustomStackups((prev) => [...prev, { id, name: draft.name, layers: draft.layers, orient: draft.orient }]);
-    applyDraft(draft);
-  };
-
-  const pills = [
-    { label: 'Sun on surface', value: `${Math.round(fr.I[f])} W/m²` },
-    { label: 'Air', value: `${fr.tair[f].toFixed(1)} °C` },
-    { label: 'Sol-air', value: `${fr.tsa[f].toFixed(1)} °C` },
-    { label: 'Inner face', value: `${fr.tsIn[f].toFixed(1)} °C` },
-    { label: 'Heat flow to room', value: `${sgn(fr.q[f], 1)} W/m²` },
-  ];
+  const [firstVisit] = useState(() => !hasSavedProject());
 
   return (
-    <div className="page">
-      <div className="wrap">
-        <header className="head">
-          <div>
-            <h1>Insulation Visualiser</h1>
-            <p className="lede">
-              Visualise heat transfer and the effects of insulation and thermal mass in wall and roof build-ups.
-            </p>
-          </div>
-          <div className="head-right">
-            <button type="button" aria-pressed={mode === 'learn'} className={mode === 'learn' ? 'chip on' : 'chip'} onClick={() => setMode('learn')}>Learn</button>
-          </div>
-        </header>
-
-        {notice.length > 0 && (
-          <aside role="status" className="callout">
-            <div className="eyebrow">Your saved wall was changed</div>
-            {notice.map((n, i) => <p key={i}>{n}</p>)}
-            {!saved.sc && <p>Because no valid layers were left, the default build-up has been loaded instead.</p>}
-            <p><button type="button" className="btn-secondary" onClick={() => setNotice([])}>Dismiss</button></p>
-          </aside>
-        )}
-
-        <div className="tabs-row">
-          <div role="tablist" aria-label="View" className="chips">
-            <button type="button" role="tab" aria-selected={mode === 'single'} className={mode === 'single' ? 'chip on' : 'chip'} onClick={() => setMode('single')}>Single wall</button>
-            <button type="button" role="tab" aria-selected={mode === 'compare'} className={mode === 'compare' ? 'chip on' : 'chip'} onClick={() => setMode('compare')}>Compare build-ups</button>
-            <button type="button" role="tab" aria-selected={mode === 'moisture'} className={mode === 'moisture' ? 'chip on' : 'chip'} onClick={() => setMode('moisture')}>Moisture over a year</button>
-            <button type="button" role="tab" aria-selected={mode === 'house'} className={mode === 'house' ? 'chip on' : 'chip'} onClick={() => setMode('house')}>Whole house</button>
-          </div>
-          {mode === 'single' && (
-            <p className="mono small muted">
-              {res.loc.name} · {MONTHS_FULL[sc.month]} · {res.weather.name} · {res.orient.name}
-            </p>
-          )}
-        </div>
-
-        {mode === 'learn' ? (
-          <LearnPage onOpenSimulator={() => setMode('single')} />
-        ) : mode === 'house' ? (
-          <HouseWorkspace customStackups={customStackups} />
-        ) : mode === 'moisture' ? (
-          <MoisturePage customStackups={customStackups} setCustomStackups={setCustomStackups} />
-        ) : mode === 'compare' ? (
-          <ComparePage customStackups={customStackups} setCustomStackups={setCustomStackups} />
-        ) : (
-          <div className="cols">
-            <aside className="side">
-              <BuildupSummary layers={sc.layers} sim={res.sim} onEdit={() => setEditing(true)} />
-              <EnvironmentPanel sc={sc} params={res.params} solar={res.sim.solar} set={set} />
-            </aside>
-
-            <main className="main">
-              <Stats res={res} group="wall" />
-
-              <section className="card panel">
-                <div className="section-head">
-                  <div>
-                    <h2>Heat movement simulation</h2>
-                    <p className="muted small">Colour shows temperature in every slice of every layer, arrows show the heat flow. Press play or drag the clock.</p>
-                  </div>
-                  <Player frame={f} playing={playing} setPlaying={setPlaying} scrub={scrub} />
-                </div>
-
-
-                <Stats res={res} group="day" />
-                <div className="pills">
-                  {pills.map((p) => (
-                    <div key={p.label} className="pill"><span className="small muted">{p.label}</span><span className="mono">{p.value}</span></div>
-                  ))}
-                </div>
-
-                <WallSection res={res} frame={f} />
-
-                <div className="cbar">
-                  <span className="mono">{res.sim.tlo.toFixed(0)} °C</span>
-                  <div className="cbar-grad">
-                    <div className="cbar-room" style={{ left: '50%' }}>
-                      <span className="mono cbar-room-label">{res.sim.roomRef.toFixed(0)} °C room</span>
-                    </div>
-                  </div>
-                  <span className="mono">{res.sim.thi.toFixed(0)} °C</span>
-                </div>
-                <p className="small muted">
-                  Colour is anchored to the room's own temperature (marked on the scale): blue is always colder than the room, red always warmer, cream about the same — so the same colour means the same thing whichever scenario you compare.
-                  Arrows show the heat flow through each slice of the wall: pointing right means heading into the room, thicker means more. Full scale is {Math.round(res.sim.fmax)} W/m². Where arrows differ between layers, heat is being stored or released.
-                </p>
-              </section>
-
-              <section aria-label="Charts over 24 hours" className="charts">
-                {charts.map((c) => <LineChart key={c.title} spec={c} frame={f} />)}
-                <HeatMap res={res} frame={f} />
-              </section>
-            </main>
-          </div>
-        )}
-
-        <footer className="foot">
-          Model: one-dimensional transient conduction through uniform layers (implicit finite volume, 2-minute steps, repeated until the daily cycle settles). Outside is driven by sol-air temperature (air + absorbed sun, with a long-wave loss for roofs); indoor air is held constant unless the room is free-floating. Weather is a synthetic clear-sky-scaled day built from typical UK monthly means, not measured data. Thermal bridging, moisture, ventilated cavities and window gains in the fixed and scheduled modes are not modelled. Values are for teaching and early design, not compliance.
-        </footer>
-      </div>
-
-      {editing && (
-        <StackupModal
-          library={library}
-          title="Customize build-up"
-          initial={{ name: '', layers: sc.layers.map((l) => [l.mat, l.t]), orient: sc.orient === 'roof' ? 'roof' : undefined }}
-          onCancel={() => setEditing(false)}
-          onSave={saveAndApply}
-          onApply={applyDraft}
-        />
-      )}
-    </div>
+    <ProjectProvider customStackups={customStackups} setCustomStackups={setCustomStackups}>
+      <Routes firstVisit={firstVisit} />
+    </ProjectProvider>
   );
+}
+
+function Routes({ firstVisit }: { firstVisit: boolean }) {
+  const parts = useRoute();
+  const { house, active, ordered, project, setProject, setHouse, customStackups, setCustomStackups } = useProject();
+  const [started, setStarted] = useState(!firstVisit);
+  // No hash: a first visit starts a project; otherwise open the floor plan.
+  const route = parts[0] ?? (started ? 'plan' : 'start');
+  const arg = parts[1], arg2 = parts[2];
+  useEffect(() => { window.scrollTo(0, 0); }, [route, arg]);
+
+  let page;
+  switch (route) {
+    case 'start':
+      page = (
+        <HouseStart
+          onCancel={started ? () => go('plan') : undefined}
+          onDemo={() => { setProject(newProject(defaultHouse())); setStarted(true); go('plan'); }}
+          onCreate={(h) => {
+            if (started && !confirm('Replace the current project (all scenarios) with this new house? Undo can bring it back.')) return;
+            setProject(newProject(h)); setStarted(true); go('plan');
+          }} />
+      );
+      break;
+    case 'plan': page = <PlanPage key={arg ?? 'p'} selected={arg} />; break;
+    case 'room': page = <RoomPage key={`${arg}/${arg2 ?? ""}`} id={arg ?? ''} initialTab={arg2} />; break;
+    case 'site': page = <SitePage />; break;
+    case 'storeys': page = <StoreysPage />; break;
+    case 'vent': page = <VentPage />; break;
+    case 'buildups': page = <BuildupsPage key={arg ?? 'b'} selected={arg} />; break;
+    case 'materials': page = <MaterialsPage />; break;
+    case 'compare-buildups': page = <ComparePage customStackups={customStackups} setCustomStackups={setCustomStackups} />; break;
+    case 'wall': page = <WallPage buildupId={arg} />; break;
+    case 'heating': case 'emitters': case 'zones': case 'pipes':
+      page = <HouseHeating key={`${active.id}/${route}`} house={house} setHouse={setHouse} section={({ heating: 'system', emitters: 'emitters', zones: 'zones', pipes: 'pipes' } as const)[route]} />; break;
+    case 'floor': page = <FloorPage />; break;
+    case 'openings': page = <OpeningsPage />; break;
+    case 'spaces': page = <SpacesPage />; break;
+    case 'checks': page = <ChecksPage />; break;
+    case 'gains': page = <GainsPage />; break;
+    case 'results': page = <ResultsPage />; break;
+    case 'year': case 'conditions': page = <HouseRuns key={active.id} house={house} setHouse={setHouse} project={project} ordered={ordered} />; break;
+    case 'energy': page = <EnergyPage />; break;
+    case 'bills': page = <HouseBills key={active.id} house={house} setHouse={setHouse} />; break;
+    case 'moisture': page = <HouseMoisture key={active.id} house={house} />; break;
+    case 'report':
+      page = <HouseReport house={house} scenarioName={active.name} project={project}
+        onImport={(p) => { const q = sanitizeProject(p); if (q) setProject(q); else alert('That file has no usable scenarios.'); }} />;
+      break;
+    case 'scenarios': page = <ScenariosPage />; break;
+    case 'compare': page = <CompareAB />; break;
+    case 'learn': page = <LearnPage onOpenSimulator={() => go('plan')} />; break;
+    default: page = <PlanPage />;
+  }
+  return <Shell route={route}>{page}</Shell>;
 }

@@ -71,7 +71,7 @@ export function HousePlan({ house, storey, sel, setSel, fill, label, editOutline
         return es.flatMap((e) => {
           const ops = house.openings.filter((o) => o.room === r.id && (isPoly ? (o.edge ?? es.findIndex((x) => x.side === o.side)) === e.idx : o.side === e.side));
           return ops.map((o, i) => {
-            const L = e.len, c = (L * (i + 0.5)) / ops.length, half = Math.min(L / ops.length - 0.15, o.w) / 2;
+            const L = e.len, half = Math.min(L / ops.length - 0.15, o.w) / 2, c = o.t != null ? Math.max(half, Math.min(L - half, o.t)) : (L * (i + 0.5)) / ops.length;
             const a = to([e.a[0] + e.d[0] * (c - half), e.a[1] + e.d[1] * (c - half)]), z = to([e.a[0] + e.d[0] * (c + half), e.a[1] + e.d[1] * (c + half)]);
             const door = house.buildups.find((x) => x.id === o.buildup)?.kind === 'door';
             return <line key={o.id} x1={a[0]} y1={a[1]} x2={z[0]} y2={z[1]} className={door ? 'plan-door' : 'plan-win'} />;

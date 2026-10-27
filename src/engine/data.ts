@@ -170,3 +170,55 @@ export const MASSES = [
   { id: 'med', label: 'Medium (120)', c: 120 },
   { id: 'heavy', label: 'Heavy (250)', c: 250 },
 ];
+
+const CUSTOM_MATERIALS_KEY = 'insulation-visualiser.materials.v1';
+
+const regroup = () => {
+  MATERIAL_GROUPS.splice(0, MATERIAL_GROUPS.length, ...Object.keys(MATERIAL_CATEGORIES)
+    .map((cat) => ({ cat, label: MATERIAL_CATEGORIES[cat], items: MATERIALS.filter((m) => (m.cat ?? 'common') === cat) }))
+    .filter((g) => g.items.length > 0));
+};
+
+const validCustom = (m: Material) =>
+  !!m && typeof m.id === 'string' && typeof m.name === 'string' && Number.isFinite(m.rho) && Number.isFinite(m.cp) && ((m.k ?? 0) > 0 || (m.R ?? 0) > 0) && Number.isFinite(m.t);
+
+/** The materials the user added, always in the 'custom' group. */
+export const customMaterials = (): Material[] => MATERIALS.filter((m) => m.cat === 'custom');
+
+/** Add or replace a custom material and keep it for next time. */
+export function saveCustomMaterial(m: Material): void {
+  const i = MATERIALS.findIndex((x) => x.id === m.id);
+  const mat = { ...m, cat: 'custom' };
+  if (i >= 0) MATERIALS[i] = mat; else MATERIALS.push(mat);
+  MAT[mat.id] = mat;
+  MATERIAL_CATEGORIES.custom = 'Custom materials';
+  regroup();
+  persistCustom();
+}
+
+/** Remove a custom material. Callers check that no build-up still uses it. */
+export function deleteCustomMaterial(id: string): void {
+  const i = MATERIALS.findIndex((x) => x.id === id && x.cat === 'custom');
+  if (i < 0) return;
+  MATERIALS.splice(i, 1);
+  delete MAT[id];
+  regroup();
+  persistCustom();
+}
+
+function persistCustom() {
+  try {
+    localStorage.setItem(CUSTOM_MATERIALS_KEY, JSON.stringify(customMaterials()));
+  } catch {
+    // Private browsing or full storage: the materials just won't persist.
+  }
+}
+
+// Read at start-up, before any saved build-up is checked against the library.
+try {
+  const stored = JSON.parse(localStorage.getItem(CUSTOM_MATERIALS_KEY) ?? '[]');
+  if (Array.isArray(stored)) for (const m of stored) if (validCustom(m) && !MAT[m.id]) { const x = { ...m, cat: 'custom' }; MATERIALS.push(x); MAT[x.id] = x; }
+  if (customMaterials().length) { MATERIAL_CATEGORIES.custom = 'Custom materials'; regroup(); }
+} catch {
+  // Unreadable storage: start without custom materials.
+}
