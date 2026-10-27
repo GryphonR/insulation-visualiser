@@ -15,6 +15,7 @@ import { ChecksPage, FloorPage, GainsPage, OpeningsPage, SpacesPage } from './ui
 import { HouseStart } from './ui/HouseStart';
 import { CompareAB, ScenariosPage } from './ui/HouseWorkspace';
 import { LearnPage } from './ui/LearnPage';
+import { LibraryPage } from './ui/LibraryPage';
 import { MaterialsPage } from './ui/MaterialsPage';
 import { PlanPage } from './ui/PlanPage';
 import { ResultsPage } from './ui/ResultsPage';
@@ -47,8 +48,8 @@ function Routes({ firstVisit }: { firstVisit: boolean }) {
   const parts = useRoute();
   const { house, active, ordered, project, setProject, setHouse, customStackups, setCustomStackups } = useProject();
   const [started, setStarted] = useState(!firstVisit);
-  // No hash: a first visit starts a project; otherwise open the floor plan.
-  const route = parts[0] ?? (started ? 'plan' : 'start');
+  // No hash: a first visit starts a project; otherwise open the build-ups (step 1).
+  const route = parts[0] ?? (started ? 'buildups' : 'start');
   const arg = parts[1], arg2 = parts[2];
   useEffect(() => { window.scrollTo(0, 0); }, [route, arg]);
 
@@ -71,8 +72,9 @@ function Routes({ firstVisit }: { firstVisit: boolean }) {
     case 'storeys': page = <StoreysPage />; break;
     case 'vent': page = <VentPage />; break;
     case 'buildups': page = <BuildupsPage key={arg ?? 'b'} selected={arg} />; break;
+    case 'library': page = <LibraryPage />; break;
     case 'materials': page = <MaterialsPage />; break;
-    case 'compare-buildups': page = <ComparePage customStackups={customStackups} setCustomStackups={setCustomStackups} />; break;
+    case 'compare-buildups': page = <ComparePage key={`${arg}/${arg2}`} initial={arg && arg2 ? [arg, arg2] : undefined} customStackups={customStackups} setCustomStackups={setCustomStackups} />; break;
     case 'wall': page = <WallPage buildupId={arg} />; break;
     case 'heating': case 'emitters': case 'zones': case 'pipes':
       page = <HouseHeating key={`${active.id}/${route}`} house={house} setHouse={setHouse} section={({ heating: 'system', emitters: 'emitters', zones: 'zones', pipes: 'pipes' } as const)[route]} />; break;

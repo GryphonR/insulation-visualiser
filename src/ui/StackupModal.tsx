@@ -12,6 +12,8 @@ export interface StackupDraft {
   name: string;
   layers: Array<[string, number]>;
   orient?: string;
+  /** Set on a new project build-up: the modal then asks for the kind. */
+  kind?: 'wall' | 'floor' | 'roof';
 }
 
 interface Props {
@@ -30,6 +32,7 @@ export function StackupModal({ initial, library, title, onCancel, onSave, onAppl
   const [name, setName] = useState(initial?.name ?? '');
   const [layers, setLayers] = useState<LayerInput[]>(() => layersFromTuples(initial?.layers ?? [['pir', 100]]));
   const [isRoof, setIsRoof] = useState(initial?.orient === 'roof');
+  const [kind, setKind] = useState(initial?.kind);
 
   // Decrement factor and delay barely depend on weather, so a typical summer day with a steady room is enough here.
   const summary = useMemo(() => {
@@ -53,6 +56,7 @@ export function StackupModal({ initial, library, title, onCancel, onSave, onAppl
       name: trimmed,
       layers: layers.map((l) => [l.mat, l.t]),
       orient: isRoof ? 'roof' : undefined,
+      kind,
     });
   };
 
@@ -62,7 +66,7 @@ export function StackupModal({ initial, library, title, onCancel, onSave, onAppl
         <div className="modal-head">
           <h2>{title}</h2>
           <button type="button" className="icon-btn" aria-label="Close" onClick={onCancel}>
-            <svg width={16} height={16} viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4 12 12M12 4 4 12" fill="none" stroke="#14212b" strokeWidth={1.8} strokeLinecap="round" /></svg>
+            <svg width={16} height={16} viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4 12 12M12 4 4 12" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" /></svg>
           </button>
         </div>
 
@@ -77,10 +81,18 @@ export function StackupModal({ initial, library, title, onCancel, onSave, onAppl
             />
           </Field>
 
-          <label className="roof-check">
-            <input type="checkbox" checked={isRoof} onChange={(e) => setIsRoof(e.target.checked)} />
-            {onApply ? 'This is a roof build-up (modelled as a flat roof)' : 'This is a roof build-up (always compared as a flat roof, whatever orientation is set)'}
-          </label>
+          {kind ? (
+            <Field label="Kind">
+              <select className="select" value={kind} onChange={(e) => { const k = e.target.value as typeof kind; setKind(k); setIsRoof(k === 'roof'); }}>
+                <option value="wall">Wall</option><option value="floor">Floor</option><option value="roof">Roof / ceiling</option>
+              </select>
+            </Field>
+          ) : (
+            <label className="roof-check">
+              <input type="checkbox" checked={isRoof} onChange={(e) => setIsRoof(e.target.checked)} />
+              {onApply ? 'This is a roof build-up (modelled as a flat roof)' : 'This is a roof build-up (always compared as a flat roof, whatever orientation is set)'}
+            </label>
+          )}
 
           <Builder layers={layers} onChange={setLayers} library={library} onPreset={onPreset} nextId={nextId} />
         </div>

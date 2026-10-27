@@ -221,7 +221,11 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
           {sel.room && <button type="button" className="btn-secondary" onClick={() => pick(roomEdges(house.rooms.find((r) => r.id === sel.room)!).map((e) => ({ room: sel.room, edge: e.idx })))}>This room's walls</button>}
         </div>
         <label className="hf"><span className="eyebrow">Wall build-up</span>
-          <BuildupSelect label="Wall build-up" value={common(ids)} options={ofKind(house, 'wall')} onPick={(id) => upd((h) => { info.forEach((i) => wallKeys(h, i.w.room, i.w.edge, storey).forEach((k) => { h.faceBuildup[k] = id; })); })} />
+          <BuildupSelect label="Wall build-up" value={common(ids)} options={ofKind(house, 'wall')} onPick={(id) => upd((h) => {
+            info.forEach((i) => wallKeys(h, i.w.room, i.w.edge, storey).forEach((k) => { h.faceBuildup[k] = id; }));
+            // The last pick becomes what the next wall drawn starts with.
+            h.defaults[info.some((i) => i.outside) ? 'extWall' : 'intWall'] = id;
+          })} />
         </label>
         {Us.length > 0 && <p className="small">U-value {Us.length && Math.min(...Us) === Math.max(...Us) ? fmt(Us[0], 2) : `${fmt(Math.min(...Us), 2)}–${fmt(Math.max(...Us), 2)}`} W/m²K</p>}
         <div className="chips" role="group" aria-label="Other side of the wall">

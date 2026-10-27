@@ -85,7 +85,7 @@ export function MaterialPickerModal({ value, title, onSelect, onClose, swapFrom 
         <div className="modal-head">
           <h2>{title}</h2>
           <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
-            <svg width={16} height={16} viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4 12 12M12 4 4 12" fill="none" stroke="#14212b" strokeWidth={1.8} strokeLinecap="round" /></svg>
+            <svg width={16} height={16} viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4 12 12M12 4 4 12" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" /></svg>
           </button>
         </div>
 

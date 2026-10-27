@@ -6,6 +6,8 @@ import type { Scenario } from '../engine/scenario';
 import { clamp, sgn } from '../lib/util';
 import { buildChart } from './charts';
 import { EnvironmentPanel } from './EnvironmentPanel';
+import { projectDay } from './projectSim';
+import { useProject } from './project';
 import { LineChart } from './LineChart';
 import { Player } from './Player';
 import { StackupModal } from './StackupModal';
@@ -54,16 +56,20 @@ function TextComparison({ a, b }: { a: Result; b: Result }) {
   );
 }
 
-export function ComparePage({ customStackups, setCustomStackups }: Props) {
+export function ComparePage({ customStackups, setCustomStackups, initial }: Props & { initial?: string[] }) {
   const library = useMemo(() => [...BUILTIN_STACKUPS, ...customStackups], [customStackups]);
   const findStackup = (id: string) => library.find((s) => s.id === id);
 
   const [slots, setSlots] = useState<string[]>(() => {
     const ids = new Set(library.map((s) => s.id));
+    // Arriving from the library's tick boxes: those two, if both still exist.
+    if (initial?.length === 2 && initial.every((id) => ids.has(id))) return initial;
     const def = DEFAULT_SLOTS.filter((id) => ids.has(id));
     return def.length ? def : library.slice(0, 2).map((s) => s.id);
   });
-  const [env, setEnv] = useState<Scenario>(DEFAULT_SCENARIO);
+  const { res: houseRes } = useProject();
+  const proj = useMemo(() => projectDay(houseRes), [houseRes]);
+  const [env, setEnv] = useState<Scenario>(() => ({ ...DEFAULT_SCENARIO, ...proj?.patch }));
   const [modal, setModal] = useState<null | { draft?: StackupDraft; slot: number | null }>(null);
   const [confirmDelete, setConfirmDelete] = useState<null | { stackup: Stackup; slot: number }>(null);
   const { frame, playing, setPlaying, scrub } = useClock();
@@ -156,7 +162,7 @@ export function ComparePage({ customStackups, setCustomStackups }: Props) {
 
   return (
     <div className="compare-page">
-      <EnvironmentPanel sc={env} params={day.params} solar={day.solar} set={set} wide />
+      <EnvironmentPanel sc={env} params={day.params} solar={day.solar} set={set} wide project={proj} />
 
       <section className="card panel">
         <div className="section-head">

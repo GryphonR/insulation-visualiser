@@ -55,6 +55,7 @@
 .node { display: flex; justify-content: space-between; gap: 12px; text-align: left; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: #fff; cursor: pointer; color: var(--ink); font: inherit; }
 .node.on { border-color: #c2410c; box-shadow: inset 3px 0 0 #c2410c; background: #fdf6f0; }
 .node .mono { text-align: right; white-space: nowrap; }
+.h-table.sticky-head th { position: sticky; top: 0; z-index: 1; background: #fff; }
 .h-table th.hl, .h-table td.hl { background: #fdf3ea; }
 .h-table tr.off td { color: var(--muted); text-decoration: line-through; }
 .h-table tr.inh td { background: #f6f7f8; }
@@ -195,3 +196,7 @@ svg.draw .vx.moving { fill: #c2410c; }
 .layer-storey .thk-input, .layer-band .thk-input { width: 64px; }
 .draw-snap { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--line-strong); }
 .draw-snap .select { min-height: 32px; margin-left: 4px; }
+
+.tiles-center { text-align: center; }
+.tiles-center .tile { align-items: center; }
+.tiles-center .tile-value { justify-content: center; }

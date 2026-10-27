@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
-import { BUILTIN_STACKUPS } from '../engine/library';
-import { MAT, MATERIAL_GROUPS } from '../engine/data';
-import { GLAZING_LIBRARY, buildupU } from '../engine/house';
-import type { Buildup, BuildupKind, DefaultKey } from '../engine/house';
+import { BUILTIN_STACKUPS, layersFromTuples } from '../engine/library';
+import { DEFAULT_SCENARIO, runScenario } from '../engine/scenario';
+import { MAT } from '../engine/data';
+import { buildupU } from '../engine/house';
+import type { Buildup, BuildupKind } from '../engine/house';
+import { AddBuildupModal } from './AddBuildupModal';
 import { Card, Num, fmt, uid } from './hform';
 import { useProject } from './project';
 import { href } from './route';
@@ -11,11 +13,6 @@ import type { StackupDraft } from './StackupModal';
 
 const KIND_LABEL: Record<BuildupKind, string> = { wall: 'Wall', floor: 'Floor', roof: 'Roof / ceiling', glazing: 'Glazing', door: 'Door' };
 const KIND_GROUP: Record<BuildupKind, string> = { wall: 'Walls', floor: 'Floors', roof: 'Roofs', glazing: 'Glazing', door: 'Doors' };
-const DEFAULT_LABEL: Record<DefaultKey, [string, BuildupKind[]]> = {
-  extWall: ['Outside walls', ['wall']], intWall: ['Internal walls', ['wall']], groundFloor: ['Ground floors', ['floor']], intFloor: ['Floors between storeys', ['floor']],
-  loftCeiling: ['Ceilings to loft', ['roof', 'floor']], loftRoof: ['Loft roof', ['roof']], flatRoof: ['Flat roofs', ['roof']], exposedFloor: ['Exposed floors', ['floor']],
-  slope: ['Sloping ceilings', ['roof']], knee: ['Knee walls', ['wall']], dormerWall: ['Dormer fronts & cheeks', ['wall']], dormerRoof: ['Dormer roofs', ['roof']],
-};
 const layerR = (m: string, t: number) => { const x = MAT[m]; return !x ? 0 : x.R ?? (x.k ? t / 1000 / x.k : 0); };
 
 /** Board 2: the project's build-up library. Edits here change every face that uses the build-up. */
@@ -25,6 +22,9 @@ export function BuildupsPage({ selected }: { selected?: string }) {
   const [kind, setKind] = useState<BuildupKind | 'all'>('all');
   const [sel, setSel] = useState(selected && house.buildups.some((b) => b.id === selected) ? selected : house.buildups[0]?.id ?? '');
   const [editing, setEditing] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [hov, setHov] = useState<number | null>(null);
   const library = useMemo(() => [...BUILTIN_STACKUPS, ...customStackups], [customStackups]);
   const b = house.buildups.find((x) => x.id === sel);
 
@@ -40,27 +40,34 @@ export function BuildupsPage({ selected }: { selected?: string }) {
     return m;
   }, [res]);
   const usedCount = (id: string) => [...(used.get(id)?.values() ?? [])].reduce((a, s) => a + s.size, 0);
-  const isUsed = (id: string) => Object.values(house.defaults).includes(id) || Object.values(house.faceBuildup).includes(id) || house.openings.some((o) => o.buildup === id);
+  // "Used" means some face, opening or zone really has it, the same test as the "not used" label in the list.
+  const isUsed = (id: string) => usedCount(id) > 0 || house.openings.some((o) => o.buildup === id) || !!house.zones?.some((z) => z.buildup === id);
 
   const set = (patch: Partial<Buildup>) => upd((h) => { const x = h.buildups.find((y) => y.id === sel); if (x) Object.assign(x, patch); });
-  const setLayer = (i: number, fn: (l: [string, number]) => [string, number] | null) => upd((h) => {
-    const x = h.buildups.find((y) => y.id === sel);
-    if (!x) return;
-    const n = fn(x.layers[i]);
-    if (n) x.layers[i] = n; else x.layers.splice(i, 1);
-  });
-  const move = (i: number, d: number) => upd((h) => { const x = h.buildups.find((y) => y.id === sel); if (x && x.layers[i + d]) [x.layers[i], x.layers[i + d]] = [x.layers[i + d], x.layers[i]]; });
   const duplicate = () => {
     if (!b) return;
     const id = uid('b');
     upd((h) => { h.buildups.push({ ...structuredClone(b), id, name: `${b.name} (copy)` }); });
     setSel(id);
   };
-  const remove = () => {
-    if (!b || isUsed(b.id)) return;
-    upd((h) => { h.buildups = h.buildups.filter((x) => x.id !== b.id); });
-    setSel(house.buildups.find((x) => x.id !== b.id)?.id ?? '');
+  /** Drops build-ups; a default that pointed at one moves to another of the same kind, and one with no stand-in stays. */
+  const drop = (ids: string[]) => {
+    const gone = new Set(ids);
+    upd((h) => {
+      for (const k of Object.keys(h.defaults) as Array<keyof typeof h.defaults>) {
+        const cur = h.buildups.find((x) => x.id === h.defaults[k]);
+        if (!cur || !gone.has(cur.id)) continue;
+        const alt = h.buildups.find((x) => !gone.has(x.id) && x.kind === cur.kind);
+        if (alt) h.defaults[k] = alt.id; else gone.delete(cur.id);
+      }
+      h.buildups = h.buildups.filter((x) => !gone.has(x.id));
+      for (const k of Object.keys(h.faceBuildup)) if (gone.has(h.faceBuildup[k])) delete h.faceBuildup[k];
+    });
+    setSel((s) => (gone.has(s) ? house.buildups.find((x) => !gone.has(x.id))?.id ?? '' : s));
   };
+  const remove = () => b && !isUsed(b.id) && drop([b.id]);
+  const unused = house.buildups.filter((x) => !isUsed(x.id));
+  const removeUnused = () => drop(unused.map((x) => x.id));
   const applyLayers = (draft: StackupDraft) => {
     set({ layers: draft.layers, ...(draft.name.trim() ? { name: draft.name.trim() } : {}) });
     setEditing(false);
@@ -70,14 +77,23 @@ export function BuildupsPage({ selected }: { selected?: string }) {
   const groups = [...new Set(shown.map((x) => x.kind))];
   const thick = b ? b.layers.reduce((a, [, t]) => a + t, 0) : 0;
   const R = b ? 1 / buildupU(b) : 0;
+  // Same typical-day run the layer editor uses: decrement and delay barely depend on weather.
+  const dyn = useMemo(() => {
+    if (!b || b.layers.length === 0) return null;
+    const { sim } = runScenario({ ...DEFAULT_SCENARIO, orient: b.kind === 'roof' ? 'roof' : DEFAULT_SCENARIO.orient, layers: layersFromTuples(b.layers) });
+    return { decr: sim.decr, lag: sim.lag };
+  }, [b]);
   const whereUsed = b ? [...(used.get(b.id)?.entries() ?? [])] : [];
-  const defaultsUsing = b ? (Object.keys(DEFAULT_LABEL) as DefaultKey[]).filter((k) => house.defaults[k] === b.id).map((k) => DEFAULT_LABEL[k][0]) : [];
 
   return (
     <>
       <div className="lib">
         <aside className="lib-list">
           <div className="filters">
+            <div>
+              <div className="eyebrow">This project's build-ups</div>
+              <p className="small muted" style={{ margin: '2px 0 0' }}>Only these can be picked for walls, floors and roofs. Add presets or create your own at the bottom.</p>
+            </div>
             <input className="srch" aria-label="Search build-ups" placeholder="Search build-ups" value={q} onChange={(e) => setQ(e.target.value)} />
             <div className="chips">
               {(['all', 'wall', 'floor', 'roof', 'glazing', 'door'] as const).map((k) => (
@@ -100,31 +116,8 @@ export function BuildupsPage({ selected }: { selected?: string }) {
             {shown.length === 0 && <p className="small muted" style={{ padding: 12 }}>No build-ups match.</p>}
           </div>
           <div style={{ padding: 12, borderTop: '1px solid var(--line-strong)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <label className="hf"><span className="eyebrow">Add from the wall and roof presets</span>
-              <select className="select" value="" onChange={(e) => {
-                const s = library.find((x) => x.id === e.target.value);
-                if (!s) return;
-                const id = uid('b');
-                upd((h) => { h.buildups.push({ id, name: s.name, kind: s.orient === 'roof' ? 'roof' : 'wall', layers: s.layers.map(([m, t]) => [m, t]) }); });
-                setSel(id);
-              }}>
-                <option value="">Choose…</option>
-                {library.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </label>
-            <label className="hf"><span className="eyebrow">Add glazing or a door</span>
-              <select className="select" value="" onChange={(e) => {
-                const i = Number(e.target.value), id = uid('b');
-                if (e.target.value === 'door') upd((h) => { h.buildups.push({ id, name: 'New door', kind: 'door', layers: [], u: 1.8 }); });
-                else if (GLAZING_LIBRARY[i]) upd((h) => { h.buildups.push({ id, kind: 'glazing', layers: [], ...GLAZING_LIBRARY[i] }); });
-                else return;
-                setSel(id);
-              }}>
-                <option value="">Choose…</option>
-                {GLAZING_LIBRARY.map((x, i) => <option key={x.name} value={i}>{x.name} (U {x.u}, g {x.g})</option>)}
-                <option value="door">External door (U 1.8)</option>
-              </select>
-            </label>
+            <button type="button" className="btn-primary" onClick={() => setAdding(true)}>+ Add build-up to project</button>
+            <button type="button" className="btn-secondary" disabled={unused.length === 0} onClick={removeUnused}>Remove {unused.length || 'all'} unused</button>
           </div>
         </aside>
 
@@ -137,7 +130,7 @@ export function BuildupsPage({ selected }: { selected?: string }) {
               </div>
               <div className="chips">
                 <button type="button" className="btn-secondary" onClick={duplicate}>Duplicate</button>
-                <button type="button" className="btn-secondary" disabled={isUsed(b.id)} title={isUsed(b.id) ? 'In use: reassign its faces first' : undefined} onClick={remove}>Delete</button>
+                <button type="button" className="btn-secondary" disabled={isUsed(b.id)} title={isUsed(b.id) ? 'In use: reassign its faces first' : undefined} onClick={remove}>Remove</button>
                 {b.layers.length > 0 && <a className="btn-primary as-btn" href={href('wall', b.id)}>Simulate ›</a>}
               </div>
             </div>
@@ -145,16 +138,15 @@ export function BuildupsPage({ selected }: { selected?: string }) {
             <div className="kpis">
               <div className="kpi"><span className="eb">U-value</span><span className="v">{fmt(buildupU(b), 2)}</span><span className="small muted">W/m²K{b.u == null ? ` · R ${fmt(R, 2)}` : ' · fixed'}</span></div>
               {b.layers.length > 0 && <div className="kpi"><span className="eb">Thickness</span><span className="v">{fmt(thick, 1)}</span><span className="small muted">mm</span></div>}
-              <div className="kpi"><span className="eb">Kind</span>
-                <select className="select" value={b.kind} aria-label="Kind" onChange={(e) => set({ kind: e.target.value as BuildupKind })}>
-                  {(Object.keys(KIND_LABEL) as BuildupKind[]).map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
-                </select>
-                {b.kind === 'floor' && (
+              {dyn && <div className="kpi"><span className="eb">Decrement factor</span><span className="v">{fmt(dyn.decr, 2)}</span><span className="small muted">share of outside swing reaching inside</span></div>}
+              {dyn && <div className="kpi"><span className="eb">Decrement delay</span><span className="v">{fmt(dyn.lag, 1)}</span><span className="small muted">hours</span></div>}
+              {b.kind === 'floor' && (
+                <div className="kpi"><span className="eb">Ground floor type</span>
                   <select className="select" value={b.floorType ?? 'solid'} aria-label="Ground floor type" onChange={(e) => set({ floorType: e.target.value as Buildup['floorType'] })}>
-                    <option value="solid">on the ground: solid slab</option><option value="suspended">on the ground: suspended timber</option>
+                    <option value="solid">solid slab</option><option value="suspended">suspended timber</option>
                   </select>
-                )}
-              </div>
+                </div>
+              )}
             </div>
 
             {b.u != null ? (
@@ -168,47 +160,39 @@ export function BuildupsPage({ selected }: { selected?: string }) {
                 </div>
               </Card>
             ) : (
-              <Card title="Layers · outside → inside" right={<div className="chips"><button type="button" className="btn-secondary" onClick={() => upd((h) => { const x = h.buildups.find((y) => y.id === sel); if (x) x.layers.push(['pb', MAT.pb?.t ?? 12.5]); })}>+ Add layer</button><button type="button" className="btn-secondary" onClick={() => setEditing(true)}>Layer editor…</button></div>}>
+              <Card title="Layers · outside → inside" right={<button type="button" className="btn-secondary" onClick={() => setEditing(true)}>Edit</button>}>
                 <div className="h-table-wrap">
                   <table className="h-table">
-                    <thead><tr><th>#</th><th>Material</th><th className="n">mm</th><th className="n">λ</th><th className="n">R m²K/W</th><th className="n">ρ</th><th className="n">c</th><th /></tr></thead>
-                    <tbody>
+                    <thead><tr><th>#</th><th>Material</th><th className="n">mm</th><th className="n">λ</th><th className="n">R m²K/W</th><th className="n">ρ</th><th className="n">c</th></tr></thead>
+                    <tbody onMouseLeave={() => setHov(null)}>
                       {b.layers.map(([m, t], i) => {
                         const x = MAT[m];
                         return (
-                          <tr key={i}>
+                          <tr key={i} style={hov === i ? { background: '#fbe6d8' } : undefined} onMouseEnter={() => setHov(i)}>
                             <td><span className="mono small" style={{ display: 'inline-grid', placeItems: 'center', width: 22, height: 22, border: '1px solid var(--ink)', background: x?.col }}>{i + 1}</span></td>
-                            <td>
-                              <select className="h-sel" value={m} aria-label={`Layer ${i + 1} material`} onChange={(e) => { const n = MAT[e.target.value]; if (n) setLayer(i, () => [n.id, Math.min(n.max, Math.max(n.min, t))]); }}>
-                                {MATERIAL_GROUPS.map((g) => <optgroup key={g.cat} label={g.label}>{g.items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}</optgroup>)}
-                              </select>
-                            </td>
-                            <td className="n"><input type="number" className="thk-input" min={x?.min} max={x?.max} step={x?.step ?? 1} value={t} aria-label={`${x?.name ?? m} thickness`}
-                              onChange={(e) => { const v = Number(e.target.value); if (v > 0) setLayer(i, ([mm]) => [mm, v]); }} /></td>
+                            <td>{x?.name ?? m}</td>
+                            <td className="n mono">{t}</td>
                             <td className="n mono">{x?.k ?? '—'}</td>
                             <td className="n mono">{fmt(layerR(m, t), 2)}</td>
                             <td className="n mono">{x?.rho}</td>
                             <td className="n mono">{x?.cp}</td>
-                            <td className="h-acts">
-                              <button type="button" className="btn-link" disabled={i === 0} aria-label="Move out" onClick={() => move(i, -1)}>↑</button>
-                              <button type="button" className="btn-link" disabled={i === b.layers.length - 1} aria-label="Move in" onClick={() => move(i, 1)}>↓</button>
-                              <button type="button" className="btn-link" disabled={b.layers.length <= 1} aria-label={`Remove ${x?.name ?? m}`} onClick={() => setLayer(i, () => null)}>×</button>
-                            </td>
                           </tr>
                         );
                       })}
                     </tbody>
-                    <tfoot><tr><td colSpan={2}>Total</td><td className="n mono">{fmt(thick, 1)}</td><td /><td className="n mono">{fmt(R, 2)}</td><td colSpan={3} /></tr></tfoot>
                   </table>
                 </div>
-                <div className="layer-strip" style={{ height: 90 }} role="img" aria-label="Section through the build-up">
-                  {b.layers.map(([m, t], i) => <span key={i} title={`${MAT[m]?.name ?? m} ${t} mm`} style={{ flex: `${t} 1 0`, background: MAT[m]?.col }} />)}
+                <div className="layer-strip" style={{ height: 90 }} role="img" aria-label="Section through the build-up" onMouseLeave={() => setHov(null)}>
+                  {b.layers.map(([m, t], i) => (
+                    <span key={i} title={`${MAT[m]?.name ?? m} ${t} mm`} onMouseEnter={() => setHov(i)}
+                      style={{ flex: `${t} 1 0`, background: MAT[m]?.col, opacity: hov == null || hov === i ? 1 : 0.45, outline: hov === i ? '3px solid var(--ink)' : undefined, outlineOffset: -3 }} />
+                  ))}
                 </div>
               </Card>
             )}
 
-            <Card title="Where used" note={`${usedCount(b.id)} face${usedCount(b.id) === 1 ? '' : 's'}${defaultsUsing.length ? ` · default for ${defaultsUsing.join(', ').toLowerCase()}` : ''}`}>
-              {whereUsed.length === 0 && <p className="small muted">Not used by any face yet. Pick it for a face in the room view, or make it a default below.</p>}
+            <Card title="Where used" note={`${usedCount(b.id)} face${usedCount(b.id) === 1 ? '' : 's'}`}>
+              {whereUsed.length === 0 && <p className="small muted">Not used by any face yet. Pick it for a wall on the floor plan.</p>}
               {whereUsed.map(([room, tags]) => <div key={room} className="small"><b>{room}</b> · {[...tags].join(', ')}</div>)}
               <p className="small muted">Edits here change every face that uses this build-up. Duplicate it to try a change on one face without touching the rest.</p>
             </Card>
@@ -216,18 +200,20 @@ export function BuildupsPage({ selected }: { selected?: string }) {
         </main>
       </div>
 
-      <Card title="Defaults by face type" note="Applies to every face of that type unless a face picks its own in the room view.">
-        <div className="hf-row">
-          {(Object.keys(DEFAULT_LABEL) as DefaultKey[]).map((k) => (
-            <label key={k} className="hf"><span className="eyebrow">{DEFAULT_LABEL[k][0]}</span>
-              <select className="select" value={house.defaults[k]} onChange={(e) => upd((h) => { h.defaults[k] = e.target.value; })}>
-                {house.buildups.filter((x) => DEFAULT_LABEL[k][1].includes(x.kind)).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-              </select>
-            </label>
-          ))}
-        </div>
-      </Card>
-
+      {adding && (
+        <AddBuildupModal library={library} have={new Set(house.buildups.map((x) => x.name))} onClose={() => setAdding(false)}
+          onCustom={() => { setAdding(false); setCreating(true); }}
+          onAdd={(p) => { const id = uid('b'); upd((h) => { h.buildups.push({ ...structuredClone(p), id }); }); setSel(id); }} />
+      )}
+      {creating && (
+        <StackupModal library={library} title="New build-up" initial={{ name: '', layers: [['pir', 100]], kind: 'wall' }}
+          onCancel={() => setCreating(false)}
+          onSave={(d) => {
+            const id = uid('b');
+            upd((h) => { h.buildups.push({ id, name: d.name, kind: d.kind ?? 'wall', layers: d.layers }); });
+            setSel(id); setCreating(false);
+          }} />
+      )}
       {editing && b && (
         <StackupModal library={library} title={`Edit layers: ${b.name}`} initial={{ name: b.name, layers: b.layers, orient: b.kind === 'roof' ? 'roof' : undefined }}
           onCancel={() => setEditing(false)} onSave={applyLayers} onApply={applyLayers} />

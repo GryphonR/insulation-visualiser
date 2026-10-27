@@ -1,11 +1,12 @@
+import { Fragment } from 'react';
 import type { ReactNode } from 'react';
-import { href } from './route';
+import { go, href } from './route';
 import { useProject } from './project';
 import { fmt } from './hform';
 
 export const SECTIONS = [
-  { n: 1, id: 'model', label: 'Model', to: 'plan', routes: ['plan', 'room', 'site', 'storeys', 'vent', 'floor', 'openings', 'spaces', 'checks'] },
-  { n: 2, id: 'buildups', label: 'Build-ups', to: 'buildups', routes: ['buildups', 'materials', 'compare-buildups'] },
+  { n: 1, id: 'buildups', label: 'Build-ups', to: 'buildups', routes: ['buildups', 'library', 'materials', 'compare-buildups', 'wall'] },
+  { n: 2, id: 'model', label: 'Model', to: 'plan', routes: ['plan', 'room', 'site', 'storeys', 'vent', 'floor', 'openings', 'spaces', 'checks'] },
   { n: 3, id: 'heating', label: 'Heating', to: 'heating', routes: ['heating', 'emitters', 'zones', 'pipes'] },
   { n: 4, id: 'results', label: 'Results', to: 'results', routes: ['results', 'energy', 'bills', 'moisture', 'report', 'gains'] },
 ] as const;
@@ -13,7 +14,7 @@ export const SECTIONS = [
 const SUBNAV: Record<string, Array<[string, string]>> = {
   model: [['plan', 'Floor plan'], ['site', 'Site & climate'], ['storeys', 'Storeys & loft'], ['vent', 'Ventilation'], ['floor', 'Floors'], ['openings', 'Windows & doors'], ['spaces', 'Unheated spaces'], ['checks', 'Checks & history']],
   heating: [['heating', 'System & flow'], ['emitters', 'Emitters'], ['zones', 'Zones & UFH'], ['pipes', 'Pipework']],
-  buildups: [['buildups', 'Build-ups'], ['materials', 'Materials'], ['compare-buildups', 'Compare build-ups']],
+  buildups: [['buildups', 'Project'], ['materials', 'Materials'], ['library', 'Build-ups'], ['wall', 'Simulate'], ['compare-buildups', 'Compare build-ups']],
   results: [['results', 'Design day'], ['year', 'Typical year & test conditions'], ['gains', 'Occupancy & gains'], ['energy', 'Energy & cost'], ['bills', 'Check against bills'], ['moisture', 'Moisture & mould'], ['report', 'Report & export']],
   scenarios: [['scenarios', 'Scenarios'], ['compare', 'Compare A vs B']],
 };
@@ -30,8 +31,16 @@ function heatingIssues(res: ReturnType<typeof useProject>['res']): number {
   return res.heat.rooms.filter((r) => !r.has || r.cover < 0.995).length;
 }
 
+const MANAGE = '__manage';
+
+const Arrow = ({ flip }: { flip?: boolean }) => (
+  <svg width={18} height={18} viewBox="0 0 18 18" aria-hidden="true" style={flip ? { transform: 'scaleX(-1)' } : undefined}>
+    <path d="M7 4 3 8l4 4M3 8h7a5 5 0 0 1 0 10" transform="translate(0 -1)" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 export function Shell({ route, children }: { route: string; children: ReactNode }) {
-  const { project, active, house, res, ordered, depth, setProject, undo, redo, canUndo, canRedo } = useProject();
+  const { project, active, res, ordered, depth, setProject, undo, redo, canUndo, canRedo } = useProject();
   const sec = sectionOf(route);
   const sub = sec ? SUBNAV[sec] : undefined;
   const issues = heatingIssues(res);
@@ -39,8 +48,8 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
   return (
     <div className="shell">
       <header className="top">
-        <a className="brand" href={href('plan')}>
-          <span className="logo" aria-hidden="true"><span /><span /><span /></span>Insulation Visualiser
+        <a className="brand" href={href('buildups')}>
+          <span className="logo" aria-hidden="true"><span /><span /><span /></span>Insuliser
         </a>
         <div className="ctx">
           <span className="eb">Project</span>
@@ -48,8 +57,9 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
         </div>
         <label className="ctx">
           <span className="eb">Scenario</span>
-          <select className="ctx-sel" value={active.id} onChange={(e) => setActive(e.target.value)} aria-label="Scenario being edited">
+          <select className="ctx-sel" value={active.id} onChange={(e) => (e.target.value === MANAGE ? go('scenarios') : setActive(e.target.value))} aria-label="Scenario being edited">
             {ordered.map((s) => <option key={s.id} value={s.id}>{'· '.repeat(depth(s))}{s.name}</option>)}
+            <option value={MANAGE}>Manage scenarios…</option>
           </select>
         </label>
         <div className="ctx">
@@ -63,18 +73,21 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
               {s.id === 'heating' && issues > 0 && <span className="warn" aria-label={`${issues} issues`}>{issues}</span>}
             </a>
           ))}
+          <a href={href('learn')} className={route === 'learn' ? 'on' : ''} aria-current={route === 'learn' ? 'page' : undefined}>Learn</a>
         </nav>
         <div className="run">
-          <button type="button" className="btn-secondary" disabled={!canUndo} onClick={undo} title="Undo (Ctrl+Z)">Undo</button>
-          <button type="button" className="btn-secondary" disabled={!canRedo} onClick={redo} title="Redo (Ctrl+Y)">Redo</button>
-          <a className="btn-secondary as-btn" href={href('scenarios')}>Scenarios</a>
-          <a className="btn-secondary as-btn" href={href('learn')}>Learn</a>
+          <button type="button" className="btn-secondary icon-only" disabled={!canUndo} onClick={undo} title="Undo (Ctrl+Z)" aria-label="Undo"><Arrow /></button>
+          <button type="button" className="btn-secondary icon-only" disabled={!canRedo} onClick={redo} title="Redo (Ctrl+Y)" aria-label="Redo"><Arrow flip /></button>
         </div>
       </header>
       {sub && (
         <nav className="sub" aria-label="Section pages">
-          {sub.map(([id, label]) => <a key={id} href={href(id)} className={route === id ? 'on' : ''} aria-current={route === id ? 'page' : undefined}>{label}</a>)}
-          <span className="mono small muted sub-end">{house.name} · {fmt(res.peakW / 1000, 2)} kW · live: every edit recalculates</span>
+          {sub.map(([id, label], i) => (
+            <Fragment key={id}>
+              {sec === 'buildups' && i === 1 && <span className="sub-sep" aria-hidden="true" />}
+              <a href={href(id)} className={route === id ? 'on' : ''} aria-current={route === id ? 'page' : undefined}>{label}</a>
+            </Fragment>
+          ))}
         </nav>
       )}
       <div className="shell-body">{children}</div>

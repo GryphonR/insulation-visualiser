@@ -1,4 +1,4 @@
-# Insulation Visualiser
+# Insuliser
 
 Visualises how heat moves through a building's insulation build-up over a 24-hour UK day: layer temperatures, heat flow, decrement factor, time lag, and (optionally) a free-floating room driven by the weather.
 

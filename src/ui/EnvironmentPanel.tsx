@@ -13,6 +13,8 @@ interface Props {
   set: (patch: Partial<Scenario>) => void;
   /** Lays groups out as a wide responsive grid instead of a narrow stack (for the comparison screen). */
   wide?: boolean;
+  /** What the project says about this build-up's room, and how to apply it. */
+  project?: { note: string; patch: Partial<Scenario> } | null;
 }
 
 const HEAT_MODES: Array<{ id: HeatMode; label: string }> = [
@@ -23,7 +25,7 @@ const HEAT_MODES: Array<{ id: HeatMode; label: string }> = [
 
 const HOURS = Array.from({ length: 24 }, (_, i) => ({ id: i, name: `${pad2(i)}:00` }));
 
-export function EnvironmentPanel({ sc, params, solar, set, wide }: Props) {
+export function EnvironmentPanel({ sc, params, solar, set, wide, project }: Props) {
   const sel = (label: string, key: 'on1' | 'off1' | 'on2' | 'off2') => (
     <label className="field small muted">
       {label}
@@ -35,7 +37,13 @@ export function EnvironmentPanel({ sc, params, solar, set, wide }: Props) {
 
   return (
     <section className={wide ? 'card panel env-wide' : 'card panel'}>
-      <h2 className={wide ? 'env-span' : undefined}>Set the day</h2>
+      <div className={wide ? 'env-span env-head section-head' : 'env-head section-head'}>
+        <div>
+          <h2>Simulation settings</h2>
+          <p className="small muted">{project ? `Project: ${project.note}` : 'Nothing in the project uses this build-up yet, so these are generic settings.'}</p>
+        </div>
+        {project && (Object.keys(project.patch) as Array<keyof Scenario>).some((k) => sc[k] !== project.patch[k]) && <button type="button" className="btn-secondary" onClick={() => set(project.patch)}>Reset to project</button>}
+      </div>
 
       <Field label="Location">
         <select className="select" value={sc.loc} onChange={(e) => set({ loc: e.target.value })}>

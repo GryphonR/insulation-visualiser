@@ -8,6 +8,7 @@ import { N_FRAMES } from '../engine/simulate';
 import { clamp, sgn } from '../lib/util';
 import { BuildupSummary } from './BuildupSummary';
 import { EnvironmentPanel } from './EnvironmentPanel';
+import { projectDay } from './projectSim';
 import { HeatMap } from './HeatMap';
 import { LineChart } from './LineChart';
 import { MoisturePage } from './MoisturePage';
@@ -21,11 +22,12 @@ import { useClock } from './useClock';
 import { Crumbs } from './Shell';
 import { Chip } from './controls';
 import { useProject } from './project';
-import { href } from './route';
+import { AddBuildupModal } from './AddBuildupModal';
+import { go, href } from './route';
 
 /** The old single-wall tool, now the element level of the drill-down: reached from a face or a build-up, it simulates that build-up on its own. */
 export function WallPage({ buildupId }: { buildupId?: string }) {
-  const { house, customStackups, setCustomStackups } = useProject();
+  const { house, res: houseRes, customStackups, setCustomStackups } = useProject();
   const [view, setView] = useState<'flow' | 'moisture'>('flow');
   const library = useMemo(() => [...BUILTIN_STACKUPS, ...customStackups], [customStackups]);
 
@@ -45,13 +47,16 @@ export function WallPage({ buildupId }: { buildupId?: string }) {
   useEffect(() => saveScenario(sc), [sc]);
 
   // Coming from a face or the library: load that build-up's layers (and a roof's orientation) into the simulator.
-  const from = house.buildups.find((b) => b.id === buildupId);
+  const found = house.buildups.find((b) => b.id === buildupId);
+  const preset = found ? undefined : library.find((s) => s.id === buildupId);
+  const from = found ?? (preset && { id: preset.id, name: preset.name, layers: preset.layers, kind: preset.orient === 'roof' ? 'roof' : 'wall' });
   useEffect(() => {
     if (!from || !from.layers.length) return;
-    setSc((s) => ({ ...s, layers: mkLayers(from.layers), orient: from.kind === 'roof' ? 'roof' : s.orient === 'roof' ? 'W' : s.orient }));
+    setSc((s) => ({ ...s, layers: mkLayers(from.layers), orient: from.kind === 'roof' ? 'roof' : s.orient === 'roof' ? 'W' : s.orient, ...(found ? projectDay(houseRes, found.id, found.kind === 'roof')?.patch : undefined) }));
   }, [from?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { frame, playing, setPlaying, scrub } = useClock(90); // 15:00
+  const proj = useMemo(() => projectDay(houseRes, found?.id, found?.kind === 'roof'), [houseRes, found?.id, found?.kind]);
 
   const res = useMemo(() => runScenario(sc), [sc]);
   const charts = useMemo(() => buildCharts(res), [res]);
@@ -60,6 +65,13 @@ export function WallPage({ buildupId }: { buildupId?: string }) {
   const set = useCallback((patch: Partial<Scenario>) => setSc((s) => ({ ...s, ...patch })), []);
 
   const [editing, setEditing] = useState(false);
+  const [changing, setChanging] = useState(false);
+  // Project walls and roofs first, then library presets of other names.
+  const pool = useMemo(() => {
+    const mine = house.buildups.filter((b) => (b.kind === 'wall' || b.kind === 'roof') && b.layers.length > 0).map((b) => ({ id: b.id, name: b.name, layers: b.layers, orient: b.kind === 'roof' ? 'roof' : undefined }));
+    const names = new Set(mine.map((b) => b.name));
+    return [...mine, ...library.filter((s) => !names.has(s.name))];
+  }, [house.buildups, library]);
   const applyDraft = (draft: StackupDraft) => {
     setSc((s) => ({ ...s, layers: mkLayers(draft.layers), orient: draft.orient ?? (s.orient === 'roof' ? 'W' : s.orient) }));
     setEditing(false);
@@ -103,15 +115,16 @@ export function WallPage({ buildupId }: { buildupId?: string }) {
       {view === 'moisture' ? (
         <MoisturePage customStackups={customStackups} setCustomStackups={setCustomStackups} />
       ) : (
+    <>
+    <EnvironmentPanel wide sc={sc} params={res.params} solar={res.sim.solar} set={set} project={proj} />
+    <div className="tiles-center"><Stats res={res} group="wall" /></div>
     <div className="cols">
       <aside className="side">
+        <button type="button" className="btn-secondary" onClick={() => setChanging(true)}>Change build-up</button>
         <BuildupSummary layers={sc.layers} sim={res.sim} onEdit={() => setEditing(true)} />
-        <EnvironmentPanel sc={sc} params={res.params} solar={res.sim.solar} set={set} />
       </aside>
 
       <main className="main">
-        <Stats res={res} group="wall" />
-
         <section className="card panel">
           <div className="section-head">
             <div>
@@ -152,11 +165,15 @@ export function WallPage({ buildupId }: { buildupId?: string }) {
         </section>
       </main>
     </div>
-
+    </>
       )}
       <p className="foot">
         Model: one-dimensional transient conduction through uniform layers (implicit finite volume, 2-minute steps, repeated until the daily cycle settles). Outside is driven by sol-air temperature (air + absorbed sun, with a long-wave loss for roofs); indoor air is held constant unless the room is free-floating. Weather is a synthetic clear-sky-scaled day built from typical UK monthly means, not measured data. Thermal bridging, moisture, ventilated cavities and window gains in the fixed and scheduled modes are not modelled. Values are for teaching and early design, not compliance.
       </p>
+      {changing && (
+        <AddBuildupModal title="Change build-up" actionLabel="View" layeredOnly library={pool} have={new Set()} onClose={() => setChanging(false)}
+          onAdd={(_, key) => { setChanging(false); go('wall', key); }} />
+      )}
       {editing && (
         <StackupModal
           library={library}

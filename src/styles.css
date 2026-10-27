@@ -164,6 +164,8 @@ p { margin: 0; }
 .env-wide .months .chip { padding: 0; }
 .env-wide .slider { max-width: 420px; }
 .env-span { flex: 1 1 100% !important; }
+/* The dark header bleeds over the panel padding, so it needs the padding's width on top of 100%. */
+.env-wide > .section-head.env-span { flex: 0 0 calc(100% + 40px) !important; max-width: calc(100% + 40px); }
 .env-wide .env-span .stack-10 { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px 28px; }
 .env-wide .env-span .stack-10 > :not(.slider) { grid-column: 1 / -1; }
 
@@ -298,3 +300,5 @@ p { margin: 0; }
 .flux-flow { animation: flux-flow 1s linear infinite; }
 .flux-rev { animation-direction: reverse; }
 @media (prefers-reduced-motion: reduce) { .flux-flow { animation: none; } }
+/* Keep the settings header one height whether or not the reset button is showing. */
+.panel > .section-head.env-head:first-child { min-height: 62px; align-items: center; }

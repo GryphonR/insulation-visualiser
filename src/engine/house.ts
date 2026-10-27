@@ -25,8 +25,7 @@ export interface Buildup {
   /** Ground floors only: slab on ground (default) or suspended timber over a ventilated void. */
   floorType?: 'solid' | 'suspended';
   /** Glazing only: total solar transmittance of the glass, and the share of the opening that is frame. */
-  g?: number; frame?: number;
-}
+  g?: number; frame?: number;}
 
 /** Board 2c glazing library: typical U and g by type (SAP 10.2 Table 6b/6c style values). */
 export const GLAZING_LIBRARY: Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame'>> = [
@@ -37,6 +36,22 @@ export const GLAZING_LIBRARY: Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame'>>
   { name: 'Triple glazed', u: 0.9, g: 0.5, frame: 0.3 },
   { name: 'Secondary glazing over single', u: 2.4, g: 0.76, frame: 0.3 },
   { name: 'Rooflight, double glazed', u: 1.6, g: 0.6, frame: 0.2 },
+  { name: 'Single glazed, metal frame', u: 5.7, g: 0.85, frame: 0.2 },
+  { name: 'Double glazed, uPVC, argon', u: 1.6, g: 0.67, frame: 0.3 },
+  { name: 'Double glazed, aluminium', u: 1.8, g: 0.67, frame: 0.2 },
+  { name: 'Triple glazed, passive-house frame', u: 0.7, g: 0.5, frame: 0.3 },
+  { name: 'Glass block', u: 3.5, g: 0.6, frame: 0.1 },
+  { name: 'Patio / bifold doors, double glazed', u: 1.6, g: 0.63, frame: 0.25 },
+  { name: 'Conservatory glazing', u: 2.0, g: 0.7, frame: 0.2 },
+];
+/** Typical external doors (U-values from SAP Table 6e and manufacturer data). */
+export const DOOR_LIBRARY: Array<Pick<Buildup, 'name' | 'u'>> = [
+  { name: 'Solid timber door', u: 3.0 },
+  { name: 'Old part-glazed timber door', u: 3.7 },
+  { name: 'Insulated composite door', u: 1.4 },
+  { name: 'Uninsulated metal / steel door', u: 5.7 },
+  { name: 'Passive-house door', u: 0.8 },
+  { name: 'uPVC door, part-glazed', u: 2.2 },
 ];
 /** Shading on a window: overhangs, neighbouring buildings and trees, net curtains. Multiplies its solar gain. */
 export const SHADING: Record<string, [string, number]> = {

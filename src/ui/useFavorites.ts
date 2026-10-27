@@ -10,8 +10,10 @@ export function useFavorites() {
 
   const toggleMaterial = (id: string) =>
     setFav((f) => ({ ...f, materials: f.materials.includes(id) ? f.materials.filter((x) => x !== id) : [...f.materials, id] }));
+  const toggleBuildup = (key: string) =>
+    setFav((f) => ({ ...f, buildups: f.buildups.includes(key) ? f.buildups.filter((x) => x !== key) : [...f.buildups, key] }));
   const pushRecent = (id: string) =>
     setFav((f) => ({ ...f, recent: [id, ...f.recent.filter((x) => x !== id)].slice(0, RECENT_MAX) }));
 
-  return { fav, toggleMaterial, pushRecent };
+  return { fav, toggleMaterial, toggleBuildup, pushRecent };
 }
