@@ -1,28 +1,31 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { onStorey, roomEdges, roomPoly } from '../engine/house';
+import { maxWallGap, onStorey, pairKey, roomEdges, roomPoly } from '../engine/house';
 import type { House, Room } from '../engine/house';
 import { centroid, pointInPoly, polyArea, selfIntersects, sharedSpan } from '../engine/geom';
 import type { Pt } from '../engine/geom';
-import { addFloorZone, addLoopRect, addRoomAt, cutPlan, deleteRoom, emitterPose, flushDelta, innerDoorAt, insertCorner, isOutside, joinedCorners, moveCorners, nearestWall, openingCentre, problems, removeCorner, roomAt, splitRoom } from '../engine/house-draw';
+import { addFloorZone, addLoopRect, addRoomAt, cutPlan, deleteRoom, emitterPose, flushDelta, innerDoorAt, innerWallThickness, insertCorner, isOutside, joinedCorners, moveCorners, nearestWall, openingCentre, pieceAlign, pieceSeg, pieceThickness, problems, removeCorner, roomAt, splitRoom, wallPieces } from '../engine/house-draw';
+import type { WallPiece } from '../engine/house-draw';
 import { addEmitter } from './HouseHeating';
 import { planBounds } from './HousePlan';
 import { uid } from './hform';
 
 export type Tool = 'select' | 'box' | 'room' | 'split' | 'corner' | 'window' | 'door' | 'radiator' | 'ufh';
-export interface WallRef { room: string; edge: number }
+/** A wall of a room; with `span`, just the piece of it between two metre marks along the wall (`other` is the room it is shared with, if any). */
+export interface WallRef { room: string; edge: number; span?: [number, number]; other?: string; /** Gap to the other room's line, metres (inside walls). */ gap?: number }
 export interface Sel { room: string; walls: WallRef[]; item: { k: 'op' | 'em'; id: string } | null; /** A floor or ceiling zone. */ zone?: string; /** Several rooms picked with the selection box or Shift-click. */ group?: string[] }
 export const NO_SEL: Sel = { room: '', walls: [], item: null };
 
 export const GRID = 0.05;
-const S = 48, MAGNET = 0.15, ALIGN = 0.15, FLUSH = 0.2, RATIO = 0.625;
+const S = 48, MAGNET = 0.15, ALIGN = 0.15, FLUSH = 0.2;
 const near = (a: Pt, b: Pt, d = 0.011) => Math.hypot(a[0] - b[0], a[1] - b[1]) < d;
 interface View { x: number; y: number; w: number }
 
-/** A view of the whole plan with a margin, never smaller than 16 × 10 m so an empty plan has room to draw in. */
-function fit(h: House): View {
-  const b = planBounds(h), w = Math.max(16, b.maxX - b.minX + 5, (b.maxY - b.minY + 5) / RATIO);
-  return { x: ((b.minX + b.maxX) / 2 - w / 2) * S, y: ((b.minY + b.maxY) / 2 - (w * RATIO) / 2) * S, w: w * S };
+/** A view of the whole plan with a margin, never smaller than 16 m wide so an empty plan has room to draw in. `ratio` is the canvas height over its width. */
+function fit(h: House, ratio: number): View {
+  const pb = planBounds(h), b = { ...pb, maxX: Math.max(pb.maxX, h.guide?.w ?? 0), maxY: Math.max(pb.maxY, h.guide?.d ?? 0) };
+  const w = Math.max(16, b.maxX - b.minX + 5, (b.maxY - b.minY + 5) / ratio);
+  return { x: ((b.minX + b.maxX) / 2 - w / 2) * S, y: ((b.minY + b.maxY) / 2 - (w * ratio) / 2) * S, w: w * S };
 }
 
 type Drag =
@@ -55,8 +58,9 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const snap = (v: number) => Math.round(v / grid) * grid;
-  const [view, setView] = useState<View>(() => fit(house));
-  const [cw, setCw] = useState(900);
+  const [size, setSize] = useState({ w: 900, h: 560 });
+  const cw = size.w, ratio = size.h / size.w;
+  const [view, setView] = useState<View>(() => fit(house, 0.62));
   const [drag, setDrag] = useState<Drag | null>(null);
   const [draft, setDraft] = useState<Pt[]>([]);
   const [hover, setHover] = useState<Pt | null>(null);
@@ -76,12 +80,21 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   const u = view.w / cw, z = (n: number) => n * u;
   const to = (p: Pt): Pt => [p[0] * S, p[1] * S];
 
+  // The canvas fills its container, so follow its size; the first real size fits the plan to it.
   useLayoutEffect(() => {
-    const on = () => setCw(svgRef.current?.clientWidth || 900);
+    const el = svgRef.current;
+    if (!el) return;
+    let first = true;
+    const on = () => {
+      const w = el.clientWidth || 900, h = el.clientHeight || 560;
+      setSize({ w, h });
+      if (first) { first = false; setView(fit(house, h / w)); }
+    };
     on();
-    window.addEventListener('resize', on);
-    return () => window.removeEventListener('resize', on);
-  }, []);
+    const ro = new ResizeObserver(on);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // Ctrl + wheel zooms about the pointer (a plain wheel still scrolls the page).
   useEffect(() => {
     const svg = svgRef.current;
@@ -111,6 +124,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
    * A nearby corner of another room if one is close; else the grid point, set flush on nearby walls of other rooms, then lined up
    * square with the `anchors` (same x or y) and, from `diag`, at 45 degrees. Shift turns the wall and angle snaps off.
    */
+  /** The gap that leaves room for a default inside wall between two rooms. */
+  const innerT = innerWallThickness(house);
   const magnet = (p: Pt, skip?: Array<[string, number]>, anchors: Pt[] = [], diag?: Pt): Pt => {
     let best: Pt | null = null, bd = MAGNET;
     for (const r of [...onThis, ...ghost]) roomPoly(r).forEach((q, i) => {
@@ -120,7 +135,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     if (best) return best;
     let [x, y] = [snap(p[0]), snap(p[1])];
     if (loose.current) return [x, y];
-    const f = flushDelta([[x, y]], [...onThis.filter((r) => !skip?.some(([id]) => id === r.id)), ...ghost].map(roomPoly), ALIGN);
+    const f = flushDelta([[x, y]], [...onThis.filter((r) => !skip?.some(([id]) => id === r.id)), ...ghost].map(roomPoly), ALIGN, innerT);
     x += f[0]; y += f[1];
     for (const a of anchors) { if (Math.abs(x - a[0]) < ALIGN) x = a[0]; if (Math.abs(y - a[1]) < ALIGN) y = a[1]; }
     if (diag) {
@@ -140,6 +155,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         // A square wall also lines up with the corners of other rooms and of the storeys above and below.
         const at = d.base[ax] + s * n[ax];
         const near = [...onThis, ...ghost].flatMap((r) => roomPoly(r).filter((_, i) => !d.verts.some(([id, j]) => id === r.id && j === i)).map((q) => q[ax]))
+          .flatMap((c) => (innerT > 0.005 ? [c, c + innerT, c - innerT] : [c]))
           .filter((c) => Math.abs(c - at) < MAGNET).sort((x, y) => Math.abs(x - at) - Math.abs(y - at))[0];
         if (near !== undefined) s = (near - d.base[ax]) * n[ax];
       }
@@ -150,7 +166,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       // A whole room: on the grid, then pushed flush against the walls of the other rooms.
       const g: Pt = [snap(want[0]) - d.base[0], snap(want[1]) - d.base[1]], ids = d.verts.map(([r]) => r);
       if (loose.current) return g;
-      const f = flushDelta(onThis.filter((r) => ids.includes(r.id)).flatMap(roomPoly).map((q): Pt => [q[0] + g[0], q[1] + g[1]]), [...onThis.filter((r) => !ids.includes(r.id)), ...ghost].map(roomPoly), FLUSH);
+      const f = flushDelta(onThis.filter((r) => ids.includes(r.id)).flatMap(roomPoly).map((q): Pt => [q[0] + g[0], q[1] + g[1]]), [...onThis.filter((r) => !ids.includes(r.id)), ...ghost].map(roomPoly), FLUSH, innerT);
       return [g[0] + f[0], g[1] + f[1]];
     }
     const [id, i] = d.verts[0], poly = roomPoly(house.rooms.find((r) => r.id === id)!);
@@ -300,7 +316,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, [e.clientX, e.clientY]);
     if (pinch.current && pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()], f = pinch.current.d / (Math.hypot(a[0] - b[0], a[1] - b[1]) || 1), v = pinch.current.v, r = svgRef.current!.getBoundingClientRect();
-      const q = { x: v.x + (((a[0] + b[0]) / 2 - r.left) / r.width) * v.w, y: v.y + (((a[1] + b[1]) / 2 - r.top) / r.height) * v.w * RATIO };
+      const q = { x: v.x + (((a[0] + b[0]) / 2 - r.left) / r.width) * v.w, y: v.y + (((a[1] + b[1]) / 2 - r.top) / r.height) * v.w * ratio };
       setView({ x: q.x - (q.x - v.x) * f, y: q.y - (q.y - v.y) * f, w: v.w * f });
       return;
     }
@@ -407,20 +423,33 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
 
   // --- drawing -----------------------------------------------------------------------------------
   const pts = (p: Pt[]) => p.map((q) => to(q).join(',')).join(' ');
-  // A wall shared by two rooms is one wall: selecting either side highlights both.
-  const isSelWall = (room: string, edge: number) => sel.walls.some((w) => {
-    if (w.room === room) return w.edge === edge;
-    const a = house.rooms.find((r) => r.id === w.room), b = house.rooms.find((r) => r.id === room);
-    const ea = a && roomEdges(a)[w.edge], eb = b && roomEdges(b)[edge];
-    return !!ea && !!eb && !!sharedSpan(ea, eb);
-  });
+  // Walls are picked a piece at a time (outside stretch, or the stretch shared with one neighbour). A shared piece is one wall from either room's side.
+  const near2 = (a: Pt, b: Pt) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.03;
+  type WId = { seg: [Pt, Pt]; pair: string | null };
+  // The same wall seen from two rooms: lines that coincide, or (a wall drawn with thickness between two rooms) the same pair of rooms a wall's thickness apart.
+  const sameWall = (a: WId, b: WId) => (near2(a.seg[0], b.seg[0]) && near2(a.seg[1], b.seg[1])) || (near2(a.seg[0], b.seg[1]) && near2(a.seg[1], b.seg[0]))
+    || (!!a.pair && a.pair === b.pair && Math.hypot((a.seg[0][0] + a.seg[1][0] - b.seg[0][0] - b.seg[1][0]) / 2, (a.seg[0][1] + a.seg[1][1] - b.seg[0][1] - b.seg[1][1]) / 2) < 0.65);
+  const idsOf = (w: WallRef): WId[] => (w.span ? [{ room: w.room, span: w.span, other: w.other }] : wallPieces(house, w.room, w.edge, storey).map((q) => ({ room: w.room, span: q.span, other: q.other })))
+    .flatMap((q) => { const seg = pieceSeg(house, w.room, w.edge, q.span); return seg ? [{ seg, pair: q.other ? pairKey(q.room, q.other) : null }] : []; });
+  const idOf = (room: string, edge: number, piece: { span: [number, number]; other?: string }): WId | null => idsOf({ room, edge, span: piece.span, other: piece.other })[0] ?? null;
+  const isSelPiece = (room: string, edge: number, piece: { span: [number, number]; other?: string }) => {
+    const me = idOf(room, edge, piece);
+    return !!me && sel.walls.some((w) => idsOf(w).some((q) => sameWall(q, me)));
+  };
   const dimOf = (r: Room, p: Pt[]) => roomEdges({ ...r, poly: p, x: 0, y: 0 }).map((e) => ({ e, mid: to([(e.a[0] + e.b[0]) / 2 + e.n[0] * 0.28, (e.a[1] + e.b[1]) / 2 + e.n[1] * 0.28]) }));
-  const wallClick = (e: React.PointerEvent, r: Room, i: number) => {
-    const same = isSelWall(r.id, i), multi = e.shiftKey || e.ctrlKey || e.metaKey;
-    const walls = multi ? (same ? sel.walls.filter((w) => !(w.room === r.id && w.edge === i)) : [...sel.walls, { room: r.id, edge: i }]) : same && sel.walls.length === 1 ? sel.walls : [{ room: r.id, edge: i }];
+  const wallClick = (e: React.PointerEvent, r: Room, i: number, piece: WallPiece) => {
+    const same = isSelPiece(r.id, i, piece), multi = e.shiftKey || e.ctrlKey || e.metaKey, me = idOf(r.id, i, piece);
+    const ref: WallRef = { room: r.id, edge: i, span: piece.span, ...(piece.other ? { other: piece.other, gap: piece.gap } : {}) };
+    const walls = multi ? (same ? sel.walls.filter((w) => !idsOf(w).some((q) => me && sameWall(q, me))) : [...sel.walls, ref]) : same && sel.walls.length === 1 ? sel.walls : [ref];
     setSel({ room: r.id, walls, item: null });
     const es = roomEdges(r), n = es.length;
     begin(e, { k: 'move', start: raw(e), cur: raw(e), verts: together(r.id, [i, (i + 1) % n], e.altKey, i), base: roomPoly(r)[i], normal: es[i].n, free: false, moved: false });
+  };
+
+  /** True where the wall at `t` metres along edge `idx` is drawn with thickness (the window or door is then drawn as a thin strip across it). */
+  const wallIsThick = (room: string, idx: number, t: number) => {
+    const pc = wallPieces(house, room, idx, storey).find((p) => t >= p.span[0] - 0.01 && t <= p.span[1] + 0.01);
+    return !!pc && ((pc.gap ?? 0) > 0.01 || pieceThickness(house, room, idx, storey, pc) > 0);
   };
 
   const hv = hover;
@@ -443,7 +472,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
 
   return (
     <div className="draw-wrap">
-      <svg ref={svgRef} className="draw" tabIndex={0} style={{ cursor }} viewBox={`${view.x} ${view.y} ${view.w} ${view.w * RATIO}`} role="application"
+      <svg ref={svgRef} className="draw" tabIndex={0} style={{ cursor }} viewBox={`${view.x} ${view.y} ${view.w} ${view.w * ratio}`} role="application"
         aria-label={`${house.storeys[storey]?.name} drawing canvas`} onPointerDownCapture={trackDown} onPointerDown={down} onPointerMove={move} onPointerUp={release} onPointerCancel={release}
         onPointerLeave={() => setHover(null)} onKeyDown={key}
         onDoubleClick={() => { if (tool === 'room') closeDraft(draft); }}>
@@ -453,10 +482,11 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
           </pattern>
           <pattern id="draw-grid" width={S} height={S} patternUnits="userSpaceOnUse"><path d={`M ${S} 0 L 0 0 0 ${S}`} fill="none" stroke="#d7dde2" strokeWidth={z(1)} /></pattern>
         </defs>
-        <rect x={view.x} y={view.y} width={view.w} height={view.w * RATIO} fill="#fff" />
-        <rect x={view.x} y={view.y} width={view.w} height={view.w * RATIO} fill="url(#draw-grid)" pointerEvents="none" />
+        <rect x={view.x} y={view.y} width={view.w} height={view.w * ratio} fill="#fff" />
+        <rect x={view.x} y={view.y} width={view.w} height={view.w * ratio} fill="url(#draw-grid)" pointerEvents="none" />
         <line x1={view.x} x2={view.x + view.w} y1={0} y2={0} stroke="#b9c4cc" strokeWidth={z(1)} strokeDasharray={`${z(6)} ${z(4)}`} pointerEvents="none" />
-        <line y1={view.y} y2={view.y + view.w * RATIO} x1={0} x2={0} stroke="#b9c4cc" strokeWidth={z(1)} strokeDasharray={`${z(6)} ${z(4)}`} pointerEvents="none" />
+        {house.guide && <g pointerEvents="none"><rect x={0} y={0} width={house.guide.w * S} height={house.guide.d * S} fill="none" stroke="#8a99a6" strokeWidth={z(1.5)} strokeDasharray={`${z(8)} ${z(5)}`} /><text x={z(6)} y={-z(6)} className="draw-dim" style={{ fontSize: z(11), strokeWidth: z(3) }}>{house.guide.w} × {house.guide.d} m footprint</text></g>}
+        <line y1={view.y} y2={view.y + view.w * ratio} x1={0} x2={0} stroke="#b9c4cc" strokeWidth={z(1)} strokeDasharray={`${z(6)} ${z(4)}`} pointerEvents="none" />
         <text x={view.x + view.w / 2} y={view.y + z(18)} textAnchor="middle" className="plan-n" style={{ fontSize: z(13) }}>N ↑</text>
         {underlay?.(to, S)}
         {ghost.map((r) => <polygon key={r.id} points={pts(roomPoly(r))} fill="#14212b" fillOpacity={0.04} stroke="#8a96a1" strokeWidth={z(1.2)} strokeDasharray={`${z(5)} ${z(4)}`} pointerEvents="none" />)}
@@ -487,21 +517,108 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
           );
         })}
 
-        {/* Walls: outside ones heavier. A wide invisible line is the target to grab. */}
-        {onThis.flatMap((r) => {
-          const p = polyOf(r);
-          return roomEdges({ ...r, poly: p, x: 0, y: 0 }).map((e) => {
-            const a = to(e.a), b = to(e.b), s = isSelWall(r.id, e.idx), out = isOutside(house, r, e.idx, storey);
-            return (
-              <g key={`${r.id}-${e.idx}`}>
-                <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={s ? '#c2410c' : '#14212b'} strokeWidth={z(s ? 5 : out ? 4 : 2)} strokeLinecap="round" pointerEvents="none" />
-                {tool === 'select' && !zoneMode && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="transparent" strokeWidth={z(14 * hs)} className="wall-hit"
-                  onPointerDown={(ev) => wallClick(ev, r, e.idx)}
-                  onDoubleClick={(ev) => { ev.stopPropagation(); const q = raw(ev); const hit = nearestWall(house, storey, q, 0.5, { room: r.id }); if (hit && hit.edge === e.idx) upd((h) => insertCorner(h, r.id, e.idx, [snap(hit.at[0]), snap(hit.at[1])])); }} />}
-              </g>
-            );
+        {/* Walls, as thick as their build-up: all the bands first (so where they meet they read as one wall), the selected ones on top, then the drawn lines. */}
+        {(() => {
+          const gapMax = maxWallGap(house) + 0.03;
+          // A corner of a room that lies against another room's wall is a T-junction, not an outside corner: its wall must not stick out there.
+          const atOther = (r: Room, p: Pt) => onThis.some((o) => o.id !== r.id && (pointInPoly(p, roomPoly(o)) || roomEdges(o).some((f) => {
+            const t = Math.max(0, Math.min(f.len, (p[0] - f.a[0]) * f.d[0] + (p[1] - f.a[1]) * f.d[1]));
+            return Math.hypot(p[0] - f.a[0] - f.d[0] * t, p[1] - f.a[1] - f.d[1] * t) <= gapMax;
+          })));
+          // Windows and doors of a room on one of its walls, as two points in the plan (placed the way they are drawn).
+          const opsOn = (room: Room, e: { idx: number; side: string; len: number; a: Pt; d: Pt }) => {
+            const es = roomEdges(room), isPoly = !!room.poly;
+            const ops = house.openings.filter((o) => o.room === room.id && (isPoly ? (o.edge ?? es.findIndex((x) => x.side === o.side)) === e.idx : o.side === e.side));
+            return ops.map((o, i) => {
+              const half = Math.min(o.w, e.len) / 2, c = o.t != null ? Math.max(half, Math.min(e.len - half, o.t)) : (e.len * (i + 0.5)) / ops.length;
+              return { room, door: house.buildups.find((x) => x.id === o.buildup)?.kind === 'door', p: [e.a[0] + e.d[0] * (c - half), e.a[1] + e.d[1] * (c - half)] as Pt, q: [e.a[0] + e.d[0] * (c + half), e.a[1] + e.d[1] * (c + half)] as Pt };
+            });
+          };
+          const items = onThis.flatMap((r) => {
+            const moving = drag?.k === 'move' && drag.moved && drag.verts.some(([id]) => id === r.id);
+            return roomEdges({ ...r, poly: polyOf(r), x: 0, y: 0 }).flatMap((e) => {
+              // While a wall is being dragged the pieces are not recomputed: the whole wall moves as one.
+              const pieces: WallPiece[] = moving ? [{ span: [0, e.len] }] : wallPieces(house, r.id, e.idx, storey);
+              return pieces.map((pc, k) => {
+                const s = !moving && isSelPiece(r.id, e.idx, pc) || (moving && sel.walls.some((w) => w.room === r.id && w.edge === e.idx));
+                // Thickness comes from the build-up, on the side of the line the alignment says; rooms drawn a wall apart share a wall that fills the space between them.
+                const between = !moving && !!pc.other && (pc.gap ?? 0) > 0.01;
+                const th = moving ? 0 : between ? pc.gap! : pieceThickness(house, r.id, e.idx, storey, pc), al = between ? 'out' : pieceAlign(house, r.id, e.idx, storey, pc);
+                const tm = Math.max(th, z(3) / S), lo = al === 'out' ? 0 : al === 'in' ? -tm : -tm / 2, hi = al === 'out' ? tm : al === 'in' ? 0 : tm / 2;
+                const reach = al === 'out' ? tm : al === 'ctr' ? tm / 2 : 0;
+                const p0: Pt = [e.a[0] + e.d[0] * pc.span[0], e.a[1] + e.d[1] * pc.span[0]], p1: Pt = [e.a[0] + e.d[0] * pc.span[1], e.a[1] + e.d[1] * pc.span[1]];
+                const atStart = pc.span[0] < 1e-6, atEnd = pc.span[1] > e.len - 1e-6;
+                const x0 = !between && atStart && !atOther(r, p0) ? reach : 0, x1 = !between && atEnd && !atOther(r, p1) ? reach : 0;
+                const q = (t: number, o: number) => to([e.a[0] + e.d[0] * t + e.n[0] * o, e.a[1] + e.d[1] * t + e.n[1] * o]).join(',');
+                const owns = th > 0 && (!pc.other || r.id < pc.other);
+                const hit = owns ? [q(pc.span[0] - x0, lo), q(pc.span[1] + x1, lo), q(pc.span[1] + x1, hi), q(pc.span[0] - x0, hi)].join(' ') : null;
+                const bands: string[] = [], strips: Array<{ pts: string; door: boolean }> = [], cuts: Array<{ pts: string; color: string }> = [];
+                if (owns) {
+                  // Windows and doors cut the wall: where one sits, only a thin strip is left.
+                  const holes: Array<[number, number, boolean, Room]> = [];
+                  const take = (o: { room: Room; door: boolean; p: Pt; q: Pt }) => {
+                    const t = (v: Pt) => (v[0] - e.a[0]) * e.d[0] + (v[1] - e.a[1]) * e.d[1], n = (v: Pt) => (v[0] - e.a[0]) * e.n[0] + (v[1] - e.a[1]) * e.n[1];
+                    const t0 = Math.max(pc.span[0], Math.min(t(o.p), t(o.q))), t1 = Math.min(pc.span[1], Math.max(t(o.p), t(o.q)));
+                    if (t1 - t0 > 0.02 && Math.abs(n(o.p)) <= gapMax && Math.abs(n(o.q)) <= gapMax) holes.push([t0, t1, o.door, o.room]);
+                  };
+                  if (!moving) {
+                    opsOn(r, e).forEach(take);
+                    const other = pc.other ? house.rooms.find((x) => x.id === pc.other) : null;
+                    if (other) roomEdges(other).forEach((f) => { if (sharedSpan(e, f, 0.02, gapMax)) opsOn(other, f).forEach(take); });
+                  }
+                  holes.sort((u, v) => u[0] - v[0]);
+                  let at = pc.span[0] - x0;
+                  for (const [t0, t1, door] of holes) {
+                    // The cut shows what is on each side of the thin strip: this room's colour on its side, and the colour of the room behind an inside wall, or of the outside for an outside wall.
+                    const mid = (lo + hi) / 2, near = zoneMode ? '#f7f7f4' : fill(r), far = pc.other ? (zoneMode ? '#f7f7f4' : fill(house.rooms.find((x) => x.id === pc.other) ?? r)) : '#fff';
+                    cuts.push({ pts: [q(t0, lo), q(t1, lo), q(t1, mid), q(t0, mid)].join(' '), color: near }, { pts: [q(t0, mid), q(t1, mid), q(t1, hi), q(t0, hi)].join(' '), color: far });
+                    if (t0 > at) bands.push([q(at, lo), q(t0, lo), q(t0, hi), q(at, hi)].join(' '));
+                    const m = (lo + hi) / 2, thin = Math.min(tm, Math.max(0.06, z(2) / S));
+                    strips.push({ pts: [q(t0, m - thin / 2), q(t1, m - thin / 2), q(t1, m + thin / 2), q(t0, m + thin / 2)].join(' '), door });
+                    at = Math.max(at, t1);
+                  }
+                  if (pc.span[1] + x1 > at) bands.push([q(at, lo), q(pc.span[1] + x1, lo), q(pc.span[1] + x1, hi), q(at, hi)].join(' '));
+                  // An outside wall carries on across an inside wall that ends against it: bridge to the next room's outside wall on the same line.
+                  if (!pc.other && !moving) for (const [end, at2] of [[atStart, 0], [atEnd, e.len]] as const) {
+                    if (!end) continue;
+                    for (const o of onThis) if (o.id !== r.id) for (const f of roomEdges(o)) {
+                      // The same outside face, on the same line (whichever way the outline is wound), starting just past this wall's end.
+                      if (f.n[0] * e.n[0] + f.n[1] * e.n[1] < 0.999 || Math.abs((f.a[0] - e.a[0]) * e.n[0] + (f.a[1] - e.a[1]) * e.n[1]) > 0.02) continue;
+                      const ts = [f.a, f.b].map((v) => (v[0] - e.a[0]) * e.d[0] + (v[1] - e.a[1]) * e.d[1]);
+                      const beyond = ts.filter((v) => (at2 === 0 ? v <= 0.001 && v >= -gapMax : v >= e.len - 0.001 && v <= e.len + gapMax));
+                      if (!beyond.length || Math.abs(ts[0] - ts[1]) < 0.01) continue;
+                      const far = at2 === 0 ? Math.max(...beyond) : Math.min(...beyond);
+                      if (Math.abs(far - at2) > 0.001) bands.push([q(at2, lo), q(far, lo), q(far, hi), q(at2, hi)].join(' '));
+                    }
+                  }
+                }
+                return { key: `${r.id}-${e.idx}-${k}`, r, e, pc, s, th, hit, bands, strips, cuts, a: to(p0), b: to(p1), out: !pc.other };
+              });
+            });
           });
-        })}
+          return (
+            <>
+              {/* Closing (grow, then shrink) fills the small squares left where inside walls meet at a junction. */}
+              <defs><filter id="wall-close" x="-10%" y="-10%" width="120%" height="120%"><feMorphology operator="dilate" radius={Math.min(gapMax / 2, 0.12) * S} /><feMorphology operator="erode" radius={Math.min(gapMax / 2, 0.12) * S} /></filter></defs>
+              <g filter="url(#wall-close)">
+                {items.filter((i) => !i.s).flatMap((i) => i.bands.map((pts, n) => <polygon key={`b${i.key}-${n}`} points={pts} fill="#26343f" pointerEvents="none" />))}
+              </g>
+              {items.flatMap((i) => i.cuts.map((c, n) => <polygon key={`c${i.key}-${n}`} points={c.pts} fill={c.color} fillOpacity={0.92} pointerEvents="none" />))}
+              {items.filter((i) => i.s).flatMap((i) => i.bands.map((pts, n) => <polygon key={`s${i.key}-${n}`} points={pts} fill="#c2410c" pointerEvents="none" />))}
+              {items.flatMap((i) => i.strips.map((t, n) => <polygon key={`t${i.key}-${n}`} points={t.pts} fill={t.door ? '#8a5a2b' : '#1f6fb5'} pointerEvents="none" />))}
+              {items.map((i) => (
+                <g key={i.key}>
+                  <line x1={i.a[0]} y1={i.a[1]} x2={i.b[0]} y2={i.b[1]} stroke={i.th > 0 ? (i.s ? '#fff' : '#9fb0bc') : i.s ? '#c2410c' : '#14212b'} strokeWidth={i.th > 0 ? z(1) : z(i.s ? 5 : i.out ? 4 : 2)} strokeDasharray={i.th > 0 ? `${z(5)} ${z(3)}` : undefined} strokeLinecap={i.th > 0 || i.pc.span[0] > 1e-6 || i.pc.span[1] < i.e.len - 1e-6 ? 'butt' : 'round'} pointerEvents="none" />
+                  {tool === 'select' && !zoneMode && i.hit && <polygon points={i.hit} fill="transparent" className="wall-hit" onPointerDown={(ev) => wallClick(ev, i.r, i.e.idx, i.pc)}
+                    onDoubleClick={(ev) => { ev.stopPropagation(); const q = raw(ev); const hit = nearestWall(house, storey, q, 0.5, { room: i.r.id }); if (hit && hit.edge === i.e.idx) upd((h) => insertCorner(h, i.r.id, i.e.idx, [snap(hit.at[0]), snap(hit.at[1])])); }} />}
+                  {tool === 'select' && !zoneMode && <line x1={i.a[0]} y1={i.a[1]} x2={i.b[0]} y2={i.b[1]} stroke="transparent" strokeWidth={z(14 * hs)} className="wall-hit"
+                    onPointerDown={(ev) => wallClick(ev, i.r, i.e.idx, i.pc)}
+                    onDoubleClick={(ev) => { ev.stopPropagation(); const q = raw(ev); const hit = nearestWall(house, storey, q, 0.5, { room: i.r.id }); if (hit && hit.edge === i.e.idx) upd((h) => insertCorner(h, i.r.id, i.e.idx, [snap(hit.at[0]), snap(hit.at[1])])); }} />}
+                </g>
+              ))}
+            </>
+          );
+        })()}
 
         {/* Problems: rooms overlapping or crossing themselves, and walls that almost touch */}
         {!zoneMode && onThis.filter((r) => probs.overlap.has(r.id)).map((r) => <polygon key={`o${r.id}`} points={pts(polyOf(r))} fill="none" stroke="#c0392b" strokeWidth={z(3)} strokeDasharray={`${z(8)} ${z(4)}`} pointerEvents="none"><title>{r.name} overlaps another room</title></polygon>)}
@@ -547,7 +664,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
               return (
                 <g key={o.id}>
                   {on && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="#c2410c" strokeWidth={z(12)} strokeLinecap="round" opacity={0.35} pointerEvents="none" />}
-                  <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={door ? '#8a5a2b' : '#1f6fb5'} strokeWidth={z(6)} pointerEvents="none" />
+                  {!wallIsThick(r.id, e.idx, c) && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={door ? '#8a5a2b' : '#1f6fb5'} strokeWidth={z(6)} pointerEvents="none" />}
                   {tool === 'select' && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="transparent" strokeWidth={z(16 * hs)} style={{ cursor: 'grab' }}
                     onPointerDown={(ev) => { setSel({ room: r.id, walls: [], item: { k: 'op', id: o.id } }); begin(ev, { k: 'op', id: o.id, start: raw(ev), cur: raw(ev), moved: false }); }} />}
                 </g>
@@ -630,9 +747,9 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         {overlay?.(to, S, fromEvent)}
       </svg>
       <div className="draw-zoom" role="group" aria-label="Zoom">
-        <button type="button" className="btn-secondary" aria-label="Zoom in" onClick={() => setView((v) => ({ x: v.x + v.w * 0.1, y: v.y + v.w * RATIO * 0.1, w: v.w * 0.8 }))}>+</button>
-        <button type="button" className="btn-secondary" aria-label="Zoom out" onClick={() => setView((v) => ({ x: v.x - v.w * 0.125, y: v.y - v.w * RATIO * 0.125, w: v.w * 1.25 }))}>−</button>
-        <button type="button" className="btn-secondary" onClick={() => setView(fit(house))}>Fit</button>
+        <button type="button" className="btn-secondary" aria-label="Zoom in" onClick={() => setView((v) => ({ x: v.x + v.w * 0.1, y: v.y + v.w * ratio * 0.1, w: v.w * 0.8 }))}>+</button>
+        <button type="button" className="btn-secondary" aria-label="Zoom out" onClick={() => setView((v) => ({ x: v.x - v.w * 0.125, y: v.y - v.w * ratio * 0.125, w: v.w * 1.25 }))}>−</button>
+        <button type="button" className="btn-secondary" onClick={() => setView(fit(house, ratio))}>Fit</button>
       </div>
       {note && <p className="draw-note" role="status">{note}</p>}
     </div>

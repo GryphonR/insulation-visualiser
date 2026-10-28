@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { loadCustomStackups, saveCustomStackups } from './engine/library';
 import type { Stackup } from './engine/library';
 import { defaultHouse } from './engine/house-default';
-import { hasSavedProject, newProject } from './engine/house-scenarios';
+import { newProject } from './engine/house-scenarios';
+import { hasSaved } from './engine/projects';
 import { BuildupsPage } from './ui/BuildupsPage';
 import { ComparePage } from './ui/ComparePage';
 import { EnergyPage, SitePage, StoreysPage, VentPage } from './ui/HouseSettings';
@@ -18,6 +19,7 @@ import { LearnPage } from './ui/LearnPage';
 import { LibraryPage } from './ui/LibraryPage';
 import { MaterialsPage } from './ui/MaterialsPage';
 import { PlanPage } from './ui/PlanPage';
+import { ProjectsPage } from './ui/ProjectsPage';
 import { ResultsPage } from './ui/ResultsPage';
 import { RoomPage } from './ui/RoomPage';
 import { Shell } from './ui/Shell';
@@ -35,7 +37,7 @@ export default function App() {
   useEffect(() => {
     if (customStackups !== loadedStackups) saveCustomStackups(customStackups);
   }, [customStackups, loadedStackups]);
-  const [firstVisit] = useState(() => !hasSavedProject());
+  const [firstVisit] = useState(() => !hasSaved());
 
   return (
     <ProjectProvider customStackups={customStackups} setCustomStackups={setCustomStackups}>
@@ -46,7 +48,7 @@ export default function App() {
 
 function Routes({ firstVisit }: { firstVisit: boolean }) {
   const parts = useRoute();
-  const { house, active, ordered, project, setProject, setHouse, customStackups, setCustomStackups } = useProject();
+  const { house, active, ordered, project, setProject, setHouse, customStackups, setCustomStackups, createProject } = useProject();
   const [started, setStarted] = useState(!firstVisit);
   // No hash: a first visit starts a project; otherwise open the build-ups (step 1).
   const route = parts[0] ?? (started ? 'buildups' : 'start');
@@ -59,15 +61,15 @@ function Routes({ firstVisit }: { firstVisit: boolean }) {
       page = (
         <HouseStart
           onCancel={started ? () => go('plan') : undefined}
-          onDemo={() => { setProject(newProject(defaultHouse())); setStarted(true); go('plan'); }}
+          onDemo={() => { createProject(newProject(defaultHouse())); setStarted(true); go('plan'); }}
           onCreate={(h) => {
-            if (started && !confirm('Replace the current project (all scenarios) with this new house? Undo can bring it back.')) return;
-            setProject(newProject(h)); setStarted(true); go('plan');
+            createProject(newProject(h)); setStarted(true); go('plan');
           }} />
       );
       break;
     case 'plan': page = <PlanPage key={arg ?? 'p'} selected={arg} />; break;
     case 'room': page = <RoomPage key={`${arg}/${arg2 ?? ""}`} id={arg ?? ''} initialTab={arg2} />; break;
+    case 'projects': page = <ProjectsPage />; break;
     case 'site': page = <SitePage />; break;
     case 'storeys': page = <StoreysPage />; break;
     case 'vent': page = <VentPage />; break;

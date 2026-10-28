@@ -46,14 +46,14 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
   const issues = heatingIssues(res);
   const setActive = (id: string) => setProject((p) => ({ ...p, active: id }));
   return (
-    <div className="shell">
+    <div className={route === 'plan' ? 'shell fill' : 'shell'}>
       <header className="top">
         <a className="brand" href={href('buildups')}>
           <span className="logo" aria-hidden="true"><span /><span /><span /></span>Insuliser
         </a>
         <div className="ctx">
           <span className="eb">Project</span>
-          <a className="ctx-v" href={href('start')} title="Start a new project">{project.scenarios[0].house.name || 'My house'} · new…</a>
+          <a className="ctx-v" href={href('projects')} title="Switch, create or delete projects">{project.scenarios[0].house.name || 'My house'} ▾</a>
         </div>
         <label className="ctx">
           <span className="eb">Scenario</span>

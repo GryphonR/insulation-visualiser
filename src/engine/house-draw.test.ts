@@ -85,3 +85,12 @@ describe('drawing edits', () => {
     expect(h.rooms.filter((r) => r.storey === 0)).toHaveLength(ground);
   });
 });
+
+describe('snapping a wall apart', () => {
+  it('sits a corner a wall thickness off a neighbour on the side it is already on, or flush when that is nearer', () => {
+    const wall: Pt[] = [[4, 0], [4, 5], [3, 5], [3, 0]]; // right edge at x = 4
+    expect(flushDelta([[4.13, 1]], [wall], 0.2, 0.1)[0]).toBeCloseTo(-0.03, 6); // 10 cm off the wall
+    expect(flushDelta([[4.04, 1]], [wall], 0.2, 0.1)[0]).toBeCloseTo(-0.04, 6); // flush is nearer
+    expect(flushDelta([[3.87, 1]], [[[4, 0], [4, 5]]], 0.2, 0.1)[0]).toBeCloseTo(0.03, 6); // from the left side
+  });
+});

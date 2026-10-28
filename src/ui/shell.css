@@ -73,3 +73,7 @@ a.btn-primary { color: var(--paper); }
 .section-gap { margin-top: 4px; }
 
 .icon-only { width: 40px; min-width: 0; padding: 0; display: inline-grid; place-items: center; }
+
+/* The floor plan page uses the whole window under the header. */
+.shell.fill { height: 100vh; min-height: 0; }
+.shell.fill .shell-body { min-height: 0; padding: 0; max-width: none; gap: 0; }

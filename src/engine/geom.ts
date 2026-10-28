@@ -29,10 +29,12 @@ export function edges(p: Pt[]): Edge[] {
 export const compass = (az: number): 'N' | 'E' | 'S' | 'W' => (['N', 'E', 'S', 'W'] as const)[Math.round(az / 90) % 4];
 
 /** Stretch of edge e (as [t0, t1] along it, metres from e.a) that lies against edge f running the other way. */
-export function sharedSpan(e: Edge, f: Edge, tol = 0.02): [number, number] | null {
-  if (e.d[0] * f.d[0] + e.d[1] * f.d[1] > -0.999) return null; // not anti-parallel
-  const off = (q: Pt) => Math.abs((q[0] - e.a[0]) * e.n[0] + (q[1] - e.a[1]) * e.n[1]);
-  if (off(f.a) > tol || off(f.b) > tol) return null; // not on the same line
+export function sharedSpan(e: Edge, f: Edge, tol = 0.02, gap = 0): [number, number] | null {
+  if (e.n[0] * f.n[0] + e.n[1] * f.n[1] > -0.999) return null; // not facing each other (the outward normals oppose, whichever way each outline is wound)
+  // f sits on e's outward side, `gap` metres away at most (the thickness of a wall drawn between two rooms), and parallel to it.
+  const off = (q: Pt) => (q[0] - e.a[0]) * e.n[0] + (q[1] - e.a[1]) * e.n[1];
+  const oa = off(f.a), ob = off(f.b);
+  if (Math.abs(oa - ob) > tol || oa < -tol || oa > gap + tol) return null;
   const t = (q: Pt) => (q[0] - e.a[0]) * e.d[0] + (q[1] - e.a[1]) * e.d[1];
   const t0 = Math.max(0, Math.min(t(f.a), t(f.b))), t1 = Math.min(e.len, Math.max(t(f.a), t(f.b)));
   return t1 - t0 > 1e-6 ? [t0, t1] : null;

@@ -1,9 +1,9 @@
 import { useMemo } from 'react';
-import { CIBSE_ACH, SHADING, defaultTemp, onStorey, roomEdges } from '../engine/house';
+import { CIBSE_ACH, SHADING, defaultTemp, onStorey, roomEdges, roomHeight } from '../engine/house';
 import type { Buildup, BuildupKind, House, HouseResult, Room, RoomType } from '../engine/house';
 import { RAD_LABEL } from '../engine/house-heating';
 import type { RadType } from '../engine/house-heating';
-import { addBasement, addStoreyAbove, bandName, canAddBasement, canRemoveBasement, canRemoveTop, copyRooms, deleteRoom, flipRooms, innerDoorAt, isOutside, openingCentre, removeBasement, removeTop, rotateRooms, setWallLength, wallIndex, wallKeys } from '../engine/house-draw';
+import { addBasement, addStoreyAbove, bandName, canAddBasement, canRemoveBasement, canRemoveTop, copyRooms, deleteRoom, flipRooms, innerDoorAt, isOutside, openingCentre, pieceAlign, pieceKeys, pieceThickness, removeBasement, setPieceAlign, removeTop, rotateRooms, setWallLength, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
 import { polyArea } from '../engine/geom';
 import { Num, fmt, uid } from './hform';
 import { NO_SEL } from './DrawCanvas';
@@ -33,32 +33,29 @@ const HINT_BAND: Partial<Record<Tool, string>> = {
   ufh: 'Drag out a rectangle inside a heated room: an underfloor heating loop. Choose its pattern and feed corner under Pipe runs.',
 };
 
-/** The drawing menu: pick what a click on the canvas does. */
-export function DrawMenu({ band, tool, setTool, sticky, setSticky, snapOn, setSnapOn, grid, setGrid, canUndo, canRedo, undo, redo }: {
+/** What the current tool does, for the hint bubble. */
+export const drawHint = (band: boolean, tool: Tool) => (band ? HINT_BAND[tool] ?? HINT[tool] : HINT[tool]);
+
+/** The drawing menu: a slim column of tool icons (names on hover) that floats over the canvas. */
+export function DrawMenu({ band, tool, setTool, sticky, setSticky, snapOn, setSnapOn, grid, setGrid }: {
   /** On a floor or ceiling layer: only zones and (on floors) heated-floor loops can be drawn. */
   band: null | 'floor' | 'top';
   tool: Tool; setTool: (t: Tool) => void; sticky: boolean; setSticky: (v: boolean) => void; snapOn: boolean; setSnapOn: (v: boolean) => void; grid: number; setGrid: (v: number) => void;
-  canUndo: boolean; canRedo: boolean; undo: () => void; redo: () => void;
 }) {
   return (
     <div className="draw-menu" role="toolbar" aria-label="Drawing tools">
       {TOOLS.filter(([id]) => !band || id === 'select' || id === 'room' || id === 'box' || (id === 'ufh' && band === 'floor')).map(([id, l, glyph]) => [id, band ? ({ room: 'Zone', box: 'Box zone', ufh: 'UFH loop' } as Record<string, string>)[id] ?? l : l, glyph] as [Tool, string, string]).map(([id, label, glyph]) => (
-        <button key={id} type="button" className={tool === id ? 'on' : ''} aria-pressed={tool === id} title="Double-click to keep this tool after each use"
+        <button key={id} type="button" className={tool === id ? 'on' : ''} aria-pressed={tool === id} aria-label={label} title={`${label}. Double-click to keep this tool after each use`}
           onClick={() => { setTool(id); setSticky(false); }} onDoubleClick={() => { setTool(id); setSticky(id !== 'select'); }}>
-          <span className="g" aria-hidden="true">{glyph}</span>{label}{sticky && tool === id ? ' 🔒' : ''}
+          <span aria-hidden="true">{glyph}</span>{sticky && tool === id && <i className="lock" aria-hidden="true" />}
         </button>
       ))}
       <div className="draw-menu-end">
-        <button type="button" disabled={!canUndo} onClick={undo}><span className="g" aria-hidden="true">↶</span>Undo</button>
-        <button type="button" disabled={!canRedo} onClick={redo}><span className="g" aria-hidden="true">↷</span>Redo</button>
+        <button type="button" className={snapOn ? 'on' : ''} aria-pressed={snapOn} aria-label="Snap to walls and angles" title="Snap to walls and angles" onClick={() => setSnapOn(!snapOn)}><span aria-hidden="true">⌖</span></button>
+        <select className="draw-grid-sel" value={grid} aria-label="Grid size" title="Grid size" onChange={(e) => setGrid(Number(e.target.value))}>
+          {[[0.01, '1cm'], [0.05, '5cm'], [0.1, '10cm'], [0.25, '25cm']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
       </div>
-      <div className="draw-snap">
-        <label className="small"><input type="checkbox" checked={snapOn} onChange={(e) => setSnapOn(e.target.checked)} /> Snap to walls and angles</label>
-        <label className="small">Grid <select className="select" value={grid} aria-label="Grid size" onChange={(e) => setGrid(Number(e.target.value))}>
-          {[[0.01, '1 cm'], [0.05, '5 cm'], [0.1, '10 cm'], [0.25, '25 cm']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-        </select></label>
-      </div>
-      <p className="small muted draw-hint">{band ? HINT_BAND[tool] ?? HINT[tool] : HINT[tool]}</p>
     </div>
   );
 }
@@ -161,14 +158,17 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
 }) {
   const walls = sel.walls;
   const info = useMemo(() => walls.map((w) => {
-    const r = house.rooms.find((x) => x.id === w.room), e = r && roomEdges(r)[w.edge], keys = wallKeys(house, w.room, w.edge, storey);
+    const r = house.rooms.find((x) => x.id === w.room), e = r && roomEdges(r)[w.edge], keys = w.span ? pieceKeys(house, w.room, w.edge, storey, w) : wallKeys(house, w.room, w.edge, storey);
     const face = res.rooms.find((x) => x.room.id === w.room)?.faces.find((f) => f.key === keys[0]) ?? res.rooms.find((x) => x.room.id === w.room)?.faces.find((f) => keys.includes(f.key));
-    return { w, r, keys, len: e?.len ?? 0, id: face?.buildup.id ?? house.defaults[keys[0]?.startsWith('w:') ? 'extWall' : 'intWall'], U: face?.U, party: house.faceBoundary[keys[0]] === 'party', outside: !!r && isOutside(house, r, w.edge, storey) };
+    return { w, r, keys, len: w.span ? w.span[1] - w.span[0] : e?.len ?? 0, thick: w.span ? pieceThickness(house, w.room, w.edge, storey, w) : 0, align: w.span ? pieceAlign(house, w.room, w.edge, storey, w) : null, whole: e?.len ?? 0, id: face?.buildup.id ?? house.defaults[keys[0]?.startsWith('w:') ? 'extWall' : 'intWall'], U: face?.U, party: house.faceBoundary[keys[0]] === 'party', outside: w.span ? !w.other : !!r && isOutside(house, r, w.edge, storey) };
   }), [walls, house, res, storey]);
 
   const pick = (list: WallRef[]) => setSel({ ...NO_SEL, room: sel.room, walls: list });
   const here = house.rooms.filter((r) => onStorey(r, storey));
-  const every = (outsideOnly: boolean) => here.flatMap((r) => roomEdges(r).filter((e) => !outsideOnly || isOutside(house, r, e.idx, storey)).map((e) => ({ room: r.id, edge: e.idx })));
+  // Walls a piece at a time, so "outside walls" takes only the outside stretches; an inside wall is listed once, from the first room of its pair.
+  const every = (outsideOnly: boolean, only?: string): WallRef[] => here.filter((r) => !only || r.id === only).flatMap((r) => roomEdges(r).flatMap((e) =>
+    wallPieces(house, r.id, e.idx, storey).filter((p) => (outsideOnly ? !p.other : !p.other || !!only || r.id < p.other!))
+      .map((p): WallRef => ({ room: r.id, edge: e.idx, span: p.span, ...(p.other ? { other: p.other, gap: p.gap } : {}) }))));
 
   if (sel.zone) {
     const z = house.zones?.find((x) => x.id === sel.zone);
@@ -214,25 +214,48 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
     return (
       <>
         <div className="eyebrow">{walls.length} wall{walls.length === 1 ? '' : 's'} selected · {fmt(info.reduce((t, i) => t + i.len, 0), 1)} m</div>
-        {walls.length === 1 && <Num label="Length" unit="m" step={0.05} min={0.1} value={info[0].len} onChange={(v) => upd((h) => setWallLength(h, walls[0].room, walls[0].edge, v))} />}
+        {walls.length === 1 && walls[0].span && <p className="small muted">{walls[0].other ? `Inside wall shared with ${house.rooms.find((x) => x.id === walls[0].other)?.name ?? 'another room'}` : 'Outside wall'} · part of {house.rooms.find((x) => x.id === walls[0].room)?.name}'s wall</p>}
+        {walls.length === 1 && <Num label={info[0].whole - info[0].len > 0.01 ? 'Whole wall length' : 'Length'} unit="m" step={0.05} min={0.1} value={info[0].whole} onChange={(v) => upd((h) => setWallLength(h, walls[0].room, walls[0].edge, v))} />}
         <div className="chips">
           <button type="button" className="btn-secondary" onClick={() => pick(every(true))}>All outside walls</button>
           <button type="button" className="btn-secondary" onClick={() => pick(every(false))}>All walls</button>
-          {sel.room && <button type="button" className="btn-secondary" onClick={() => pick(roomEdges(house.rooms.find((r) => r.id === sel.room)!).map((e) => ({ room: sel.room, edge: e.idx })))}>This room's walls</button>}
+          {sel.room && <button type="button" className="btn-secondary" onClick={() => pick(every(false, sel.room))}>This room's walls</button>}
         </div>
         <label className="hf"><span className="eyebrow">Wall build-up</span>
           <BuildupSelect label="Wall build-up" value={common(ids)} options={ofKind(house, 'wall')} onPick={(id) => upd((h) => {
-            info.forEach((i) => wallKeys(h, i.w.room, i.w.edge, storey).forEach((k) => { h.faceBuildup[k] = id; }));
+            info.forEach((i) => i.keys.forEach((k) => { h.faceBuildup[k] = id; }));
             // The last pick becomes what the next wall drawn starts with.
             h.defaults[info.some((i) => i.outside) ? 'extWall' : 'intWall'] = id;
           })} />
         </label>
         {Us.length > 0 && <p className="small">U-value {Us.length && Math.min(...Us) === Math.max(...Us) ? fmt(Us[0], 2) : `${fmt(Math.min(...Us), 2)}–${fmt(Math.max(...Us), 2)}`} W/m²K</p>}
-        <div className="chips" role="group" aria-label="Other side of the wall">
-          <button type="button" className={`chip${info.every((i) => !i.party) ? ' on' : ''}`} onClick={() => upd((h) => info.forEach((i) => { delete h.faceBoundary[i.keys[0]]; }))}>Outside</button>
-          <button type="button" className={`chip${info.every((i) => i.party) ? ' on' : ''}`} disabled={info.some((i) => !i.outside)} title="Neighbour's side, at the neighbour temperature"
-            onClick={() => upd((h) => info.forEach((i) => { h.faceBoundary[i.keys[0]] = 'party'; }))}>Party wall</button>
-        </div>
+        {info.length === 1 && (info[0].w.gap ?? 0) > 0.01 && (
+          <p className="small">Drawn <b>{Math.round(info[0].w.gap! * 1000)} mm</b> thick: the space between the two rooms. {info[0].thick > 0 && Math.abs(info[0].thick - info[0].w.gap!) > 0.005 ? `Its build-up is ${Math.round(info[0].thick * 1000)} mm, so the rooms are ${Math.round(Math.abs(info[0].thick - info[0].w.gap!) * 1000)} mm ${info[0].w.gap! > info[0].thick ? 'too far apart' : 'too close'} to match it.` : 'That matches its build-up.'}</p>
+        )}
+        {info.every((i) => i.w.span && !((i.w.gap ?? 0) > 0.01)) && (
+          <div className="stack-6" role="group" aria-label="Where the wall sits on the line">
+            <div className="eyebrow">Wall sits on the drawn line{info.length === 1 && info[0].thick > 0 ? ` · ${Math.round(info[0].thick * 1000)} mm thick` : ''}</div>
+            <div className="chips">
+              {([['in', 'Inside'], ['ctr', 'Centred'], ['out', 'Outside']] as const).map(([a, l]) => (
+                <button key={a} type="button" className={`chip${info.every((i) => i.align === a) ? ' on' : ''}`}
+                  title={a === 'in' ? 'The wall fills the room side of the line' : a === 'out' ? 'The wall sits on the far side of the line: the line is the inside face' : 'Half the wall each side of the line'}
+                  onClick={() => upd((h) => info.forEach((i) => setPieceAlign(h, i.w.room, i.w.edge, storey, i.w, a)))}>{l}</button>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="eyebrow">What's on the other side of this wall</div>
+        {info.filter((i) => i.w.other).map((i) => {
+          const o = house.rooms.find((x) => x.id === i.w.other);
+          return <p key={`${i.w.room}-${i.w.edge}-${i.w.other}`} className="small"><b>{o?.name ?? 'Another room'}</b> · {o ? (o.heated ? `heated to ${o.setpoint} °C` : 'unheated') : ''}. An inside wall: heat only moves through it when the two rooms differ in temperature.</p>;
+        })}
+        {info.some((i) => !i.w.other) && (
+          <div className="chips" role="group" aria-label="Other side of the wall">
+            <button type="button" className={`chip${info.filter((i) => !i.w.other).every((i) => !i.party) ? ' on' : ''}`} onClick={() => upd((h) => info.filter((i) => !i.w.other).forEach((i) => { delete h.faceBoundary[i.keys[0]]; }))}>Outside</button>
+            <button type="button" className={`chip${info.filter((i) => !i.w.other).every((i) => i.party) ? ' on' : ''}`} disabled={info.some((i) => !i.w.other && !i.outside)} title="Neighbour's side, at the neighbour temperature"
+              onClick={() => upd((h) => info.filter((i) => !i.w.other).forEach((i) => { h.faceBoundary[i.keys[0]] = 'party'; }))}>Party wall</button>
+          </div>
+        )}
         <button type="button" className="btn-link" onClick={() => upd((h) => info.forEach((i) => h.openings.forEach((o) => { if (o.room === i.w.room && wallIndex(h, o) === i.w.edge) delete o.t; })))}>Spread windows and doors evenly</button>
         <a className="btn-link" href={href('buildups')}>Edit build-up layers ›</a>
         <button type="button" className="btn-link" onClick={() => setSel({ ...sel, walls: [] })}>Clear selection</button>
@@ -245,13 +268,15 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
     if (!o) return null;
     const set = (patch: Partial<typeof o>) => upd((h) => { const x = h.openings.find((q) => q.id === o.id); if (x) Object.assign(x, patch); });
     const kind = house.buildups.find((b) => b.id === o.buildup)?.kind ?? 'glazing';
+    // No bigger than the wall it is in.
+    const oRoom = house.rooms.find((x) => x.id === o.room), maxW = oRoom ? roomEdges(oRoom)[wallIndex(house, o)]?.len ?? 20 : 20, maxH = oRoom ? roomHeight(house, oRoom) : 3;
     return (
       <>
         <div className="eyebrow">{kind === 'door' ? 'Door' : 'Window'} · {house.rooms.find((r) => r.id === o.room)?.name}{o.to ? ` to ${house.rooms.find((r) => r.id === o.to)?.name ?? '?'}` : ''}</div>
         <input className="h-text" value={o.name} aria-label="Name" onChange={(e) => set({ name: e.target.value })} />
         <div className="hf-row">
-          <Num label="Width" unit="m" step={0.05} min={0.3} value={o.w} onChange={(v) => set({ w: Math.max(0.3, v) })} />
-          <Num label="Height" unit="m" step={0.05} min={0.3} value={o.h} onChange={(v) => set({ h: Math.max(0.3, v) })} />
+          <Num label="Width" unit="m" step={0.05} min={0.3} max={maxW} value={o.w} onChange={(v) => set({ w: Math.min(maxW, Math.max(0.3, v)) })} />
+          <Num label="Height" unit="m" step={0.05} min={0.3} max={maxH} value={o.h} onChange={(v) => set({ h: Math.min(maxH, Math.max(0.3, v)) })} />
         </div>
         <label className="hf"><span className="eyebrow">{kind === 'door' ? 'Door type' : 'Glazing'}</span>
           <select className="select" value={o.buildup} onChange={(e) => set({ buildup: e.target.value })}>{ofKind(house, kind === 'door' ? 'door' : 'glazing').map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>

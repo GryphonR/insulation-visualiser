@@ -162,27 +162,16 @@
 .dormer-row { display: inline-flex; gap: 4px; align-items: center; } .dormer-row .thk-input { width: 52px; }
 
 /* Drawing canvas (board 1) */
-.draw-layout { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
-.draw-menu { flex: 0 0 148px; display: flex; flex-direction: column; border: 2px solid var(--ink); background: var(--card); }
-.draw-menu button { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 10px; border: 0; border-top: 1px solid var(--line-strong); background: transparent; font-size: 14px; text-align: left; cursor: pointer; color: var(--ink); }
-.draw-menu > button:first-child { border-top: 0; }
-.draw-menu button.on { background: #fbe6d8; box-shadow: inset 4px 0 0 var(--accent); font-weight: 600; }
-.draw-menu .g { width: 18px; text-align: center; font-size: 16px; }
-.draw-menu-end { display: flex; flex-direction: column; margin-top: 8px; border-top: 2px solid var(--ink); }
-.draw-hint { padding: 8px 10px; border-top: 1px solid var(--line-strong); }
-.draw-wrap { position: relative; flex: 1 1 420px; min-width: 0; }
-svg.draw { display: block; width: 100%; aspect-ratio: 8 / 5; border: 2px solid var(--ink); background: #fff; touch-action: none; outline: none; user-select: none; }
-svg.draw:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
-.draw-zoom { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 4px; }
+svg.draw { display: block; width: 100%; height: 100%; background: #fff; touch-action: none; outline: none; user-select: none; }
+svg.draw:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+.draw-zoom { position: absolute; right: 10px; bottom: 10px; z-index: 2; display: flex; gap: 4px; }
 .draw-zoom .btn-secondary { min-height: 32px; padding: 0 10px; background: var(--card); }
-.draw-note { position: absolute; left: 10px; bottom: 10px; max-width: 70%; padding: 6px 10px; background: #fdf3ea; border: 1px solid #c2410c; font-size: 13px; }
+.draw-note { position: absolute; left: 62px; bottom: 56px; max-width: 50%; padding: 6px 10px; background: #fdf3ea; border: 1px solid #c2410c; font-size: 13px; }
 .draw-dim { font-family: var(--mono); fill: #14212b; stroke: #fff; paint-order: stroke; pointer-events: none; }
 svg.draw .vx.on { fill: #fdf3ea; }
 svg.draw .vx.moving { fill: #c2410c; }
 .layers { display: flex; flex-direction: column; gap: 10px; }
 .layer-stack { display: flex; flex-direction: column; border: 2px solid var(--ink); background: var(--card); }
-.layer-col { flex: 0 0 270px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
-.layer-inspector { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 2px solid var(--ink); background: var(--card); }
 .layer-band { display: flex; flex-direction: column; background: repeating-linear-gradient(135deg, #f6f1e7, #f6f1e7 6px, #fbf8f1 6px, #fbf8f1 12px); border-top: 1px solid var(--line-strong); }
 .layer-band > button { display: flex; flex-direction: column; align-items: flex-start; min-height: 40px; padding: 4px 12px 4px 26px; border: 0; background: transparent; cursor: pointer; text-align: left; font-size: 13px; color: var(--ink); }
 .layer-band.on { background: #e3f2ef; box-shadow: inset 4px 0 0 #0b8a7a; }
@@ -194,9 +183,34 @@ svg.draw .vx.moving { fill: #c2410c; }
 .layer-storey button { flex: 1 1 140px; display: flex; flex-direction: column; align-items: flex-start; min-height: 44px; padding: 4px 12px; border: 0; background: transparent; cursor: pointer; text-align: left; font-size: 14px; color: var(--ink); }
 .layer-storey.on { background: #fbe6d8; box-shadow: inset 4px 0 0 var(--accent); }
 .layer-storey .thk-input, .layer-band .thk-input { width: 64px; }
-.draw-snap { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--line-strong); }
-.draw-snap .select { min-height: 32px; margin-left: 4px; }
 
 .tiles-center { text-align: center; }
 .tiles-center .tile { align-items: center; }
 .tiles-center .tile-value { justify-content: center; }
+
+/* Floor plan: the canvas fills the page and the tools float over it */
+.plan-stage { position: relative; flex: 1; min-height: 480px; overflow: hidden; background: #fff; }
+.plan-stage .draw-wrap { position: absolute; inset: 0; }
+.draw-menu { position: absolute; left: 10px; top: 10px; z-index: 3; display: flex; flex-direction: column; border: 1.5px solid var(--ink); background: rgba(255, 255, 255, 0.94); }
+.draw-menu button { position: relative; width: 34px; height: 34px; padding: 0; border: 0; border-top: 1px solid var(--line-strong); background: transparent; font-size: 16px; cursor: pointer; color: var(--ink); }
+.draw-menu > button:first-child { border-top: 0; }
+.draw-menu button.on { background: #fbe6d8; box-shadow: inset 3px 0 0 var(--accent); }
+.draw-menu .lock { position: absolute; right: 4px; top: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.draw-menu-end { display: flex; flex-direction: column; border-top: 2px solid var(--ink); }
+.draw-grid-sel { width: 34px; min-height: 26px; padding: 0; border: 0; border-top: 1px solid var(--line-strong); background: transparent; font-size: 10px; text-align: center; cursor: pointer; color: var(--ink); }
+.float-top { position: absolute; left: 56px; top: 10px; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; max-width: calc(100% - 330px); padding: 5px 10px; border: 1.5px solid var(--ink); background: rgba(255, 255, 255, 0.94); }
+.float-top .draw-grid-sel { border: 1px solid var(--line-strong); min-height: 24px; }
+.plan-checks summary { cursor: pointer; font-size: 13px; color: #9a3412; }
+.plan-checks > div { position: absolute; left: 0; top: 100%; margin-top: 4px; width: min(420px, 90vw); padding: 8px 10px; border: 1.5px solid var(--ink); background: #fff; }
+.plan-hint { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 3; width: max-content; max-width: min(640px, calc(100% - 420px)); padding: 5px 12px; border: 1px solid var(--line-strong); background: rgba(255, 255, 255, 0.94); }
+.plan-hint summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.plan-hint[open] summary { display: none; }
+.plan-hint p { margin: 0; }
+.panel-toggle { position: absolute; right: 10px; top: 10px; z-index: 4; width: 24px; height: 34px; border: 1.5px solid var(--ink); background: #fff; cursor: pointer; padding: 0; }
+.float-panel { position: absolute; right: 40px; top: 10px; bottom: 56px; z-index: 3; width: 264px; overflow: auto; display: flex; flex-direction: column; border: 1.5px solid var(--ink); background: rgba(255, 255, 255, 0.96); font-size: 13px; }
+.fp-sec { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line-strong); }
+.fp-sec h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+.fp-sec summary { cursor: pointer; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.float-panel .layer-stack { border: 0; }
+.float-panel .layer-storey button { min-height: 36px; font-size: 13px; }
+.float-panel .layer-band > button { min-height: 32px; }

@@ -113,6 +113,7 @@ export interface FloorZone { id: string; band: number; name: string; poly: Pt[];
 export interface Device { id: string; room: string; name: string; fan: boolean; opts: Array<[string, number]>; pick: number }
 export interface Factor { id: string; label: string; dq: number; on: boolean }
 export type Boundary = 'out' | 'party';
+export type WallAlign = 'in' | 'ctr' | 'out';
 export type DefaultKey = 'extWall' | 'intWall' | 'groundFloor' | 'intFloor' | 'loftCeiling' | 'loftRoof' | 'flatRoof' | 'exposedFloor'
   | 'slope' | 'knee' | 'dormerWall' | 'dormerRoof';
 
@@ -127,6 +128,8 @@ export interface House {
   /** Per-face build-up and boundary choices, keyed by Face.key. */
   faceBuildup: Record<string, string>;
   faceBoundary: Record<string, Boundary>;
+  /** Where each drawn wall's thickness sits on its line, from the interior of the room the wall belongs to (inside walls: the first room of the pair). Default: outside walls outside the line, inside walls centred. */
+  wallAlign: Record<string, WallAlign>;
   /** Drawn patches of floors and ceilings with a different build-up. */
   zones?: FloorZone[];
   neighbourT: number;
@@ -155,6 +158,8 @@ export interface House {
   ageBand?: 'AJ' | 'K';
   /** The user's own default temperature for each room type, overriding the table. */
   roomTemps?: Partial<Record<RoomType, number>>;
+  /** A dashed footprint (metres) to draw within, from the new-project dialog; not a room. */
+  guide?: { w: number; d: number };
   /** Tracing underlay for the plan: a floor-plan image per storey, or satellite imagery. */
   trace?: TraceSettings;
 }
@@ -413,6 +418,9 @@ export function roomEdges(r: Room): Array<Edge & { side: Side; id: string; idx: 
 export const onStorey = (r: Room, s: number) => r.storey <= s && s < r.storey + r.span;
 const topStorey = (r: Room) => r.storey + r.span - 1;
 
+/** A window or door's area, never more than its wall: a mistyped size must not swamp the whole house. */
+export const openingArea = (o: { w: number; h: number }, wallLen: number, roomH: number) => Math.min(o.w * o.h, wallLen * roomH);
+
 export function roomHeight(h: House, r: Room): number {
   let t = 0;
   for (let s = r.storey; s <= topStorey(r); s++) t += (h.storeys[s]?.h ?? 0) + (s < topStorey(r) ? h.storeys[s]?.zone ?? 0 : 0);
@@ -428,6 +436,13 @@ export function roomVolume(h: House, r: Room): number {
   const below = roomHeight(h, r) - (h.storeys[topStorey(r)]?.h ?? 0);
   return shapeOf(r, sh).V + roomArea(r) * below;
 }
+
+/**
+ * The widest gap between two rooms that can still be a wall between them: the thickest wall build-up in the project, plus a little.
+ * (The inside wall's own build-up can't be used: it is only known once the wall has been recognised.)
+ */
+export const maxWallGap = (h: House) =>
+  Math.min(0.6, Math.max(0, ...h.buildups.filter((b) => b.kind === 'wall').map((b) => b.layers.reduce((s, [, mm]) => s + mm, 0) / 1000)) + 0.02);
 
 export const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
@@ -451,7 +466,9 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
   const floorB = B(`gf:${r.id}`, 'groundFloor');
   const myEdges = roomEdges(r);
   const isPoly = !!(r.poly && r.poly.length >= 3);
+  const rh = roomHeight(h, r);
   const doorsDone = new Set<string>();
+  const wallGap = maxWallGap(h);
   for (const e of myEdges) {
     const side = e.side, ext: Face[] = [];
     for (let s = r.storey; s <= top; s++) {
@@ -461,7 +478,7 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
       for (const o of h.rooms) {
         if (o.id === r.id || !onStorey(o, s)) continue;
         for (const f of roomEdges(o)) {
-          const span = sharedSpan(e, f);
+          const span = sharedSpan(e, f, 0.02, wallGap);
           if (!span) continue;
           cuts.push(span);
           const key = `iw:${pairKey(r.id, o.id)}:${s}`, b = B(key, 'intWall');
@@ -469,11 +486,11 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
           const doors = s === Math.max(r.storey, o.storey) && !doorsDone.has(key)
             ? h.openings.filter((d) => d.to && ((d.room === r.id && d.to === o.id) || (d.room === o.id && d.to === r.id))) : [];
           doorsDone.add(key);
-          const doorA = Math.min(doors.reduce((t, d) => t + d.w * d.h, 0), (span[1] - span[0]) * wallH(e, s, false));
+          const doorA = Math.min(doors.reduce((t, d) => t + openingArea(d, e.len, rh), 0), (span[1] - span[0]) * wallH(e, s, false));
           faces.push({ key, label: `${side} wall`, kind: 'wall', side, az: e.az, to: { k: 'room', id: o.id }, area: (span[1] - span[0]) * wallH(e, s, false) - doorA, buildup: b, U: buildupU(b, FILMS.intWall) });
           for (const d of doors) {
             const db = h.buildups.find((x) => x.id === d.buildup) ?? h.buildups[0];
-            faces.push({ key: `op:${d.id}`, label: d.name, kind: 'door', side, az: e.az, to: { k: 'room', id: o.id }, area: d.w * d.h, buildup: db, U: buildupU(db, FILMS.intWall) });
+            faces.push({ key: `op:${d.id}`, label: d.name, kind: 'door', side, az: e.az, to: { k: 'room', id: o.id }, area: openingArea(d, e.len, rh), buildup: db, U: buildupU(db, FILMS.intWall) });
           }
         }
       }
@@ -499,14 +516,14 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
     // chosen wall, or the first wall facing its compass side.
     const ops = h.openings.filter((o) => !o.to && o.room === r.id && (isPoly ? (o.edge ?? myEdges.findIndex((x) => x.side === o.side)) === e.idx : o.side === side));
     const gross = ext.reduce((t, f) => t + f.area, 0);
-    const opArea = Math.min(gross, ops.reduce((t, o) => t + o.w * o.h, 0));
+    const opArea = Math.min(gross, ops.reduce((t, o) => t + openingArea(o, e.len, rh), 0));
     for (const f of ext) f.area -= gross > 0 ? opArea * (f.area / gross) : 0;
     faces.push(...ext);
     for (const o of ops) {
       const b = h.buildups.find((x) => x.id === o.buildup) ?? h.buildups[0];
       const shade = SHADING[o.shade ?? 'none']?.[1] ?? 1;
       const gEff = b.kind === 'glazing' && b.g != null ? b.g * (1 - (b.frame ?? 0.3)) * shade : undefined;
-      faces.push({ key: `op:${o.id}`, label: o.name, kind: b.kind === 'door' ? 'door' : 'window', side, az: e.az, to: ext[0]?.to ?? { k: 'out' }, area: o.w * o.h, buildup: b, U: buildupU(b), gEff });
+      faces.push({ key: `op:${o.id}`, label: o.name, kind: b.kind === 'door' ? 'door' : 'window', side, az: e.az, to: ext[0]?.to ?? { k: 'out' }, area: openingArea(o, e.len, rh), buildup: b, U: buildupU(b), gEff });
     }
   }
   // Floor
@@ -776,7 +793,9 @@ export function calcHouse(h: House): HouseResult {
     // Openings must sit on outside wall: check each wall that has any.
     const es = roomEdges(r), isPoly = !!(r.poly && r.poly.length >= 3);
     for (const e of es) {
-      const ops = h.openings.filter((o) => !o.to && o.room === r.id && (isPoly ? (o.edge ?? es.findIndex((x) => x.side === o.side)) === e.idx : o.side === e.side));
+      const mine = h.openings.filter((o) => o.room === r.id && (isPoly ? (o.edge ?? es.findIndex((x) => x.side === o.side)) === e.idx : o.side === e.side));
+      for (const o of mine) if (o.w > e.len + 0.01 || o.h > roomHeight(h, r) + 0.01) checks.push({ level: 'warn', text: `${r.name}: ${o.name} is ${o.w} × ${o.h} m, bigger than its wall; it is counted at no more than the wall's ${(e.len * roomHeight(h, r)).toFixed(1)} m².` });
+      const ops = mine.filter((o) => !o.to);
       if (!ops.length) continue;
       const wall = (faces.get(r.id) ?? []).filter((f) => f.kind === 'wall' && f.key.startsWith(`w:${r.id}:${e.id}:`)).reduce((t, f) => t + f.area, 0);
       if (wall < 0.05) checks.push({ level: 'error', text: `${r.name}: ${ops.map((o) => o.name).join(', ')} on ${isPoly ? `wall ${e.idx + 1}` : `the ${e.side} side`}, which has no outside wall left.` });

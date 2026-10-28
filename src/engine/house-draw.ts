@@ -1,8 +1,8 @@
 // Edits behind the floor-plan drawing canvas: plain changes to a House copy, no UI.
 import { edges, overlapAreaPoly, pointInPoly, selfIntersects, sharedSpan } from './geom';
 import type { Pt } from './geom';
-import { defaultTemp, fitEdges, onStorey, pairKey, rectShapeToEdges, roomEdges, roomPoly, setOutline } from './house';
-import type { House, Room, Side } from './house';
+import { defaultTemp, fitEdges, maxWallGap, onStorey, pairKey, rectShapeToEdges, roomEdges, roomPoly, setOutline } from './house';
+import type { House, Room, Side, WallAlign } from './house';
 import type { Emitter } from './house-heating';
 
 const SIDE_IDX: Record<Side, number> = { N: 0, E: 1, S: 2, W: 3 };
@@ -11,7 +11,7 @@ const WALL_NO = ['sl', 'ev', 'dw', 'dc', 'dr', 'dg'];
 
 /** Rewrite the wall number in a room's face keys and openings; `f` returns the new number, or null to drop that wall's settings. */
 function renumberWalls(h: House, id: string, f: (i: number) => number | null): void {
-  for (const m of [h.faceBuildup, h.faceBoundary] as Array<Record<string, string>>) {
+  for (const m of [h.faceBuildup, h.faceBoundary, h.wallAlign] as Array<Record<string, string>>) {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(m)) {
       const w = k.match(/^w:([^:]+):e(\d+):(\d+)$/), n = k.match(/^(\w\w):([^:]+):(\d+)$/);
@@ -33,7 +33,7 @@ export function ensurePoly(h: House, id: string): Room | undefined {
   if (r.shape && !r.shape.edges) r.shape = { ...r.shape, edges: rectShapeToEdges(r.shape) };
   setOutline(r, roomPoly(r));
   // Rectangle walls N, E, S, W become walls 0–3; slope settings 0 and 1 go to the walls they sat on.
-  for (const m of [h.faceBuildup, h.faceBoundary] as Array<Record<string, string>>) {
+  for (const m of [h.faceBuildup, h.faceBoundary, h.wallAlign] as Array<Record<string, string>>) {
     for (const k of Object.keys(m)) {
       const w = k.match(/^w:([^:]+):([NESW]):(\d+)$/), n = k.match(/^(\w\w):([^:]+):(\d+)$/);
       if (w && w[1] === id) { m[`w:${id}:e${SIDE_IDX[w[2] as Side]}:${w[3]}`] = m[k]; delete m[k]; }
@@ -53,7 +53,7 @@ export function insertCorner(h: House, id: string, i: number, p: Pt): void {
   if (r.shape?.edges) r.shape.edges.splice(i + 1, 0, { ...r.shape.edges[i], dormer: null });
   const copy = (m: Record<string, string>) => { for (const [k, v] of Object.entries(m)) { const w = k.match(/^w:([^:]+):e(\d+):(\d+)$/); if (w && w[1] === id && +w[2] === i) m[`w:${id}:e${i + 1}:${w[3]}`] = v; } };
   renumberWalls(h, id, (j) => (j > i ? j + 1 : j));
-  copy(h.faceBuildup); copy(h.faceBoundary);
+  copy(h.faceBuildup); copy(h.faceBoundary); copy(h.wallAlign);
   setOutline(r, poly);
 }
 
@@ -87,10 +87,10 @@ export function deleteRoom(h: House, id: string): void {
 export function freeSpans(h: House, r: Room, idx: number, storey: number): Array<[number, number]> {
   const e = roomEdges(r)[idx];
   if (!e) return [];
-  const cuts: Array<[number, number]> = [];
+  const cuts: Array<[number, number]> = [], gap = maxWallGap(h);
   for (const o of h.rooms) {
     if (o.id === r.id || !onStorey(o, storey)) continue;
-    for (const f of roomEdges(o)) { const s = sharedSpan(e, f); if (s) cuts.push(s); }
+    for (const f of roomEdges(o)) { const s = sharedSpan(e, f, 0.02, gap); if (s) cuts.push(s); }
   }
   cuts.sort((a, b) => a[0] - b[0]);
   const out: Array<[number, number]> = [];
@@ -105,12 +105,66 @@ export const isOutside = (h: House, r: Room, idx: number, storey: number) => fre
 export function wallKeys(h: House, roomId: string, idx: number, storey: number): string[] {
   const r = h.rooms.find((x) => x.id === roomId), e = r && roomEdges(r)[idx];
   if (!r || !e) return [];
-  const keys = [`w:${roomId}:${e.id}:${storey}`];
+  const keys = [`w:${roomId}:${e.id}:${storey}`], gap = maxWallGap(h);
   for (const o of h.rooms) {
     if (o.id === roomId || !onStorey(o, storey)) continue;
-    if (roomEdges(o).some((f) => sharedSpan(e, f))) keys.push(`iw:${pairKey(roomId, o.id)}:${storey}`);
+    if (roomEdges(o).some((f) => sharedSpan(e, f, 0.02, gap))) keys.push(`iw:${pairKey(roomId, o.id)}:${storey}`);
   }
   return keys;
+}
+
+/** A stretch of a wall that is one thing: outside wall, or the inside wall shared with `other`. A wall is split where its neighbours begin and end. */
+export interface WallPiece { span: [number, number]; other?: string; /** Inside walls: the metres between the two rooms' lines, which is how thick the wall is drawn (0 when the lines coincide). */ gap?: number }
+export function wallPieces(h: House, roomId: string, idx: number, storey: number): WallPiece[] {
+  const r = h.rooms.find((x) => x.id === roomId), e = r && roomEdges(r)[idx];
+  if (!r || !e) return [];
+  const out: WallPiece[] = freeSpans(h, r, idx, storey).map((span) => ({ span })), gap = maxWallGap(h);
+  for (const o of h.rooms) {
+    if (o.id === roomId || !onStorey(o, storey)) continue;
+    for (const f of roomEdges(o)) {
+      const s = sharedSpan(e, f, 0.02, gap);
+      if (s) { const off = (f.a[0] - e.a[0]) * e.n[0] + (f.a[1] - e.a[1]) * e.n[1]; out.push({ span: s, other: o.id, gap: off > 0.01 ? off : 0 }); }
+    }
+  }
+  return out.sort((a, b) => a.span[0] - b.span[0]);
+}
+
+/** The face keys of one piece of a wall. */
+export const pieceKeys = (h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'>): string[] => {
+  const e = roomEdges(h.rooms.find((x) => x.id === roomId) ?? ({} as Room))[idx];
+  return !e ? [] : p.other ? [`iw:${pairKey(roomId, p.other)}:${storey}`] : [`w:${roomId}:${e.id}:${storey}`];
+};
+
+const flipAlign = (a: WallAlign): WallAlign => (a === 'in' ? 'out' : a === 'out' ? 'in' : a);
+/** The first room of an inside wall's pair: the room its stored alignment is measured from. */
+const refRoom = (key: string) => (key.startsWith('iw:') ? key.split(':')[1].split('|')[0] : '');
+
+/** How thick a piece of wall is drawn, in metres: the layers of its build-up (nothing if it has none). */
+export function pieceThickness(h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'>): number {
+  const key = pieceKeys(h, roomId, idx, storey, p)[0];
+  if (!key) return 0;
+  const b = h.buildups.find((x) => x.id === (h.faceBuildup[key] ?? h.defaults[key.startsWith('w:') ? 'extWall' : 'intWall']));
+  return b ? b.layers.reduce((t, [, mm]) => t + mm, 0) / 1000 : 0;
+}
+
+/** Where a piece of wall sits on its drawn line, seen from the interior of `roomId`: toward that room (in), centred, or away from it (out). */
+export function pieceAlign(h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'>): WallAlign {
+  const key = pieceKeys(h, roomId, idx, storey, p)[0];
+  const a = (key && h.wallAlign?.[key]) || (p.other ? 'ctr' : 'out');
+  return key && refRoom(key) && refRoom(key) !== roomId ? flipAlign(a) : a;
+}
+
+export function setPieceAlign(h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'>, a: WallAlign): void {
+  const key = pieceKeys(h, roomId, idx, storey, p)[0];
+  if (!key) return;
+  h.wallAlign = h.wallAlign ?? {};
+  h.wallAlign[key] = refRoom(key) && refRoom(key) !== roomId ? flipAlign(a) : a;
+}
+
+/** The two end points of a piece of a wall, in metres. */
+export function pieceSeg(h: House, roomId: string, idx: number, span: [number, number]): [Pt, Pt] | null {
+  const r = h.rooms.find((x) => x.id === roomId), e = r && roomEdges(r)[idx];
+  return e ? [[e.a[0] + e.d[0] * span[0], e.a[1] + e.d[1] * span[0]], [e.a[0] + e.d[0] * span[1], e.a[1] + e.d[1] * span[1]]] : null;
 }
 
 export interface WallHit { room: string; edge: number; t: number; dist: number; at: Pt }
@@ -163,7 +217,7 @@ export const roomAt = (h: House, storey: number, p: Pt): Room | undefined => h.r
 /** Move every storey number up or down by one (a basement added or removed below the ground floor). */
 function shiftStoreys(h: House, d: 1 | -1): void {
   h.rooms.forEach((r) => { r.storey += d; });
-  for (const m of [h.faceBuildup, h.faceBoundary] as Array<Record<string, string>>) {
+  for (const m of [h.faceBuildup, h.faceBoundary, h.wallAlign] as Array<Record<string, string>>) {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(m)) {
       const x = k.match(/^((?:w:[^:]+:[^:]+|iw:[^:]+):)(\d+)$/);
@@ -194,13 +248,20 @@ export function removeBasement(h: House): void {
 
 // --- Snapping and exact sizes -------------------------------------------------------------------------
 
-/** Nudge that sits a moving outline's corners flush on nearby vertical or horizontal walls of other rooms (within `tol` m). */
-export function flushDelta(moving: Pt[], others: Pt[][], tol = 0.2): Pt {
+/** Thickness in metres of the default inside wall: how far apart two rooms sit when a wall is drawn between them. */
+export const innerWallThickness = (h: House) => (h.buildups.find((b) => b.id === h.defaults.intWall)?.layers ?? []).reduce((t, [, mm]) => t + mm, 0) / 1000;
+
+/**
+ * Nudge that sits a moving outline's corners flush on nearby vertical or horizontal walls of other rooms (within `tol` m),
+ * or, when `off` is given, a wall's thickness away on the side the corner is already on: the two rooms then have a wall between them.
+ */
+export function flushDelta(moving: Pt[], others: Pt[][], tol = 0.2, off = 0): Pt {
   let bx = tol, by = tol, cx = 0, cy = 0;
+  const lines = (at: number, v: number) => (off > 0.005 ? [at, v >= at ? at + off : at - off] : [at]);
   for (const v of moving) for (const poly of others) poly.forEach((a, i) => {
     const b = poly[(i + 1) % poly.length];
-    if (Math.abs(a[0] - b[0]) < 1e-6 && v[1] >= Math.min(a[1], b[1]) - tol && v[1] <= Math.max(a[1], b[1]) + tol && Math.abs(a[0] - v[0]) < bx) { bx = Math.abs(a[0] - v[0]); cx = a[0] - v[0]; }
-    if (Math.abs(a[1] - b[1]) < 1e-6 && v[0] >= Math.min(a[0], b[0]) - tol && v[0] <= Math.max(a[0], b[0]) + tol && Math.abs(a[1] - v[1]) < by) { by = Math.abs(a[1] - v[1]); cy = a[1] - v[1]; }
+    if (Math.abs(a[0] - b[0]) < 1e-6 && v[1] >= Math.min(a[1], b[1]) - tol && v[1] <= Math.max(a[1], b[1]) + tol) for (const t of lines(a[0], v[0])) if (Math.abs(t - v[0]) < bx) { bx = Math.abs(t - v[0]); cx = t - v[0]; }
+    if (Math.abs(a[1] - b[1]) < 1e-6 && v[0] >= Math.min(a[0], b[0]) - tol && v[0] <= Math.max(a[0], b[0]) + tol) for (const t of lines(a[1], v[1])) if (Math.abs(t - v[1]) < by) { by = Math.abs(t - v[1]); cy = t - v[1]; }
   });
   return [cx, cy];
 }
@@ -253,7 +314,7 @@ export function innerDoorAt(h: House, r: Room, idx: number, storey: number, t: n
   for (const o of h.rooms) {
     if (o.id === r.id || !onStorey(o, storey)) continue;
     for (const f of roomEdges(o)) {
-      const s = sharedSpan(e, f);
+      const s = sharedSpan(e, f, 0.02, maxWallGap(h));
       if (!s || t < s[0] - 0.05 || t > s[1] + 0.05 || s[1] - s[0] < Math.min(w, 0.4)) continue;
       const half = Math.min(w, s[1] - s[0]) / 2;
       return { to: o.id, t: Math.max(s[0] + half, Math.min(s[1] - half, t)) };
@@ -295,7 +356,7 @@ export function splitRoom(h: House, id: string, a: Pt, b: Pt, newId: string): bo
   const loopA = poly.slice(i, j + 1), loopB = [...poly.slice(j), ...poly.slice(0, i + 1)];
   // Old wall k becomes wall fA(k) of the first room, or fB(k) of the second.
   const inA = (k: number) => k >= i && k < j, fA = (k: number) => k - i, fB = (k: number) => (k >= j ? k - j : n - j + k);
-  for (const m of [h.faceBuildup, h.faceBoundary] as Array<Record<string, string>>) {
+  for (const m of [h.faceBuildup, h.faceBoundary, h.wallAlign] as Array<Record<string, string>>) {
     const out: Record<string, string> = {};
     for (const [key, v] of Object.entries(m)) {
       const w = key.match(/^w:([^:]+):e(\d+):(\d+)$/), x = key.match(/^(\w\w):([^:]+):(\d+)$/), iw = key.match(/^iw:([^:]+):(\d+)$/), one = key.match(/^(gf|xf|lc|fr):(.+)$/);
@@ -340,7 +401,7 @@ export function copyRooms(h: House, ids: string[], d: Pt, storey: number | undef
     setOutline(c, r.poly.map((q): Pt => [q[0] + d[0], q[1] + d[1]]));
     h.rooms.push(c);
     out.push(nid);
-    for (const m of [h.faceBuildup, h.faceBoundary] as Array<Record<string, string>>) {
+    for (const m of [h.faceBuildup, h.faceBoundary, h.wallAlign] as Array<Record<string, string>>) {
       for (const [key, v] of Object.entries(m)) {
         const w = key.match(/^w:([^:]+):(e\d+):(\d+)$/), x = key.match(/^(\w\w):([^:]+):(\d+)$/), one = key.match(/^(xf|lc|fr|gf):(.+)$/);
         if (w && w[1] === id) m[`w:${nid}:${w[2]}:${+w[3] + ds}`] = v;
@@ -404,9 +465,9 @@ export function problems(h: House, storey: number): Problems {
     const A = rooms[x], B = rooms[y];
     if (overlapAreaPoly(roomPoly(A), roomPoly(B)) > 0.01) { overlap.add(A.id); overlap.add(B.id); }
     for (const e of roomEdges(A)) for (const f of roomEdges(B)) {
-      if (e.d[0] * f.d[0] + e.d[1] * f.d[1] > -0.999) continue;
+      if (e.n[0] * f.n[0] + e.n[1] * f.n[1] > -0.999) continue;
       const off = (f.a[0] - e.a[0]) * e.n[0] + (f.a[1] - e.a[1]) * e.n[1];
-      if (off <= 0.02 || off > 0.25) continue;
+      if (off <= Math.max(0.02, maxWallGap(h)) || off > 0.25) continue;
       const t = (q: Pt) => (q[0] - e.a[0]) * e.d[0] + (q[1] - e.a[1]) * e.d[1];
       const t0 = Math.max(0, Math.min(t(f.a), t(f.b))), t1 = Math.min(e.len, Math.max(t(f.a), t(f.b)));
       if (t1 - t0 > 0.3) gaps.push({ a: [e.a[0] + e.d[0] * t0, e.a[1] + e.d[1] * t0], b: [e.a[0] + e.d[0] * t1, e.a[1] + e.d[1] * t1], gap: off });

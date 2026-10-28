@@ -1,8 +1,10 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { calcHouse } from '../engine/house';
 import type { House, HouseResult } from '../engine/house';
-import { chain, hasSavedProject, loadProject, saveProject } from '../engine/house-scenarios';
+import { chain, newProject } from '../engine/house-scenarios';
+import { deleteStored, hasSaved, listProjects, loadActive, newProjectId, openStored, saveProject } from '../engine/projects';
+import type { ProjectInfo } from '../engine/projects';
 import type { Project, Scenario } from '../engine/house-scenarios';
 import type { Stackup } from '../engine/library';
 
@@ -24,6 +26,12 @@ interface Ctx {
   canRedo: boolean;
   customStackups: Stackup[];
   setCustomStackups: (fn: (s: Stackup[]) => Stackup[]) => void;
+  /** The projects stored in this browser, newest first, and which one is open. Opening or creating one starts a fresh undo history. */
+  projects: ProjectInfo[];
+  projectId: string;
+  openProject: (id: string) => void;
+  createProject: (p: Project) => void;
+  deleteProject: (id: string) => void;
 }
 
 const C = createContext<Ctx | null>(null);
@@ -37,10 +45,13 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
   customStackups: Stackup[]; setCustomStackups: Ctx['setCustomStackups']; children: ReactNode;
 }) {
   // Undo / redo over the whole project (board 1f history). Edits typed in a field are grouped by the browser's own input events.
-  const [hist, setHist] = useState<{ past: Project[]; now: Project; future: Project[] }>(() => ({ past: [], now: loadProject(), future: [] }));
+  const [first] = useState(loadActive);
+  const [projectId, setProjectId] = useState(first.id);
+  const [hist, setHist] = useState<{ past: Project[]; now: Project; future: Project[] }>(() => ({ past: [], now: first.project, future: [] }));
   const project = hist.now;
-  // A first visit shows the start screen, so the demo house loaded behind it isn't saved until something changes.
-  const [initial] = useState(() => ({ project: hist.now, saved: hasSavedProject() }));
+  // A first visit shows the start screen, so the demo house loaded behind it isn't saved until something changes; a project just opened needn't be saved again.
+  const skipSave = useRef<Project | null>(hasSaved() ? null : project);
+  const [ver, bump] = useState(0);
   const setProject: Ctx['setProject'] = (fn) =>
     setHist((h) => {
       const next = typeof fn === 'function' ? fn(h.now) : fn;
@@ -48,7 +59,17 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
     });
   const undo = () => setHist((h) => (h.past.length ? { past: h.past.slice(0, -1), now: h.past[h.past.length - 1], future: [h.now, ...h.future] } : h));
   const redo = () => setHist((h) => (h.future.length ? { past: [...h.past, h.now], now: h.future[0], future: h.future.slice(1) } : h));
-  useEffect(() => { if (initial.saved || project !== initial.project) saveProject(project); }, [project, initial]);
+  useEffect(() => { if (project !== skipSave.current) saveProject(projectId, project); }, [project, projectId]);
+  const show = (id: string, p: Project) => { skipSave.current = p; setProjectId(id); setHist({ past: [], now: p, future: [] }); bump((n) => n + 1); };
+  const openProject = (id: string) => { if (id === projectId) return; const p = openStored(id); if (p) show(id, p); };
+  const createProject = (p: Project) => { const id = newProjectId(); saveProject(id, p); show(id, p); };
+  const deleteProject = (id: string) => {
+    deleteStored(id);
+    if (id !== projectId) { bump((n) => n + 1); return; }
+    const next = listProjects()[0];
+    const p = next && openStored(next.id);
+    if (next && p) show(next.id, p); else createProject(newProject());
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -72,9 +93,11 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
   }, [project.scenarios]);
   const depth = (s: Scenario) => chain(project, s.id).length - 1;
 
+  const projects = useMemo(() => listProjects(), [project, projectId, hist, ver]);
   const value: Ctx = {
     project, setProject, active, house: active.house, setHouse, upd, res: results.get(active.id)!, results, ordered, depth,
     undo, redo, canUndo: hist.past.length > 0, canRedo: hist.future.length > 0, customStackups, setCustomStackups,
+    projects, projectId, openProject, createProject, deleteProject,
   };
   return <C.Provider value={value}>{children}</C.Provider>;
 }

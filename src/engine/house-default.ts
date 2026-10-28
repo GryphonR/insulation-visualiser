@@ -72,6 +72,7 @@ export function defaultHouse(): House {
     suspended: { vent: 1500, voidH: 0.3 },
     faceBuildup: { 'w:bed3:S:1': 'solid', 'w:bath:E:1': 'solid' },
     faceBoundary: {},
+    wallAlign: {},
     neighbourT: 10,
     loft: { present: true, ach: 4, height: 1.5, pitch: 35 },
     climate: { station: 7, pct: '99.6', altitude: 60, region: 16, postcode: 'M14' },

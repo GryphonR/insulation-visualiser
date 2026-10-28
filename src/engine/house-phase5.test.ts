@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calcHouse } from './house';
+import { buildupU, calcHouse } from './house';
 import { defaultHouse } from './house-default';
 import { KWH_PER_M3, NO_KNOBS, bestFit, calibrate, demoBills, parseMeterCsv } from './house-calibrate';
 import { buildupMoisture, dewPoint, roomMoisture, vsat } from './house-moisture';
@@ -118,37 +118,30 @@ describe('glazing g-values and shading', () => {
 });
 
 describe('new-house templates', () => {
-  it('every template and age band builds a house with no errors and a sensible loss', () => {
+  it('every template and age band gives an empty house that still calculates', () => {
     for (const t of TEMPLATES) for (const a of AGE_BANDS) {
-      const h = newHouse({ template: t.id, age: a.id, W: 8, D: 7, storeys: 2, epc: {} });
+      const h = newHouse({ template: t.id, age: a.id, storeys: 2 });
+      expect(h.rooms, `${t.id} ${a.id}`).toEqual([]);
+      expect(h.openings).toEqual([]);
+      expect(h.heating.emitters).toEqual([]);
       const r = calcHouse(h);
       expect(r.checks.filter((c) => c.level === 'error'), `${t.id} ${a.id}`).toEqual([]);
-      expect(r.peakW / r.heatedA, `${t.id} ${a.id}`).toBeGreaterThan(15);
-      expect(r.peakW / r.heatedA, `${t.id} ${a.id}`).toBeLessThan(200);
-      expect(h.heating.emitters.length).toBeGreaterThan(0);
+      expect(Number.isFinite(r.peakW)).toBe(true);
     }
   });
 
-  it('older houses lose more than newer ones; a mid-terrace less than a detached', () => {
-    const loss = (age: string, template = 'semi') => calcHouse(newHouse({ template, age, W: 8, D: 7, storeys: 2, epc: {} })).peakW;
-    expect(loss('pre-1919')).toBeGreaterThan(loss('1983-95'));
-    expect(loss('1983-95')).toBeGreaterThan(loss('2007+'));
-    expect(loss('1950-66', 'mid')).toBeLessThan(loss('1950-66', 'det'));
+  it('the age sets the build-ups: older walls leak more heat than newer ones', () => {
+    const U = (age: string) => { const h = newHouse({ template: 'semi', age, storeys: 2 }); return buildupU(h.buildups.find((b) => b.id === h.defaults.extWall)!); };
+    expect(U('pre-1919')).toBeGreaterThan(U('1983-95'));
+    expect(U('1983-95')).toBeGreaterThan(U('2007+'));
   });
 
-  it('a narrow terrace (5 m) and a three-storey house build cleanly too', () => {
-    for (const inp of [{ W: 5, storeys: 2 }, { W: 9, storeys: 3 }]) {
-      const h = newHouse({ template: 'mid', age: 'pre-1919', D: 9, epc: {}, ...inp });
-      const r = calcHouse(h);
-      expect(r.checks.filter((c) => c.level === 'error')).toEqual([]);
-      expect(h.rooms.some((x) => x.type === 'bathroom')).toBe(true);
-      expect(r.heatedA).toBeCloseTo(inp.W * 9 * inp.storeys - (h.rooms.find((x) => x.id === 'utility') ? h.rooms.find((x) => x.id === 'utility')!.w * h.rooms.find((x) => x.id === 'utility')!.d : 0), 1);
-    }
-  });
-
-  it('EPC choices override the age defaults', () => {
-    const a = calcHouse(newHouse({ template: 'semi', age: '1950-66', W: 8, D: 7, storeys: 2, epc: {} })).peakW;
-    const b = calcHouse(newHouse({ template: 'semi', age: '1950-66', W: 8, D: 7, storeys: 2, epc: { wall: true, roof: true } })).peakW;
-    expect(b).toBeLessThan(a);
+  it('storeys follow the template, and a width and depth only draw a footprint', () => {
+    expect(newHouse({ template: 'bung', age: '1950-66', storeys: 3 }).storeys).toHaveLength(1);
+    expect(newHouse({ template: 'det', age: '1950-66', storeys: 3 }).storeys).toHaveLength(3);
+    expect(newHouse({ template: 'det', age: '1950-66', storeys: 2 }).guide).toBeUndefined();
+    const g = newHouse({ template: 'det', age: '1950-66', storeys: 2, W: 8, D: 7 });
+    expect(g.guide).toEqual({ w: 8, d: 7 });
+    expect(g.rooms).toEqual([]);
   });
 });
