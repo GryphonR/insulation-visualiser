@@ -1,9 +1,9 @@
 import { useMemo } from 'react';
 import { CIBSE_ACH, SHADING, defaultTemp, onStorey, roomEdges, roomHeight } from '../engine/house';
 import type { Buildup, BuildupKind, House, HouseResult, Room, RoomType } from '../engine/house';
-import { RAD_LABEL } from '../engine/house-heating';
+import { RAD_LABEL, UFH_PIPES, UFH_SPACINGS, loopLength, loopMax } from '../engine/house-heating';
 import type { RadType } from '../engine/house-heating';
-import { addBasement, addStoreyAbove, bandName, canAddBasement, canRemoveBasement, canRemoveTop, copyRooms, deleteRoom, flipRooms, innerDoorAt, isOutside, openingCentre, pieceAlign, pieceKeys, pieceThickness, removeBasement, setPieceAlign, removeTop, rotateRooms, setWallLength, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
+import { addBasement, addStoreyAbove, bandName, canAddBasement, canRemoveBasement, canRemoveTop, copyRooms, deleteRoom, flipRooms, innerDoorAt, isOutside, narrowAtWall, openingCentre, pieceAlign, pieceGap, pieceKeys, pieceThickness, removeBasement, setPieceAlign, removeTop, rotateRooms, setWallLength, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
 import { polyArea } from '../engine/geom';
 import { Num, fmt, uid } from './hform';
 import { NO_SEL } from './DrawCanvas';
@@ -12,7 +12,7 @@ import { href } from './route';
 
 const TOOLS: Array<[Tool, string, string]> = [
   ['select', 'Select', '↖'], ['room', 'Room', '⬠'], ['box', 'Box room', '▭'], ['split', 'Split room', '✂'], ['corner', 'Add corner', '＋'],
-  ['window', 'Window', '▬'], ['door', 'Door', '▯'], ['radiator', 'Radiator', '≣'], ['ufh', 'UFH loop', '▦'],
+  ['window', 'Window', '▬'], ['door', 'Door', '▯'], ['radiator', 'Radiator', '≣'], ['ufh', 'UFH zone', '▦'],
 ];
 const HINT: Record<Tool, string> = {
   select: 'Drag a wall or a corner to reshape; drag a room to move it and it snaps flush to its neighbours. Shift-drag on empty canvas boxes several rooms; Shift-click a room adds it; Shift-click walls selects several. Arrow keys nudge. Double-click a wall to add a corner, a corner to remove it. Alt stops neighbours following; hold Shift while drawing for free (no snapping). Double-click a tool to keep it.',
@@ -23,14 +23,14 @@ const HINT: Record<Tool, string> = {
   window: 'Click an outside wall to place a window, then drag it along the wall or to another wall.',
   door: 'Click an outside wall to place a door, or a wall between two rooms for an inside door. Drag it along or to another wall.',
   radiator: 'Click inside a heated room. A radiator snaps to the nearest wall; drag it to move it.',
-  ufh: 'Click inside a heated room to add an underfloor heating loop; draw its pipe route under Pipe runs.',
+  ufh: "Drag out a rectangle, or click corners for any shape, to draw an underfloor heating zone. Every heated room it covers gets UFH for its part of the zone; set each room's covering and pipe spacing under Emitters. Drag the zone by its tag.",
 };
 
 const HINT_BAND: Partial<Record<Tool, string>> = {
   select: 'Drag a zone, or its corners, to reshape it. Double-click a zone edge to add a corner, a corner to remove it; Delete removes the zone. Pick a build-up for it on the right.',
   room: 'Click the corners of a patch of this floor or ceiling that has its own build-up, such as an insulated strip. Click the first corner or press Enter to finish.',
   box: 'Drag out a rectangular zone, or click one corner then the opposite one.',
-  ufh: 'Drag out a rectangle inside a heated room: an underfloor heating loop. Choose its pattern and feed corner under Pipe runs.',
+  ufh: 'Drag out a rectangle, or click corners for any shape, to draw an underfloor heating zone in this floor. Every heated room above it gets UFH for its part of the zone.',
 };
 
 /** What the current tool does, for the hint bubble. */
@@ -44,7 +44,7 @@ export function DrawMenu({ band, tool, setTool, sticky, setSticky, snapOn, setSn
 }) {
   return (
     <div className="draw-menu" role="toolbar" aria-label="Drawing tools">
-      {TOOLS.filter(([id]) => !band || id === 'select' || id === 'room' || id === 'box' || (id === 'ufh' && band === 'floor')).map(([id, l, glyph]) => [id, band ? ({ room: 'Zone', box: 'Box zone', ufh: 'UFH loop' } as Record<string, string>)[id] ?? l : l, glyph] as [Tool, string, string]).map(([id, label, glyph]) => (
+      {TOOLS.filter(([id]) => !band || id === 'select' || id === 'room' || id === 'box' || (id === 'ufh' && band === 'floor')).map(([id, l, glyph]) => [id, band ? ({ room: 'Zone', box: 'Box zone' } as Record<string, string>)[id] ?? l : l, glyph] as [Tool, string, string]).map(([id, label, glyph]) => (
         <button key={id} type="button" className={tool === id ? 'on' : ''} aria-pressed={tool === id} aria-label={label} title={`${label}. Double-click to keep this tool after each use`}
           onClick={() => { setTool(id); setSticky(false); }} onDoubleClick={() => { setTool(id); setSticky(id !== 'select'); }}>
           <span aria-hidden="true">{glyph}</span>{sticky && tool === id && <i className="lock" aria-hidden="true" />}
@@ -130,7 +130,10 @@ export function LayerTree({ house, res, storey, band, pickStorey, pickBand, zone
         {on && <>
           <label className="small muted">Height <input type="number" className="thk-input" step={0.05} min={1} value={st.h} aria-label={`${st.name} height`} onChange={(e) => upd((h) => { h.storeys[s].h = Math.max(1, Number(e.target.value) || 1); })} /> m</label>
           {n > 0 && <button type="button" className="btn-link" title="Copy this storey's rooms, windows and doors onto the storey above (a new one if this is the top)"
-            onClick={() => { const sfx = uid(''); upd((h) => { if (s === h.storeys.length - 1) addStoreyAbove(h); let k = 0; copyRooms(h, h.rooms.filter((r) => r.storey === s).map((r) => r.id), [0, 0], s + 1, false, (p) => `${p}${sfx}${k++}`); }); pickStorey(s + 1); }}>Copy rooms up ›</button>}
+            onClick={() => {
+              const above = s < last ? house.rooms.filter((r) => onStorey(r, s + 1)).length : 0;
+              if (above && !confirm(`${house.storeys[s + 1].name} already has ${above} room${above === 1 ? '' : 's'}. Copy ${st.name}'s rooms on top of them?`)) return;
+              const sfx = uid(''); upd((h) => { if (s === h.storeys.length - 1) addStoreyAbove(h); let k = 0; copyRooms(h, h.rooms.filter((r) => r.storey === s).map((r) => r.id), [0, 0], s + 1, false, (p) => `${p}${sfx}${k++}`); }); pickStorey(s + 1); }}>Copy rooms up ›</button>}
         </>}
       </div>,
     );
@@ -160,7 +163,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
   const info = useMemo(() => walls.map((w) => {
     const r = house.rooms.find((x) => x.id === w.room), e = r && roomEdges(r)[w.edge], keys = w.span ? pieceKeys(house, w.room, w.edge, storey, w) : wallKeys(house, w.room, w.edge, storey);
     const face = res.rooms.find((x) => x.room.id === w.room)?.faces.find((f) => f.key === keys[0]) ?? res.rooms.find((x) => x.room.id === w.room)?.faces.find((f) => keys.includes(f.key));
-    return { w, r, keys, len: w.span ? w.span[1] - w.span[0] : e?.len ?? 0, thick: w.span ? pieceThickness(house, w.room, w.edge, storey, w) : 0, align: w.span ? pieceAlign(house, w.room, w.edge, storey, w) : null, whole: e?.len ?? 0, id: face?.buildup.id ?? house.defaults[keys[0]?.startsWith('w:') ? 'extWall' : 'intWall'], U: face?.U, party: house.faceBoundary[keys[0]] === 'party', outside: w.span ? !w.other : !!r && isOutside(house, r, w.edge, storey) };
+    return { w, r, keys, len: w.span ? w.span[1] - w.span[0] : e?.len ?? 0, thick: w.span ? pieceThickness(house, w.room, w.edge, storey, w) : 0, align: w.span ? pieceAlign(house, w.room, w.edge, storey, w) : null, whole: e?.len ?? 0, gap: w.span && w.other ? pieceGap(house, w.room, w.edge, storey, w) : 0, id: face?.buildup.id ?? house.defaults[keys[0]?.startsWith('w:') ? 'extWall' : 'intWall'], U: face?.U, party: house.faceBoundary[keys[0]] === 'party', outside: w.span ? !w.other : !!r && isOutside(house, r, w.edge, storey) };
   }), [walls, house, res, storey]);
 
   const pick = (list: WallRef[]) => setSel({ ...NO_SEL, room: sel.room, walls: list });
@@ -182,6 +185,26 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
           <select className="select" value={z.buildup} onChange={(e) => set({ buildup: e.target.value })}>{ofKind(house, ...ZONE_KINDS).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
         </label>
         <p className="small muted">The part of each room's floor or ceiling under this zone uses this build-up instead of the layer's.</p>
+        {z.band < house.storeys.length && <label className="small"><input type="checkbox" checked={!!z.ufh} onChange={(e) => set({ ufh: e.target.checked || undefined })} /> Underfloor heating</label>}
+        {z.ufh && (() => {
+          const loops = house.heating.emitters.filter((e) => e.fromZone === z.id);
+          return <>
+            <div className="hf-row">
+              <label className="hf"><span className="eyebrow">Pipe spacing</span>
+                <select className="select" value={z.spacing ?? 150} onChange={(e) => set({ spacing: Number(e.target.value) })}>{UFH_SPACINGS.map((v) => <option key={v} value={v}>{v} mm</option>)}</select>
+              </label>
+              <label className="hf"><span className="eyebrow">Pipe diameter</span>
+                <select className="select" value={z.pipe ?? 16} onChange={(e) => set({ pipe: Number(e.target.value) })}>{Object.keys(UFH_PIPES).map((v) => <option key={v} value={v}>{v} mm</option>)}</select>
+              </label>
+            </div>
+            <span className="eyebrow">Heats</span>
+            {loops.length ? loops.map((e) => {
+              const len = loopLength(e, house), over = len > loopMax(e);
+              return <p key={e.id} className={`small${over ? ' warn' : ''}`}><b>{house.rooms.find((r) => r.id === e.room)?.name ?? '?'}</b> · {fmt(e.area, 1)} m² · loop {fmt(len)} m{over ? ` (over ${loopMax(e)} m: split it, or use wider pipe or spacing)` : ''}</p>;
+            }) : <p className="small muted">No heated room yet.</p>}
+            <p className="small muted">Each room's floor covering is set under <a href={href('emitters')}>Emitters</a>.</p>
+          </>;
+        })()}
         <a className="btn-link" href={href('buildups')}>Edit build-up layers ›</a>
         <button type="button" className="btn-danger" onClick={() => { upd((h) => { h.zones = h.zones?.filter((q) => q.id !== z.id); }); setSel(NO_SEL); }}>Delete zone</button>
       </>
@@ -229,10 +252,24 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
           })} />
         </label>
         {Us.length > 0 && <p className="small">U-value {Us.length && Math.min(...Us) === Math.max(...Us) ? fmt(Us[0], 2) : `${fmt(Math.min(...Us), 2)}–${fmt(Math.max(...Us), 2)}`} W/m²K</p>}
-        {info.length === 1 && (info[0].w.gap ?? 0) > 0.01 && (
-          <p className="small">Drawn <b>{Math.round(info[0].w.gap! * 1000)} mm</b> thick: the space between the two rooms. {info[0].thick > 0 && Math.abs(info[0].thick - info[0].w.gap!) > 0.005 ? `Its build-up is ${Math.round(info[0].thick * 1000)} mm, so the rooms are ${Math.round(Math.abs(info[0].thick - info[0].w.gap!) * 1000)} mm ${info[0].w.gap! > info[0].thick ? 'too far apart' : 'too close'} to match it.` : 'That matches its build-up.'}</p>
-        )}
-        {info.every((i) => i.w.span && !((i.w.gap ?? 0) > 0.01)) && (
+        {info.length === 1 && info[0].gap > 0.01 && (() => {
+          const w = info[0].w, gap = info[0].gap, by = info[0].thick - gap, wider = by > 0, off = info[0].thick > 0 && Math.abs(by) > 0.005;
+          return <>
+            <p className="small">Drawn <b>{Math.round(gap * 1000)} mm</b> thick: the space between the two rooms. {off ? `Its build-up is ${Math.round(info[0].thick * 1000)} mm, so the rooms are ${Math.round(Math.abs(by) * 1000)} mm ${wider ? 'too close' : 'too far apart'} to match it.` : 'That matches its build-up.'}</p>
+            {off && (sel.stretch ? <>
+              <p className="small"><b>Pick an arrow on the plan</b> for the side that moves {Math.round(Math.abs(by) * 1000)} mm {wider ? 'out' : 'in'}.</p>
+              <button type="button" className="btn-link" onClick={() => setSel({ ...sel, stretch: undefined })}>Cancel</button>
+            </> : (
+              <div className="chips">
+                <button type="button" className="btn-secondary" title={wider ? 'Move one side of the plan out: the house gets bigger, the rooms stay the same' : 'Move one side of the plan in: the house gets smaller, the rooms stay the same'}
+                  onClick={() => setSel({ ...sel, stretch: true })}>{wider ? 'Stretch the plan' : 'Close up the plan'}</button>
+                <button type="button" className="btn-secondary" title={wider ? 'Each room gives up half: the house stays the same size' : 'Each room gains half: the house stays the same size'}
+                  onClick={() => upd((h) => narrowAtWall(h, w.room, w.edge, w.other!, gap, by))}>{wider ? 'Narrow the rooms' : 'Widen the rooms'}</button>
+              </div>
+            ))}
+          </>;
+        })()}
+        {info.every((i) => i.w.span && !(i.gap > 0.01)) && (
           <div className="stack-6" role="group" aria-label="Where the wall sits on the line">
             <div className="eyebrow">Wall sits on the drawn line{info.length === 1 && info[0].thick > 0 ? ` · ${Math.round(info[0].thick * 1000)} mm thick` : ''}</div>
             <div className="chips">
@@ -315,7 +352,9 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
           <Num label="Width" unit="m" step={0.05} min={0.3} value={e.rect.w} onChange={(v) => set({ rect: { ...e.rect!, w: Math.max(0.3, v) }, area: +(Math.max(0.3, v) * e.rect!.h).toFixed(2) })} />
           <Num label="Length" unit="m" step={0.05} min={0.3} value={e.rect.h} onChange={(v) => set({ rect: { ...e.rect!, h: Math.max(0.3, v) }, area: +(e.rect!.w * Math.max(0.3, v)).toFixed(2) })} />
         </div>}
-        {e.kind === 'ufh' && !e.rect && <Num label="Heated floor area" unit="m²" step={0.5} min={1} value={e.area} onChange={(v) => set({ area: Math.max(1, v) })} />}
+        {e.kind === 'ufh' && !e.rect && (e.fromZone
+          ? <p className="small">Heated floor area <b>{fmt(e.area, 1)} m²</b>: this room's part of {house.zones?.find((x) => x.id === e.fromZone)?.name ?? 'its UFH zone'}.</p>
+          : <Num label="Heated floor area" unit="m²" step={0.5} min={1} value={e.area} onChange={(v) => set({ area: Math.max(1, v) })} />)}
         <a className="btn-link" href={href('emitters')}>All emitters and zones ›</a>
         <button type="button" className="btn-danger" onClick={() => { upd((h) => { h.heating.emitters = h.heating.emitters.filter((x) => x.id !== e.id); }); setSel({ ...sel, item: null }); }}>Delete</button>
       </>

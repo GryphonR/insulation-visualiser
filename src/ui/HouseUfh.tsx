@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { onStorey, roomPoly } from '../engine/house';
 import type { House } from '../engine/house';
-import { loopArea, loopLength } from '../engine/house-heating';
+import { loopArea, loopLength, loopMax } from '../engine/house-heating';
 import type { Emitter } from '../engine/house-heating';
 import { PATTERNS, loopLayout } from '../engine/house-ufh';
 import type { Corner, LoopPattern } from '../engine/house-ufh';
@@ -105,8 +105,8 @@ export function HouseUfh({ house, upd }: { house: House; upd: (fn: (h: House) =>
                   <td><select className="h-sel" value={e.pattern ?? 'spiral'} aria-label="Pattern" onChange={(ev) => setE(e.id, { pattern: ev.target.value as LoopPattern })}>{(Object.keys(PATTERNS) as LoopPattern[]).map((k) => <option key={k} value={k}>{PATTERNS[k][0]}</option>)}</select></td>
                   <td><select className="h-sel" value={e.corner ?? 'nw'} aria-label="Feed corner" onChange={(ev) => setE(e.id, { corner: ev.target.value as Corner })}>{(['nw', 'ne', 'sw', 'se'] as Corner[]).map((k) => <option key={k} value={k}>{k.toUpperCase()} corner</option>)}</select></td>
                   <td className="n mono">{fmt(loopArea(e), 1)}</td>
-                  <td className={`n mono ${len > 100 ? 'bad' : ''}`}>{fmt(len)}{lay ? ` (${fmt(lay.route.inFloor)} in floor)` : ' est.'}</td>
-                  <td>{e.rect ? <button type="button" className="btn-link" onClick={() => setE(e.id, { rect: undefined })}>Undraw</button>
+                  <td className={`n mono ${len > loopMax(e) ? 'bad' : ''}`}>{fmt(len)}{lay ? ` (${fmt(lay.route.inFloor)} in floor)` : ' est.'}</td>
+                  <td>{e.fromZone ? <span className="small muted">From {house.zones?.find((x) => x.id === e.fromZone)?.name ?? 'a UFH zone'}</span> : e.rect ? <button type="button" className="btn-link" onClick={() => setE(e.id, { rect: undefined })}>Undraw</button>
                     : <button type="button" className="btn-link" onClick={() => {
                         upd((h) => {
                           const x = h.heating.emitters.find((y) => y.id === e.id)!;

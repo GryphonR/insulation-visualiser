@@ -13,6 +13,10 @@ export const RAD_LABEL: Record<RadType, string> = { K1: 'K1 single panel', P1: '
 export const COVERS: Record<string, number> = { Tiles: 0.01, Vinyl: 0.025, 'Engineered wood 15 mm': 0.1, Carpet: 0.15 };
 /** UFH heat transfer from mean water to room with 16 mm pipe in 65 mm screed and a thin covering, W/m²K, by spacing. */
 const UFH_K: Record<number, number> = { 100: 6.7, 150: 6.0, 200: 5.3, 300: 4.3 };
+export const UFH_SPACINGS = Object.keys(UFH_K).map(Number);
+/** UFH pipe outside diameters, mm, and the usual longest single loop for each, m. */
+export const UFH_PIPES: Record<number, number> = { 16: 100, 20: 120 };
+export const loopMax = (e: Pick<Emitter, 'pipe'>) => UFH_PIPES[e.pipe ?? 16] ?? 100;
 /** EN 1264 limit: floor surface no more than 29 °C (occupied areas). */
 const qMaxFloor = (Troom: number) => 8.92 * Math.max(0, 29 - Troom) ** 1.1;
 
@@ -24,10 +28,14 @@ export interface Emitter {
   rated: number;
   /** UFH loop: heated area m², pipe spacing mm, covering, tail length to the manifold m. */
   area: number; spacing: number; cover: string; tail: number;
+  /** UFH pipe outside diameter, mm (16 when unset). */
+  pipe?: number;
   /** UFH loop drawn on the plan: its rectangle (m), pattern and feed corner. The drawn area replaces `area`. */
   rect?: LoopRect; pattern?: LoopPattern; corner?: Corner;
   /** Where the emitter was placed on the plan (its centre, m) and the angle of a radiator along its wall, degrees (drawing only). */
   at?: Pt; ang?: number;
+  /** The underfloor heating zone this loop comes from: its area is the room's part of the zone, kept up to date by `syncUfh`. */
+  fromZone?: string;
 }
 export interface Zone {
   id: string; name: string; kind: 'rad' | 'ufh'; color: string; on: boolean;

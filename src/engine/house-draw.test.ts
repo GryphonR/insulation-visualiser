@@ -94,3 +94,13 @@ describe('snapping a wall apart', () => {
     expect(flushDelta([[3.87, 1]], [[[4, 0], [4, 5]]], 0.2, 0.1)[0]).toBeCloseTo(0.03, 6); // from the left side
   });
 });
+
+describe('detached rooms', () => {
+  const detached = (h: ReturnType<typeof defaultHouse>) => calcHouse(h).checks.filter((c) => c.text.includes("doesn't touch any other room"));
+  it('warns about a room that shares no wall with the rest of its storey', () => {
+    const h = defaultHouse();
+    expect(detached(h)).toEqual([]);
+    addRoomAt(h, 'shed', [[20, 0], [23, 0], [23, 3], [20, 3]], 0);
+    expect(detached(h).map((c) => c.text)).toEqual([expect.stringContaining(h.rooms.find((r) => r.id === 'shed')!.name)]);
+  });
+});

@@ -13,7 +13,7 @@ export function climateOf(h: House): { station: number; region: number; lat: num
   const s = MCS_STATIONS[h.climate.station] ?? MCS_STATIONS[0];
   return { station: h.climate.station, region: h.climate.region, lat: s[2], lon: s[3], fromPostcode: false, km: 0 };
 }
-import { flowNeeded, loopLength, roomOut, systemFlow } from './house-heating';
+import { flowNeeded, loopLength, loopMax, roomOut, systemFlow } from './house-heating';
 import type { Heating } from './house-heating';
 import type { Bills } from './house-calibrate';
 
@@ -109,7 +109,10 @@ export interface Opening {
  * A patch of a floor or ceiling with its own build-up: an insulated strip, a different slab. Band n is the floor of storey n and the
  * ceiling of storey n - 1; the top band is the ceiling or roof over the top storey.
  */
-export interface FloorZone { id: string; band: number; name: string; poly: Pt[]; buildup: string }
+export interface FloorZone { id: string; band: number; name: string; poly: Pt[]; buildup: string;
+  /** Underfloor heating: every heated room on the storey above this floor gets a loop for its part of the zone, with this pipe spacing and outside diameter (mm; 150 and 16 when unset). */
+  ufh?: boolean; spacing?: number; pipe?: number;
+}
 export interface Device { id: string; room: string; name: string; fan: boolean; opts: Array<[string, number]>; pick: number }
 export interface Factor { id: string; label: string; dq: number; on: boolean }
 export type Boundary = 'out' | 'party';
@@ -790,6 +793,10 @@ export function calcHouse(h: House): HouseResult {
     if (roomArea(r) <= 0.01) checks.push({ level: 'error', text: `${r.name} has no floor area.` });
     if (r.poly && selfIntersects(r.poly)) checks.push({ level: 'error', text: `${r.name}'s outline crosses itself.` });
     if (r.storey + r.span > h.storeys.length) checks.push({ level: 'error', text: `${r.name} rises above the top storey.` });
+    // A room that shares no wall with any other is costed as a building of its own, usually by mistake.
+    if (h.rooms.some((o) => o.id !== r.id && onStorey(o, r.storey)) && !faces.get(r.id)?.some((f) => f.kind === 'wall' && f.to.k === 'room')) {
+      checks.push({ level: 'warn', text: `${r.name} doesn't touch any other room on the ${h.storeys[r.storey]?.name.toLowerCase() ?? 'storey'}, so all its walls count as outside walls. Move it against the house if it's part of it.` });
+    }
     // Openings must sit on outside wall: check each wall that has any.
     const es = roomEdges(r), isPoly = !!(r.poly && r.poly.length >= 3);
     for (const e of es) {
@@ -810,7 +817,7 @@ export function calcHouse(h: House): HouseResult {
     else if (e.cover < 0.995) checks.push({ level: 'warn', text: `${name}: emitters give ${Math.round(e.out)} W at ${designFlow.toFixed(0)} °C flow, ${Math.round(e.need)} W needed (${Math.round(e.cover * 100)}%).` });
   }
   for (const e of h.heating.emitters) {
-    if (e.kind === 'ufh' && loopLength(e, h) > 100) checks.push({ level: 'warn', text: `UFH loop in ${h.rooms.find((r) => r.id === e.room)?.name ?? e.room} is ${Math.round(loopLength(e, h))} m; keep 16 mm loops under 100 m (split it in two).` });
+    if (e.kind === 'ufh' && loopLength(e, h) > loopMax(e)) checks.push({ level: 'warn', text: `UFH loop in ${h.rooms.find((r) => r.id === e.room)?.name ?? e.room} is ${Math.round(loopLength(e, h))} m; keep ${e.pipe ?? 16} mm loops under ${loopMax(e)} m (split it in two, or use wider pipe or spacing).` });
     if (e.kind === 'ufh' && e.rect) {
       const room = h.rooms.find((r) => r.id === e.room);
       const rp: Pt[] = [[e.rect.x, e.rect.y], [e.rect.x + e.rect.w, e.rect.y], [e.rect.x + e.rect.w, e.rect.y + e.rect.h], [e.rect.x, e.rect.y + e.rect.h]];

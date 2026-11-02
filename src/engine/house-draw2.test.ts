@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { calcHouse, roomArea } from './house';
+import { calcHouse, roomArea, roomPoly, setOutline } from './house';
+import { overlapAreaPoly, pointInPoly } from './geom';
+import type { Pt } from './geom';
 import { defaultHouse } from './house-default';
-import { addFloorZone, addLoopRect, addRoomAt, addStoreyAbove, copyRooms, cutPlan, flipRooms, innerDoorAt, moveCorners, pieceAlign, pieceKeys, pieceThickness, problems, rotateRooms, setPieceAlign, splitRoom, wallPieces } from './house-draw';
+import { addFloorZone, addRoomAt, syncUfh, addStoreyAbove, copyRooms, cutPlan, flipRooms, innerDoorAt, moveCorners, narrowAtWall, pieceAlign, pieceKeys, pieceThickness, problems, rotateRooms, setPieceAlign, splitRoom, stretchAtWall, wallPieces } from './house-draw';
 import { newHouse } from './house-templates';
+import { loopLength, loopMax } from './house-heating';
 
 const area = (h: ReturnType<typeof defaultHouse>) => h.rooms.reduce((t, r) => t + roomArea(r) * r.span, 0);
 const errors = (h: ReturnType<typeof defaultHouse>) => calcHouse(h).checks.filter((c) => c.level === 'error');
@@ -86,14 +89,6 @@ describe('floor and ceiling zones', () => {
     expect(upper.reduce((t, id) => t + part(id), 0)).toBeGreaterThan(5);
     expect(upper.reduce((t, id) => t + part(id), 0)).toBeCloseTo(lower.reduce((t, id) => t + part(id), 0));
   });
-
-  it('draws a heated-floor loop as a rectangle in its room', () => {
-    const h = defaultHouse();
-    const ok = addLoopRect(h, 'loop1', 0, { x: 0.5, y: 0.5, w: 3, h: 3 }, (hh, room) => hh.heating.emitters.push({ id: 'tmp', room, kind: 'ufh', zone: 'z1', type: 'K2', len: 1000, height: 600, rated: 0, area: 0, spacing: 150, cover: 'Tiles', tail: 5 }));
-    expect(ok).toBe(true);
-    expect(h.heating.emitters.find((e) => e.id === 'loop1')?.area).toBe(9);
-    expect(addLoopRect(h, 'loop2', 0, { x: 50, y: 50, w: 1, h: 1 }, () => undefined)).toBe(false);
-  });
 });
 
 describe('problems', () => {
@@ -163,6 +158,50 @@ describe('rooms a wall apart', () => {
     const out = (h: ReturnType<typeof mk>) => calcHouse(h).rooms.flatMap((r) => r.faces).filter((f) => f.kind === 'wall' && f.to.k === 'out').reduce((t, f) => t + f.area, 0);
     expect(out(apart)).toBeCloseTo(out(touching), 6);
   });
+
+  // a above b, 0.1 m apart; c spans both, to the east. Windows on a's north wall, and on c's west wall below the gap.
+  const three = () => {
+    const h = newHouse({ template: 'det', age: '1950-66', storeys: 1 });
+    addRoomAt(h, 'a', [[0, 0], [6, 0], [6, 4], [0, 4]], 0);
+    addRoomAt(h, 'b', [[0, 4.1], [6, 4.1], [6, 8], [0, 8]], 0);
+    addRoomAt(h, 'c', [[6, 0], [9, 0], [9, 8], [6, 8]], 0);
+    h.openings = [
+      { id: 'w1', room: 'a', side: 'N', edge: 0, name: 'W', w: 1, h: 1, buildup: 'g', t: 3 },
+      { id: 'w2', room: 'c', side: 'W', edge: 3, name: 'W', w: 1, h: 1, buildup: 'g', t: 1 },
+    ];
+    return h;
+  };
+  it('stretching opens the plan up on the side picked: rooms across the line get longer, windows stay put', () => {
+    const h = three();
+    stretchAtWall(h, 'a', 2, 0.1, 0.05, 1);
+    expect(wallPieces(h, 'a', 2, 0)[0].gap).toBeCloseTo(0.15, 6);
+    expect(roomPoly(h.rooms.find((r) => r.id === 'a')!)).toEqual([[0, 0], [6, 0], [6, 4], [0, 4]]);
+    expect(roomPoly(h.rooms.find((r) => r.id === 'b')!)[2]).toEqual([6, 8.05]);
+    expect(roomArea(h.rooms.find((r) => r.id === 'c')!)).toBeCloseTo(3 * 8.05, 6);
+    // c's west wall runs from (6, 8.05) up to (6, 0): its window near the top (y 7) moves with the bottom; a's stays.
+    expect(h.openings.find((o) => o.id === 'w2')!.t).toBeCloseTo(1, 6);
+    expect(h.openings.find((o) => o.id === 'w1')!.t).toBe(3);
+    // the other way, a's side moves up and nothing below the line changes
+    const g = three();
+    stretchAtWall(g, 'a', 2, 0.1, 0.05, -1);
+    expect(roomPoly(g.rooms.find((r) => r.id === 'a')!)[0]).toEqual([0, -0.05]);
+    expect(roomPoly(g.rooms.find((r) => r.id === 'b')!)[0]).toEqual([0, 4.1]);
+    expect(wallPieces(g, 'a', 2, 0)[0].gap).toBeCloseTo(0.15, 6);
+  });
+  it('narrowing takes the extra wall from both rooms, half each, leaving the plan the same size', () => {
+    const h = three();
+    narrowAtWall(h, 'a', 2, 'b', 0.1, 0.1);
+    expect(wallPieces(h, 'a', 2, 0)[0].gap).toBeCloseTo(0.2, 6);
+    expect(roomPoly(h.rooms.find((r) => r.id === 'a')!)[2]).toEqual([6, 3.95]);
+    expect(roomPoly(h.rooms.find((r) => r.id === 'b')!)[0]).toEqual([0, 4.15]);
+    expect(roomArea(h.rooms.find((r) => r.id === 'c')!)).toBeCloseTo(24, 6);
+  });
+  it('narrowing keeps a wall with an extra corner along it straight', () => {
+    const h = three();
+    setOutline(h.rooms.find((r) => r.id === 'b')!, [[0, 4.1], [3, 4.1], [6, 4.1], [6, 8], [0, 8]]);
+    narrowAtWall(h, 'a', 2, 'b', 0.1, 0.1);
+    expect(roomPoly(h.rooms.find((r) => r.id === 'b')!).slice(0, 3)).toEqual([[0, 4.15], [3, 4.15], [6, 4.15]]);
+  });
 });
 
 describe('rooms wound the opposite way', () => {
@@ -184,5 +223,64 @@ describe('oversized openings', () => {
     const r = calcHouse(h);
     expect(r.peakW).toBeLessThan(before * 1.5);
     expect(r.checks.some((c) => c.level === 'warn' && c.text.includes('bigger than its wall'))).toBe(true);
+  });
+});
+
+describe('underfloor heating zones', () => {
+  type H = ReturnType<typeof defaultHouse>;
+  const loops = (h: H) => Object.fromEntries(h.heating.emitters.filter((e) => e.fromZone).map((e) => [e.room, e.area]));
+  const Z: Pt[] = [[0, 0], [8, 0], [8, 5], [0, 5]];
+  const drawn = () => {
+    const h = defaultHouse();
+    addFloorZone(h, 'uz', 0, Z, true);
+    return { h, s: syncUfh(h) };
+  };
+  const ground = (h: H) => h.rooms.filter((r) => r.storey === 0 && overlapAreaPoly(Z, roomPoly(r)) >= 0.1);
+
+  it("gives every heated room it covers a loop for that room's part of the zone, and none to unheated rooms", () => {
+    const h = defaultHouse();
+    addFloorZone(h, 'uz', 0, Z, true);
+    const covered = ground(h);
+    covered[0].heated = false;
+    const s = syncUfh(h);
+    expect(h.zones![0]).toMatchObject({ name: 'UFH 1', ufh: true });
+    expect(covered.length).toBeGreaterThan(2);
+    expect(loops(s)).toEqual(Object.fromEntries(covered.filter((r) => r.heated).map((r) => [r.id, +overlapAreaPoly(Z, roomPoly(r)).toFixed(2)])));
+    const res = calcHouse(s);
+    for (const r of covered.filter((x) => x.heated)) expect(res.heat.rooms.find((q) => q.id === r.id)?.has).toBe(true);
+  });
+
+  it('leaves the house untouched when nothing changed, and never alters the house it is given', () => {
+    const { h, s } = drawn();
+    expect(h.heating.emitters.some((e) => e.fromZone)).toBe(false);
+    expect(syncUfh(s)).toBe(s);
+  });
+
+  it("gives every loop the zone's pipe spacing and diameter, and the diameter sets how long a loop may be", () => {
+    const { s } = drawn(), mine = (h: H) => h.heating.emitters.filter((e) => e.fromZone);
+    expect(mine(s).every((e) => e.spacing === 150 && e.pipe === 16)).toBe(true);
+    Object.assign(s.zones![0], { spacing: 200, pipe: 20 });
+    const wide = syncUfh(s);
+    expect(mine(wide).every((e) => e.spacing === 200 && e.pipe === 20)).toBe(true);
+    expect(loopMax(mine(wide)[0])).toBe(120);
+    // A loop of 110 m is too long for 16 mm pipe but fine for 20 mm.
+    const long = mine(wide)[0];
+    long.area = 16; long.spacing = 150; long.tail = 1.7;
+    expect(loopLength(long)).toBeCloseTo(110, 0);
+    const warned = (pipe: number) => { long.pipe = pipe; return calcHouse(wide).checks.some((c) => c.text.includes('UFH loop') && c.text.includes(`${pipe} mm loops`)); };
+    expect(warned(16)).toBe(true);
+    expect(warned(20)).toBe(false);
+  });
+
+  it('follows the zone: shrinking it shrinks the loops, deleting it or making a room unheated removes them', () => {
+    const { s } = drawn(), corner = s.rooms.find((r) => r.storey === 0 && pointInPoly([0.5, 0.5], roomPoly(r)))!;
+    s.zones![0].poly = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    const small = syncUfh(s);
+    expect(loops(small)).toEqual({ [corner.id]: 1 });
+    small.rooms.find((r) => r.id === corner.id)!.heated = false;
+    expect(loops(syncUfh(small))).toEqual({});
+    small.rooms.find((r) => r.id === corner.id)!.heated = true;
+    small.zones = [];
+    expect(syncUfh(small).heating.emitters.some((e) => e.fromZone)).toBe(false);
   });
 });

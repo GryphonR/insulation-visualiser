@@ -2,22 +2,16 @@ import { useMemo } from 'react';
 import { MONTHS } from '../engine/data';
 import { calcHouse, roomArea } from '../engine/house';
 import type { House } from '../engine/house';
-import { COVERS, RAD_LABEL, autoEmitters, emitterOut, loopLength, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
+import { COVERS, RAD_LABEL, UFH_SPACINGS, autoEmitters, emitterOut, loopLength, loopMax, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
 import type { Emitter, RadType, Zone } from '../engine/house-heating';
 import { Chip } from './controls';
 import { HouseUfh } from './HouseUfh';
 import { MAX_PA_M, MAX_V, PIPE_SIZES, autoPipes, sizePipes } from '../engine/house-pipes';
+import { addEmitter } from '../engine/house-draw';
 
 const fmt = (v: number, d = 0) => (Number.isFinite(v) ? v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—');
 const uid = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 const ZCOL = ['#c2410c', '#1f6fb5', '#1f7a4d', '#7a45b8', '#b45309', '#be185d'];
-
-/** An emitter for a room in the first matching zone: a K2 radiator, towel rail or UFH loop. */
-export function addEmitter(h: House, room: string, kind: Emitter['kind']): void {
-  const zone = h.heating.zones.find((z) => (kind === 'ufh' ? z.kind === 'ufh' : z.kind === 'rad'))?.id ?? '';
-  const r = h.rooms.find((x) => x.id === room);
-  h.heating.emitters.push({ id: uid('e'), room, kind, zone, type: 'K2', len: 1000, height: 600, rated: 600, area: r ? +(roomArea(r) * 0.85).toFixed(1) : 10, spacing: 150, cover: 'Tiles', tail: 5 });
-}
 
 export type HeatingSection = 'system' | 'emitters' | 'zones' | 'pipes';
 
@@ -56,7 +50,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
   const gov = res.heat.gov;
   const pipesRes = sizePipes(house, res);
 
-  const add = (room: string, kind: Emitter['kind']) => upd((h) => addEmitter(h, room, kind));
+  const add = (room: string, kind: Emitter['kind']) => upd((h) => addEmitter(h, room, kind, uid('e')));
 
   return (
     <div className="house-grid">
@@ -146,10 +140,14 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                           {e.kind === 'radiator' && <><input type="number" className="thk-input" aria-label="Length mm" value={e.len} step={100} min={300} onChange={(ev) => setE(e.id, { len: Number(ev.target.value) })} /> × <input type="number" className="thk-input" aria-label="Height mm" value={e.height} step={50} min={300} onChange={(ev) => setE(e.id, { height: Number(ev.target.value) })} /> mm</>}
                           {e.kind === 'towel' && <><input type="number" className="thk-input" aria-label="Rated output W" value={e.rated} step={50} onChange={(ev) => setE(e.id, { rated: Number(ev.target.value) })} /> W at ΔT50</>}
                           {e.kind === 'ufh' && <>
-                            <input type="number" className="thk-input" aria-label="Loop area m²" value={e.area} step={0.5} onChange={(ev) => setE(e.id, { area: Number(ev.target.value) })} /> m² ·{' '}
-                            <select className="h-sel" aria-label="Pipe spacing" value={e.spacing} onChange={(ev) => setE(e.id, { spacing: Number(ev.target.value) })}>{[100, 150, 200, 300].map((s) => <option key={s} value={s}>{s} mm</option>)}</select>{' '}
+                            {e.fromZone
+                              ? <span title="This room's part of the UFH zone drawn on the plan">{fmt(e.area, 1)} m² from {house.zones?.find((x) => x.id === e.fromZone)?.name ?? 'a UFH zone'} ·{' '}</span>
+                              : <><input type="number" className="thk-input" aria-label="Loop area m²" value={e.area} step={0.5} onChange={(ev) => setE(e.id, { area: Number(ev.target.value) })} /> m² ·{' '}</>}
+                            {e.fromZone
+                              ? <span title="Set on the UFH zone, in the floor plan's side panel">{e.spacing} mm spacing, {e.pipe ?? 16} mm pipe ·{' '}</span>
+                              : <><select className="h-sel" aria-label="Pipe spacing" value={e.spacing} onChange={(ev) => setE(e.id, { spacing: Number(ev.target.value) })}>{UFH_SPACINGS.map((s) => <option key={s} value={s}>{s} mm</option>)}</select>{' '}</>}
                             <select className="h-sel" aria-label="Floor covering" value={e.cover} onChange={(ev) => setE(e.id, { cover: ev.target.value })}>{Object.keys(COVERS).map((s) => <option key={s}>{s}</option>)}</select>
-                            <br /><span className={`small ${loopLength(e, house) > 100 ? 'bad' : 'muted'}`}>loop {fmt(loopLength(e, house))} m{e.rect ? ', drawn' : ` incl. ${e.tail} m tails`}</span>
+                            <br /><span className={`small ${loopLength(e, house) > loopMax(e) ? 'bad' : 'muted'}`}>loop {fmt(loopLength(e, house))} m{e.rect ? ', drawn' : ` incl. ${e.tail} m tails`}</span>
                           </>}
                           {e.kind !== 'ufh' && <span className="small muted"> · {fmt(ratedOf(e))} W at ΔT50</span>}
                         </td>
@@ -166,7 +164,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                         <td rowSpan={rows.length} className={`n mono ${cls}`}>{rr.has ? `${fmt(rr.cover * 100)}%` : '—'}</td>
                       </>}
                       <td className="h-acts">
-                        {e && <button type="button" className="btn-link" onClick={() => upd((h) => { h.heating.emitters = h.heating.emitters.filter((x) => x.id !== e.id); })}>Remove</button>}
+                        {e && !e.fromZone && <button type="button" className="btn-link" onClick={() => upd((h) => { h.heating.emitters = h.heating.emitters.filter((x) => x.id !== e.id); })}>Remove</button>}
                         {k === rows.length - 1 && <>
                           <button type="button" className="btn-link" onClick={() => add(rr.id, 'radiator')}>+ radiator</button>
                           <button type="button" className="btn-link" onClick={() => add(rr.id, 'ufh')}>+ UFH</button>

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { calcHouse } from '../engine/house';
+import { syncUfh } from '../engine/house-draw';
 import type { House, HouseResult } from '../engine/house';
 import { chain, newProject } from '../engine/house-scenarios';
 import { deleteStored, hasSaved, listProjects, loadActive, newProjectId, openStored, saveProject } from '../engine/projects';
@@ -82,7 +83,7 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
 
   const active = project.scenarios.find((s) => s.id === project.active) ?? project.scenarios[0];
   const setHouse: Ctx['setHouse'] = (fn) =>
-    setProject((p) => ({ ...p, scenarios: p.scenarios.map((s) => (s.id === p.active ? { ...s, house: fn(s.house) } : s)) }));
+    setProject((p) => ({ ...p, scenarios: p.scenarios.map((s) => (s.id === p.active ? { ...s, house: syncUfh(fn(s.house)) } : s)) }));
   const upd: Ctx['upd'] = (fn) => setHouse((prev) => { const n = structuredClone(prev); fn(n); return n; });
   const results = useMemo(() => new Map(project.scenarios.map((s) => [s.id, calcHouse(s.house)])), [project.scenarios]);
   const ordered = useMemo(() => {

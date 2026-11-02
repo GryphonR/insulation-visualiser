@@ -104,6 +104,18 @@ export function selfIntersects(p: Pt[]): boolean {
   return false;
 }
 
+/** The outline without repeated corners or spikes (corners where the wall doubles straight back on itself, which `selfIntersects` misses). */
+export function dropSpikes(p: Pt[]): Pt[] {
+  const q = [...p];
+  for (let i = 0; q.length > 3 && i < q.length;) {
+    const a = q[(i + q.length - 1) % q.length], b = q[i], c = q[(i + 1) % q.length];
+    const ux = b[0] - a[0], uy = b[1] - a[1], vx = c[0] - b[0], vy = c[1] - b[1], lu = Math.hypot(ux, uy), lv = Math.hypot(vx, vy);
+    const spike = lu < 1e-6 || lv < 1e-6 || (Math.abs(ux * vy - uy * vx) < 1e-4 * lu * lv && ux * vx + uy * vy < 0);
+    if (spike) { q.splice(i, 1); i = Math.max(0, i - 1); } else i++;
+  }
+  return q;
+}
+
 /** Even-odd point-in-polygon test. */
 export function pointInPoly(p: Pt, poly: Pt[]): boolean {
   let c = false;

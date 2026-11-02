@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Pt } from '../engine/geom';
 import { DrawCanvas, GRID, NO_SEL } from './DrawCanvas';
-import type { Sel, Tool } from './DrawCanvas';
+import type { EditField, Sel, Tool } from './DrawCanvas';
 import { DrawMenu, Inspector, LayerTree, RoomFields, drawHint } from './DrawPanels';
 import { bandName } from '../engine/house-draw';
 import { planBounds } from './HousePlan';
@@ -26,6 +26,20 @@ export function PlanPage({ selected }: { selected?: string }) {
   const [snapOn, setSnapOn] = useState(true);
   const [panelOpen, setPanelOpen] = useState(() => window.innerWidth >= 1100);
   const [grid, setGrid] = useState(GRID);
+  const [hintOpen, setHintOpen] = useState(false);
+  const panel = useRef<HTMLElement>(null);
+  /** From the right-click menu: open the panel on a field of the selection. */
+  const [editField, setEditField] = useState<EditField | null>(null);
+  const editSel = (field: EditField) => { setPanelOpen(true); setEditField(field); };
+  // Once the panel has rendered with the wall in it, focus the field asked for.
+  useEffect(() => {
+    if (!editField) return;
+    // The selection's own section comes first in the panel, so its first dropdown or number is the one meant.
+    const el = panel.current?.querySelector<HTMLInputElement | HTMLSelectElement>({ type: 'select', size: 'input[type="number"]', name: 'input[aria-label="Room name"]' }[editField]);
+    el?.focus();
+    if (el instanceof HTMLInputElement) el.select();
+    setEditField(null);
+  }, [editField]);
   const [measure, setMeasure] = useState<{ len: number; pts: Pt[] } | null>(null);
   const [imagery, setImageryState] = useState<Imagery>(loadImagery);
   const room = house.rooms.find((r) => r.id === sel.room);
@@ -41,11 +55,11 @@ export function PlanPage({ selected }: { selected?: string }) {
 
 
   const hint = drawHint(band != null, tool);
-  const inspectorTitle = sel.zone ? 'Floor zone' : (sel.group?.length ?? 0) > 1 ? 'Rooms' : sel.walls.length ? 'Walls' : sel.item?.k === 'op' ? 'Window or door' : 'Heat emitter';
+  const inspectorTitle = sel.zone ? (house.zones?.find((x) => x.id === sel.zone)?.ufh ? 'Underfloor heating zone' : 'Floor zone') : (sel.group?.length ?? 0) > 1 ? 'Rooms' : sel.walls.length ? 'Walls' : sel.item?.k === 'op' ? 'Window or door' : 'Heat emitter';
 
   return (
     <div className="plan-stage">
-        <DrawCanvas key={`${shown}-${band}`} house={house} storey={shown} band={band ?? undefined} tool={measure ? 'select' : tool} setTool={setTool} sel={sel} setSel={setSel} upd={upd} below={showBelow} sticky={sticky} grid={grid} snapOn={snapOn}
+        <DrawCanvas key={`${shown}-${band}`} house={house} storey={shown} band={band ?? undefined} tool={measure ? 'select' : tool} setTool={setTool} sel={sel} setSel={setSel} upd={upd} below={showBelow} sticky={sticky} grid={grid} snapOn={snapOn} onEdit={editSel}
           underlay={traceUnderlay(house, storey, imagery)}
           overlay={measure ? (to, _S, from) => (
             <g>
@@ -94,15 +108,15 @@ export function PlanPage({ selected }: { selected?: string }) {
       </div>
 
       {hint && (
-        <details className="plan-hint">
-          <summary>{hint.split(/(?<=\.)\s/)[0]}</summary>
-          <p className="small">{hint}</p>
-        </details>
+        <div className={`plan-hint${hintOpen ? ' open' : ''}`} onClick={() => setHintOpen(false)}>
+          <button type="button" aria-expanded={hintOpen} aria-label={hintOpen ? 'Hide the full tip' : 'Show the full tip'} onClick={(e) => { e.stopPropagation(); setHintOpen(!hintOpen); }}>?</button>
+          <span>{hintOpen ? hint : hint.split(/(?<=\.)\s/)[0]}</span>
+        </div>
       )}
 
       <button type="button" className="panel-toggle" aria-expanded={panelOpen} onClick={() => setPanelOpen(!panelOpen)} title={panelOpen ? 'Hide the layers panel' : 'Show the layers panel'}>{panelOpen ? '›' : '‹'}</button>
       {panelOpen && (
-        <aside className="float-panel" aria-label="Layers and selection">
+        <aside ref={panel} className="float-panel" aria-label="Layers and selection">
           {hasInspector && (
             <section className="fp-sec">
               <h3>{inspectorTitle}</h3>

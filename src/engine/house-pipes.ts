@@ -98,7 +98,7 @@ export function autoPipes(h: House): Pipe[] {
     for (const e of ems) {
       const room = h.rooms.find((r) => r.id === e.room)?.name ?? e.room;
       out.push({ id: `P${++n}`, name: `${room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.id}`, parent: branch,
-        size: e.kind === 'ufh' ? 'PEX 16 mm' : si === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)', length: e.kind === 'ufh' ? 3 : 5, emitter: e.id });
+        size: e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : si === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)', length: e.kind === 'ufh' ? 3 : 5, emitter: e.id });
     }
   });
   return out;

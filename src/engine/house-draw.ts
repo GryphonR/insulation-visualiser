@@ -1,7 +1,7 @@
 // Edits behind the floor-plan drawing canvas: plain changes to a House copy, no UI.
 import { edges, overlapAreaPoly, pointInPoly, selfIntersects, sharedSpan } from './geom';
 import type { Pt } from './geom';
-import { defaultTemp, fitEdges, maxWallGap, onStorey, pairKey, rectShapeToEdges, roomEdges, roomPoly, setOutline } from './house';
+import { defaultTemp, fitEdges, maxWallGap, onStorey, pairKey, rectShapeToEdges, roomArea, roomEdges, roomPoly, setOutline } from './house';
 import type { House, Room, Side, WallAlign } from './house';
 import type { Emitter } from './house-heating';
 
@@ -128,6 +128,10 @@ export function wallPieces(h: House, roomId: string, idx: number, storey: number
   }
   return out.sort((a, b) => a.span[0] - b.span[0]);
 }
+
+/** How far apart the two rooms of an inside wall are drawn now (a selected piece's own `gap` is from when it was picked). */
+export const pieceGap = (h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other' | 'gap'>): number =>
+  wallPieces(h, roomId, idx, storey).find((q) => q.other && q.other === p.other)?.gap ?? p.gap ?? 0;
 
 /** The face keys of one piece of a wall. */
 export const pieceKeys = (h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'>): string[] => {
@@ -295,6 +299,59 @@ export function setWallLength(h: House, roomId: string, i: number, len: number):
   if (!r || !(len >= 0.1)) return;
   const es = roomEdges(r), n = es.length, e = es[i], far = (i + 1) % n;
   moveCorners(h, joinedCorners(h, r.storey, roomId, [far, (i + 2) % n], far), [e.d[0] * (len - e.len), e.d[1] * (len - e.len)]);
+}
+
+/** Run `edit`, then put every placed window and door back at the point `place` maps its old centre to (by default, where it was). */
+function keepOpenings(h: House, edit: () => void, place: (p: Pt) => Pt = (p) => p): void {
+  const at = (o: House['openings'][number]) => { const r = h.rooms.find((x) => x.id === o.room); return r ? roomEdges(r)[wallIndex(h, o)] : undefined; };
+  const was = h.openings.flatMap((o) => { const e = o.t != null && at(o); return e ? [[o, place([e.a[0] + e.d[0] * o.t!, e.a[1] + e.d[1] * o.t!])] as const] : []; });
+  edit();
+  for (const [o, p] of was) { const e = at(o); if (e) o.t = +Math.max(0, Math.min(e.len, (p[0] - e.a[0]) * e.d[0] + (p[1] - e.a[1]) * e.d[1])).toFixed(3); }
+}
+
+/**
+ * Make the space between two rooms drawn a wall apart `by` metres wider (narrower when negative) by moving everything on one side of
+ * the wall's middle line away from it, on every storey: rooms, windows, floor zones and emitters. Rooms across the line stretch.
+ * `side` 1 moves the side of the room across the wall, -1 the side of `roomId`.
+ */
+export function stretchAtWall(h: House, roomId: string, idx: number, gap: number, by: number, side: 1 | -1): void {
+  const r = h.rooms.find((x) => x.id === roomId), e = r && roomEdges(r)[idx];
+  if (!e || Math.abs(by) < 1e-6) return;
+  const n: Pt = [e.n[0] * side, e.n[1] * side], m: Pt = [e.a[0] + e.n[0] * gap / 2, e.a[1] + e.n[1] * gap / 2];
+  const beyond = (p: Pt) => (p[0] - m[0]) * n[0] + (p[1] - m[1]) * n[1] > 1e-6;
+  const move = (p: Pt): Pt => (beyond(p) ? [p[0] + n[0] * by, p[1] + n[1] * by] : p);
+  keepOpenings(h, () => {
+    for (const o of h.rooms) if (roomPoly(o).some(beyond)) setOutline(ensurePoly(h, o.id)!, o.poly!.map(move));
+    for (const z of h.zones ?? []) z.poly = z.poly.map(move);
+    for (const em of h.heating.emitters) {
+      if (em.at) em.at = move(em.at);
+      if (em.rect && beyond([em.rect.x + em.rect.w / 2, em.rect.y + em.rect.h / 2])) { em.rect.x += n[0] * by; em.rect.y += n[1] * by; }
+    }
+  }, move);
+}
+
+/** Make the space between two rooms drawn a wall apart `by` metres wider (narrower when negative) by moving each room's wall half of it into the room. */
+export function narrowAtWall(h: House, roomId: string, idx: number, other: string, gap: number, by: number): void {
+  const r = h.rooms.find((x) => x.id === roomId), o = h.rooms.find((x) => x.id === other), e = r && roomEdges(r)[idx];
+  const j = o && e ? roomEdges(o).findIndex((f) => sharedSpan(e, f, 0.02, gap + 0.02)) : -1;
+  if (!e || !o || j < 0) return;
+  const d: Pt = [e.n[0] * by / 2, e.n[1] * by / 2];
+  keepOpenings(h, () => {
+    moveCorners(h, lineCorners(r, idx).map((k) => [roomId, k]), [-d[0], -d[1]]);
+    moveCorners(h, lineCorners(o, j).map((k) => [other, k]), d);
+  });
+}
+
+/** The corners of wall `i` and of the walls either side carrying on in a straight line: all of them move to keep the line straight. */
+function lineCorners(r: Room, i: number): number[] {
+  const es = roomEdges(r), n = es.length, e = es[i];
+  const straight = (k: number) => k !== i && es[k].d[0] * e.d[0] + es[k].d[1] * e.d[1] > 0.9999 && Math.abs((es[k].a[0] - e.a[0]) * e.n[0] + (es[k].a[1] - e.a[1]) * e.n[1]) < 1e-3;
+  let a = i, b = i;
+  while (straight((a + n - 1) % n)) a = (a + n - 1) % n;
+  while (straight((b + 1) % n) && (b + 1) % n !== a) b = (b + 1) % n;
+  const out = [a];
+  for (let k = a; k !== (b + 1) % n; k = (k + 1) % n) out.push((k + 1) % n);
+  return out;
 }
 
 // --- Inside doors, splitting, groups of rooms, problems ---------------------------------------------------
@@ -486,20 +543,44 @@ export function bandName(h: House, b: number): string {
 }
 
 /** A new floor or ceiling zone in a band, starting with the band's usual build-up so nothing changes until a different one is picked. */
-export function addFloorZone(h: House, id: string, band: number, poly: Pt[]): void {
+export function addFloorZone(h: House, id: string, band: number, poly: Pt[], ufh = false): void {
   const last = h.storeys.length - 1, key = band === 0 ? 'groundFloor' : band > last ? (h.loft.present ? 'loftCeiling' : 'flatRoof') : 'intFloor';
-  const zs = (h.zones ??= []);
-  zs.push({ id, band, name: `Zone ${zs.filter((z) => z.band === band).length + 1}`, poly: poly.map(([x, y]) => [+x.toFixed(3), +y.toFixed(3)] as Pt), buildup: h.defaults[key] });
+  const zs = (h.zones ??= []), name = ufh ? `UFH ${zs.filter((z) => z.ufh).length + 1}` : `Zone ${zs.filter((z) => z.band === band && !z.ufh).length + 1}`;
+  zs.push({ id, band, name, poly: poly.map(([x, y]) => [+x.toFixed(3), +y.toFixed(3)] as Pt), buildup: h.defaults[key], ...(ufh ? { ufh: true } : {}) });
 }
 
-/** A heated-floor loop drawn as a rectangle in the room under its centre; false if it isn't inside a room on the storey. */
-export function addLoopRect(h: House, id: string, storey: number, rect: { x: number; y: number; w: number; h: number }, addLoop: (h: House, room: string) => void): boolean {
-  const room = roomAt(h, storey, [rect.x + rect.w / 2, rect.y + rect.h / 2]);
-  if (!room) return false;
-  addLoop(h, room.id);
-  const e = h.heating.emitters[h.heating.emitters.length - 1];
-  e.id = id; e.rect = rect; e.area = +(rect.w * rect.h).toFixed(2);
-  const z = h.heating.zones.find((y) => y.id === e.zone);
-  if (z && !z.manifold) z.manifold = { x: rect.x, y: rect.y + rect.h + 0.3 };
-  return true;
+/** An emitter for a room in the first matching heating zone: a K2 radiator, towel rail or UFH loop (85% of the floor until it is sized). */
+export function addEmitter(h: House, room: string, kind: Emitter['kind'], id: string): void {
+  const zone = h.heating.zones.find((z) => (kind === 'ufh' ? z.kind === 'ufh' : z.kind === 'rad'))?.id ?? '';
+  const r = h.rooms.find((x) => x.id === room);
+  h.heating.emitters.push({ id, room, kind, zone, type: 'K2', len: 1000, height: 600, rated: 600, area: r ? +(roomArea(r) * 0.85).toFixed(1) : 10, spacing: 150, cover: 'Tiles', tail: 5 });
 }
+
+/**
+ * Underfloor heating zones give every heated room they cover (on the storey whose floor they are in) a UFH loop sized to the part
+ * of the room inside the zone, and the zone's pipe spacing and diameter; loops of zones that no longer cover a room go. Run after every edit. Returns `h` itself when
+ * nothing changes, else a changed copy, so it never alters the house it is given.
+ */
+export function syncUfh(h: House): House {
+  const want = new Map<string, { room: string; zone: string; area: number; spacing: number; pipe: number }>();
+  for (const z of h.zones ?? []) {
+    if (!z.ufh) continue;
+    for (const r of h.rooms) {
+      if (r.storey !== z.band || !r.heated) continue;
+      const area = +overlapAreaPoly(z.poly, roomPoly(r)).toFixed(2);
+      if (area >= 0.1) want.set(`u-${z.id}-${r.id}`, { room: r.id, zone: z.id, area, spacing: z.spacing ?? 150, pipe: z.pipe ?? 16 });
+    }
+  }
+  const es = h.heating.emitters;
+  const same = (e: Emitter, w?: { area: number; spacing: number; pipe: number }) => !!w && w.area === e.area && w.spacing === e.spacing && w.pipe === (e.pipe ?? 16);
+  if (es.every((e) => !e.fromZone || same(e, want.get(e.id))) && [...want.keys()].every((id) => es.some((e) => e.id === id))) return h;
+  const n = structuredClone(h);
+  n.heating.emitters = n.heating.emitters.filter((e) => !e.fromZone || want.has(e.id));
+  for (const [id, w] of want) {
+    let e = n.heating.emitters.find((x) => x.id === id);
+    if (!e) { addEmitter(n, w.room, 'ufh', id); e = n.heating.emitters[n.heating.emitters.length - 1]; e.fromZone = w.zone; }
+    e.area = w.area; e.spacing = w.spacing; e.pipe = w.pipe;
+  }
+  return n;
+}
+

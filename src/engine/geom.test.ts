@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { centroid, compass, edges, overlapAreaPoly, polyArea, selfIntersects, sharedSpan, triangulate } from './geom';
+import { centroid, compass, dropSpikes, edges, overlapAreaPoly, polyArea, selfIntersects, sharedSpan, triangulate } from './geom';
 import type { Pt } from './geom';
 
 const rect = (x: number, y: number, w: number, d: number): Pt[] => [[x, y], [x + w, y], [x + w, y + d], [x, y + d]];
@@ -37,5 +37,17 @@ describe('plan geometry', () => {
   it('spots a bow-tie', () => {
     expect(selfIntersects([[0, 0], [2, 2], [2, 0], [0, 2]])).toBe(true);
     expect(selfIntersects(L)).toBe(false);
+  });
+});
+
+describe('dropSpikes', () => {
+  it('removes a corner where the wall doubles back, and repeated corners', () => {
+    // A near-miss on the first corner: the top wall runs 0.25 m past the left wall and back.
+    expect(dropSpikes([[1.75, 8.4], [5.75, 8.4], [5.75, 12.35], [2, 12.35], [2, 8.4]])).toEqual([[5.75, 8.4], [5.75, 12.35], [2, 12.35], [2, 8.4]]);
+    expect(dropSpikes([[0, 0], [4, 0], [4, 0], [4, 3], [0, 3]])).toEqual(rect(0, 0, 4, 3));
+  });
+  it('keeps a straight-through corner and an ordinary outline', () => {
+    expect(dropSpikes([[0, 0], [2, 0], [4, 0], [4, 3], [0, 3]])).toHaveLength(5);
+    expect(dropSpikes(rect(0, 0, 4, 3))).toEqual(rect(0, 0, 4, 3));
   });
 });
