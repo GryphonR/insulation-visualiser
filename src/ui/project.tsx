@@ -35,6 +35,10 @@ interface Ctx {
   deleteProject: (id: string) => void;
 }
 
+// Houses are never mutated (edits go to a copy), so a scenario left untouched by an edit keeps its result, and so does undo.
+const calcs = new WeakMap<House, HouseResult>();
+const calcCached = (h: House) => { let r = calcs.get(h); if (!r) calcs.set(h, (r = calcHouse(h))); return r; };
+
 const C = createContext<Ctx | null>(null);
 export const useProject = (): Ctx => {
   const c = useContext(C);
@@ -85,7 +89,7 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
   const setHouse: Ctx['setHouse'] = (fn) =>
     setProject((p) => ({ ...p, scenarios: p.scenarios.map((s) => (s.id === p.active ? { ...s, house: syncUfh(fn(s.house)) } : s)) }));
   const upd: Ctx['upd'] = (fn) => setHouse((prev) => { const n = structuredClone(prev); fn(n); return n; });
-  const results = useMemo(() => new Map(project.scenarios.map((s) => [s.id, calcHouse(s.house)])), [project.scenarios]);
+  const results = useMemo(() => new Map(project.scenarios.map((s) => [s.id, calcCached(s.house)])), [project.scenarios]);
   const ordered = useMemo(() => {
     const out: Scenario[] = [];
     const walk = (parent: string | null) => project.scenarios.filter((s) => s.parent === parent).forEach((s) => { out.push(s); walk(s.id); });

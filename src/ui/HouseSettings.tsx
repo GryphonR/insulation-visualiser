@@ -1,6 +1,6 @@
-import { MONTHS } from '../engine/data';
+import { COLOURS, MONTHS } from '../engine/data';
 import { MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS } from '../engine/climate-mcs';
-import { defaultTemp, deviceM3 } from '../engine/house';
+import { SIDES, bearingLabel, defaultTemp, deviceM3, trueBearing } from '../engine/house';
 import type { RoomType } from '../engine/house';
 import { Chip } from './controls';
 import { Card, Num, fmt } from './hform';
@@ -174,6 +174,25 @@ export function StoreysPage() {
               <Num label="Mean height" unit="m" value={house.loft.height} min={0.1} onChange={(v) => upd((h) => { h.loft.height = v; })} />
               <Num label="Roof pitch" unit="°" step={1} min={0} max={70} value={house.loft.pitch} onChange={(v) => upd((h) => { h.loft.pitch = v; })} />
             </div>
+            {house.loft.present && <div className="stack-10">
+              <div className="chips" role="group" aria-label="Roof form">
+                {([['gable', 'Gable'], ['hip', 'Hipped'], ['mono', 'Monopitch']] as const).map(([k, l]) => <Chip key={k} on={(house.loft.form ?? 'gable') === k} onClick={() => upd((h) => { h.loft.form = k; })}>{l}</Chip>)}
+              </div>
+              {house.loft.form === 'mono' ? (
+                <div className="chips" role="group" aria-label="Slope faces">
+                  {SIDES.map((s, i) => <Chip key={s} on={(house.loft.facing ?? 'S') === s} onClick={() => upd((h) => { h.loft.facing = s; })}>{`Faces ${bearingLabel(trueBearing(house, i * 90))}`}</Chip>)}
+                </div>
+              ) : (
+                <div className="chips" role="group" aria-label="Ridge runs">
+                  {([[undefined, 'Ridge along the longer side'], ['x', 'Ridge left–right on the plan'], ['y', 'Ridge up–down on the plan']] as const).map(([k, l]) => <Chip key={l} on={house.loft.ridge === k} onClick={() => upd((h) => { if (k) h.loft.ridge = k; else delete h.loft.ridge; })}>{l}</Chip>)}
+                </div>
+              )}
+              <div className="chips" role="group" aria-label="Roof colour">
+                {COLOURS.map((c) => <Chip key={c.id} on={(house.roofColour ?? 'mid') === c.id} onClick={() => upd((h) => { h.roofColour = c.id; })}>{c.label}</Chip>)}
+              </div>
+              {res.loft && <p className="small mono">{res.loft.slopes.map((s) => `${bearingLabel(s.az)} ${fmt(s.area, 1)} m²`).join(' · ')}</p>}
+              <p className="small muted">Sun on each slope warms the loft in the hour-by-hour runs; the design day is overcast, so heat loss doesn't change. The colour applies to every roof, slopes and flat roofs included.</p>
+            </div>}
           </Card>
       </div>
     </div>

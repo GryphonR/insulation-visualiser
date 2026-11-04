@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { ROOM_TEMPS } from '../engine/climate-mcs';
-import { SHADING, SIDES, buildupU, defaultTemp, edgesToRectShape, rectShapeToEdges, roomArea, roomEdges, roomPoly, setOutline } from '../engine/house';
+import { SHADING, SIDES, bearingLabel, buildupU, trueBearing, defaultTemp, edgesToRectShape, rectShapeToEdges, roomArea, roomEdges, roomPoly, setOutline } from '../engine/house';
 import type { BuildupKind, Face, RoomType, Side } from '../engine/house';
 import { MAT } from '../engine/data';
 import { simulate } from '../engine/house-sim';
@@ -304,12 +304,12 @@ export function RoomPage({ id, initialTab }: { id: string; initialTab?: string }
                     {room.poly ? (
                       <label className="hf"><span className="eyebrow">Wall</span>
                         <select className="select" value={o.edge ?? roomEdges(room).findIndex((x) => x.side === o.side)} onChange={(e) => { const i = Number(e.target.value); set({ edge: i, side: roomEdges(room)[i].side }); }}>
-                          {roomEdges(room).map((x) => <option key={x.idx} value={x.idx}>Wall {x.idx + 1} ({x.side}, {fmt(x.len, 2)} m)</option>)}
+                          {roomEdges(room).map((x) => <option key={x.idx} value={x.idx}>Wall {x.idx + 1} ({bearingLabel(trueBearing(house, x.az))}, {fmt(x.len, 2)} m)</option>)}
                         </select>
                       </label>
                     ) : (
                       <label className="hf"><span className="eyebrow">Side</span>
-                        <select className="select" value={o.side} onChange={(e) => set({ side: e.target.value as Side })}>{SIDES.map((s) => <option key={s}>{s}</option>)}</select>
+                        <select className="select" value={o.side} onChange={(e) => set({ side: e.target.value as Side })}>{SIDES.map((s, i) => <option key={s} value={s}>{house.north ? `${['Top', 'Right', 'Bottom', 'Left'][i]} wall, faces ${bearingLabel(trueBearing(house, i * 90))}` : s}</option>)}</select>
                       </label>
                     )}
                     <Num label="Width" unit="m" value={o.w} min={0.1} onChange={(v) => set({ w: v })} />

@@ -51,6 +51,12 @@ async function shrink(file: File): Promise<{ src: string; aspect: number }> {
   } finally { URL.revokeObjectURL(url); }
 }
 
+/** A plan offset in metres as metres east and south on the ground, for a plan whose "up" points `north` degrees clockwise of true north. */
+export function planToWorld(p: Pt, north: number): Pt {
+  const a = (north * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+  return [p[0] * c - p[1] * s, p[0] * s + p[1] * c];
+}
+
 export const traceOf = (h: House): TraceSettings => h.trace ?? { mode: 'none', images: {}, sat: { lat: 0, lon: 0, zoom: ZOOM, opacity: 0.8 } };
 
 /** What to draw under the plan for the current tracing mode. */
@@ -63,16 +69,19 @@ export function traceUnderlay(h: House, storey: number, imagery: Imagery): ((to:
   }
   if (t.mode === 'sat' && t.sat.lat && tileUrl(imagery, 0, 0, 0)) {
     return (to, S) => {
-      const { lat, lon, zoom: z } = t.sat, m = metresPerPx(lat, z), P0 = worldPx(lat, lon, z), b = planBounds(h);
-      // Tiles covering the plan plus 10 m round it; plan (0, 0) sits at the chosen latitude and longitude.
-      const tx0 = Math.floor((P0[0] + (b.minX - 10) / m) / TILE), tx1 = Math.floor((P0[0] + (b.maxX + 10) / m) / TILE);
-      const ty0 = Math.floor((P0[1] + (b.minY - 10) / m) / TILE), ty1 = Math.floor((P0[1] + (b.maxY + 10) / m) / TILE);
+      const { lat, lon, zoom: z } = t.sat, m = metresPerPx(lat, z), P0 = worldPx(lat, lon, z), b = planBounds(h), north = h.north ?? 0;
+      // Tiles covering the plan plus 10 m round it, the plan turned to true north; plan (0, 0) sits at the chosen latitude and longitude.
+      const ws = [[b.minX, b.minY], [b.maxX, b.minY], [b.maxX, b.maxY], [b.minX, b.maxY]].map((p) => planToWorld(p as Pt, north));
+      const wx = ws.map((p) => p[0]), wy = ws.map((p) => p[1]);
+      const tx0 = Math.floor((P0[0] + (Math.min(...wx) - 10) / m) / TILE), tx1 = Math.floor((P0[0] + (Math.max(...wx) + 10) / m) / TILE);
+      const ty0 = Math.floor((P0[1] + (Math.min(...wy) - 10) / m) / TILE), ty1 = Math.floor((P0[1] + (Math.max(...wy) + 10) / m) / TILE);
       const out: ReactNode[] = [];
       for (let tx = tx0; tx <= tx1; tx++) for (let ty = ty0; ty <= ty1; ty++) {
         const a = to([(tx * TILE - P0[0]) * m, (ty * TILE - P0[1]) * m]);
         out.push(<image key={`${tx}-${ty}`} href={tileUrl(imagery, z, tx, ty)!} x={a[0]} y={a[1]} width={TILE * m * S + 0.5} height={TILE * m * S + 0.5} opacity={t.sat.opacity} />);
       }
-      return <g pointerEvents="none">{out}</g>;
+      const o = to([0, 0]);
+      return <g pointerEvents="none" transform={north ? `rotate(${-north} ${o[0]} ${o[1]})` : undefined}>{out}</g>;
     };
   }
   return undefined;
@@ -92,8 +101,10 @@ export function TraceControls({ house, res, storey, upd, onMeasure, measuring, i
   const [known, setKnown] = useState('');
 
   const im = t.images[storey];
-  const nudge = (dx: number, dy: number) => set((x) => {
+  // px right, py up on the plan as drawn, which may be turned from true north; dx east, dy north on the ground.
+  const nudge = (px: number, py: number) => set((x) => {
     const m = 1 / 111320; // degrees of latitude per metre
+    const [dx, s] = planToWorld([px, -py], house.north ?? 0), dy = -s;
     x.sat.lat -= dy * m; x.sat.lon += (dx * m) / Math.cos((x.sat.lat * Math.PI) / 180);
   });
 
@@ -138,10 +149,10 @@ export function TraceControls({ house, res, storey, upd, onMeasure, measuring, i
           <label className="hf"><span className="eyebrow">Plan corner (0, 0) at latitude</span><input type="number" className="thk-input wide" step={0.00001} value={+t.sat.lat.toFixed(6)} onChange={(e) => set((x) => { x.sat.lat = Number(e.target.value) || 0; })} /></label>
           <label className="hf"><span className="eyebrow">longitude</span><input type="number" className="thk-input wide" step={0.00001} value={+t.sat.lon.toFixed(6)} onChange={(e) => set((x) => { x.sat.lon = Number(e.target.value) || 0; })} /></label>
           <span className="nudge" role="group" aria-label="Move the imagery under the plan">
-            <button type="button" className="icon-btn small" onClick={() => nudge(0, 1)} aria-label="Imagery north 1 m">↑</button>
-            <button type="button" className="icon-btn small" onClick={() => nudge(1, 0)} aria-label="Imagery west 1 m">←</button>
-            <button type="button" className="icon-btn small" onClick={() => nudge(-1, 0)} aria-label="Imagery east 1 m">→</button>
-            <button type="button" className="icon-btn small" onClick={() => nudge(0, -1)} aria-label="Imagery south 1 m">↓</button>
+            <button type="button" className="icon-btn small" onClick={() => nudge(0, 1)} aria-label="Imagery up 1 m">↑</button>
+            <button type="button" className="icon-btn small" onClick={() => nudge(1, 0)} aria-label="Imagery left 1 m">←</button>
+            <button type="button" className="icon-btn small" onClick={() => nudge(-1, 0)} aria-label="Imagery right 1 m">→</button>
+            <button type="button" className="icon-btn small" onClick={() => nudge(0, -1)} aria-label="Imagery down 1 m">↓</button>
           </span>
           <label className="hf"><span className="eyebrow">Show</span><input type="range" min={0.1} max={1} step={0.05} value={t.sat.opacity} onChange={(e) => set((x) => { x.sat.opacity = Number(e.target.value); })} /></label>
         </div>

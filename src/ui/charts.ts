@@ -168,8 +168,10 @@ export function buildCharts(res: ScenarioResult): ChartSpec[] {
       area: true,
       series: [{ name: 'Irradiance', arr: fr.I, col: '#b97a00', sw: 2.5 }],
       note:
-        orient.id === 'roof'
+        orient.id === 'roof' && orient.tilt < 1
           ? 'A flat roof sees the sun all day, and also loses heat to a clear night sky.'
+          : orient.id === 'roof'
+          ? 'A pitched roof catches more sun facing south and less facing north, and loses heat to a clear night sky.'
           : 'This face sees direct sun for part of the day only; the rest is diffuse sky light.',
     }),
   ];

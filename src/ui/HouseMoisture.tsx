@@ -5,6 +5,7 @@ import type { House } from '../engine/house';
 import { buildupMoisture, roomMoisture } from '../engine/house-moisture';
 import type { MoistureOptions } from '../engine/house-moisture';
 import { Chip } from './controls';
+import { useMoisture } from './useMoisture';
 
 const fmt = (v: number, d = 0) => (Number.isFinite(v) ? v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—');
 const col = (p: number) => (p < 65 ? '#e3f0e8' : p < 75 ? '#fffefb' : p < 80 ? '#f3c9a2' : '#e9965f');
@@ -15,6 +16,7 @@ export function HouseMoisture({ house }: { house: House }) {
   const [opt, setOpt] = useState<MoistureOptions>({ dryIndoors: false, fansUsed: true, trickleOpen: false });
   const m = useMemo(() => roomMoisture(house, res, opt), [house, res, opt]);
   const walls = useMemo(() => buildupMoisture(house, res), [house, res]);
+  const { results, busy } = useMoisture(useMemo(() => walls.map((w) => w.input), [walls]));
   const [sel, setSel] = useState('');
   const ranked = [...m.rooms].sort((a, b) => b.srh - a.srh);
   const c = m.rooms.find((r) => r.id === sel) ?? ranked[0];
@@ -70,21 +72,21 @@ export function HouseMoisture({ house }: { house: House }) {
         )}
 
         <section className="card panel">
-          <h2>Condensation inside the build-ups</h2>
-          <p className="muted small">The app's year-long vapour diffusion check (EN ISO 13788 monthly method) for each outside wall and roof in use, at 20 °C inside with a typical moisture load. Open it in "Moisture over a year" to vary rain, rising damp and loads.</p>
+          <h2>Moisture inside the build-ups</h2>
+          <p className="muted small">The app's year-long heat and moisture simulation (vapour and capillary water, EN 15026 style) for each outside wall and roof in use, at 20 °C inside with a typical moisture load and no rain or rising damp. Open it in "Moisture over a year" to vary rain, rising damp and loads.</p>
           <table className="h-table">
             <thead><tr><th>Build-up</th><th>Used in</th><th>Result</th></tr></thead>
             <tbody>
-              {walls.map(({ b, where, r }) => (
+              {walls.map(({ b, where }, i) => { const r = busy ? undefined : results?.[i]; return (
                 <tr key={b.id}>
                   <td>{b.name}</td>
                   <td className="small muted">{where.join(', ')}</td>
                   <td className={r?.verdict === 'accumulates' ? 'bad' : r?.mouldMonths.length ? 'warn' : 'good'}>
-                    {!r ? 'not checked' : r.verdict === 'none' ? 'No condensation' : r.verdict === 'dries' ? `Some condensation, dries by ${MONTHS[r.dryMonth ?? 0]}` : 'Builds up year on year'}
+                    {r === undefined ? 'Calculating…' : !r ? 'not checked' : r.verdict === 'none' ? 'Stays dry' : r.verdict === 'dries' ? `Gets wet, dries by ${MONTHS[r.dryMonth ?? 0]}` : r.growing ? 'Gets wetter year on year' : "Doesn't dry out"}
                     {r && r.mouldMonths.length > 0 && <span className="small"> · inner surface over 80% RH in {r.mouldMonths.map((x) => MONTHS[x]).join(', ')}</span>}
                   </td>
                 </tr>
-              ))}
+              ); })}
             </tbody>
           </table>
         </section>

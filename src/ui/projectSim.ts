@@ -24,9 +24,14 @@ export function projectDay(res: HouseResult, buildupId?: string, roof = false): 
   const loc = LOCATIONS.reduce((a, l) => (Math.abs(l.lat - lat) < Math.abs(a.lat - lat) ? l : a));
   const glazed = room.faces.filter((f) => f.kind === 'window' && f.side === face.side).reduce((a, f) => a + f.area, 0);
   const rest = room.faces.filter((f) => f !== face && outside(f)).reduce((a, f) => a + f.area, 0);
+  // A roof's pitch and facing: a slope or flat roof has its own; a ceiling to the loft takes the loft's sunniest slope.
+  const isRoof = roof || face.kind === 'ceiling';
+  const sunny = res.loft?.slopes.reduce<(typeof res.loft.slopes)[number] | null>((a, s) => (!a || Math.cos(((s.az - 180) * Math.PI) / 180) > Math.cos(((a.az - 180) * Math.PI) / 180) ? s : a), null);
+  const tilt = face.to.k === 'loft' ? sunny?.tilt ?? 0 : face.tilt ?? 0, az = face.to.k === 'loft' ? sunny?.az : face.az;
   const patch: Partial<Scenario> = {
     loc: loc.id,
-    orient: roof || face.kind === 'ceiling' ? 'roof' : face.side ?? 'W',
+    orient: isRoof ? 'roof' : face.side ?? 'W',
+    ...(isRoof ? { pitch: Math.round(tilt), az: tilt > 0 && az != null ? Math.round(az) : undefined } : { az: face.az != null ? Math.round(face.az) : undefined }),
     tin: clamp(room.room.setpoint, 10, 28), comfort: clamp(room.room.setpoint, 14, 28),
     floor: clamp(Math.round(room.area), 6, 60), elA: clamp(Math.round(face.area), 2, 60),
     glA: clamp(Math.round(glazed * 2) / 2, 0, 20), rest: clamp(Math.round(rest), 0, 100),

@@ -1,4 +1,4 @@
-import { MAT, PRESETS } from './data';
+import { MAT, PRESETS, canonId } from './data';
 import { calcHouse } from './house';
 import type { Buildup, Device, House, Opening, Room } from './house';
 import { autoEmitters } from './house-heating';
@@ -10,15 +10,15 @@ export const DEFAULT_BUILDUPS: Buildup[] = [
   { id: 'cav', name: 'Cavity wall, PIR filled', kind: 'wall', layers: preset('cavity_new') },
   { id: 'solid', name: 'Solid brick, 225 mm', kind: 'wall', layers: preset('solid') },
   { id: 'stud', name: 'Stud partition', kind: 'wall', layers: [['pb', 12.5], ['cavity', 75], ['pb', 12.5]] },
-  { id: 'sf', name: 'Solid floor, 75 mm PIR', kind: 'floor', layers: [['conc', 100], ['pir', 75], ['render', 65]] },
-  { id: 'jf', name: 'Timber joist floor', kind: 'floor', layers: [['pb', 12.5], ['cavity', 150], ['timber', 20]] },
+  { id: 'sf', name: 'Solid floor, 75 mm PIR', kind: 'floor', layers: [['m_concrete_reinforced', 100], ['pir', 75], ['m_cement_sand', 65]] },
+  { id: 'jf', name: 'Timber joist floor', kind: 'floor', layers: [['pb', 12.5], ['cavity', 150], ['m_timber_500_kg_m', 20]] },
   { id: 'loft', name: 'Cold roof ceiling, 270 mm loft', kind: 'roof', layers: preset('cold270') },
   { id: 'tiles', name: 'Pitched roof, tiles on felt', kind: 'roof', layers: [['m_roof_tile_concrete', 15]] },
   { id: 'flat', name: 'Lightweight timber flat roof', kind: 'roof', layers: preset('roofl') },
   // Layers run outside → inside, as everywhere in the app.
   { id: 'slope', name: 'Rafters, 100 mm mineral wool', kind: 'roof', layers: [['m_roof_tile_concrete', 15], ['vgap', 50], ['mw', 100], ['pb', 12.5]] },
   { id: 'knee', name: 'Knee wall, stud with 75 mm mineral wool', kind: 'wall', layers: [['pb', 12.5], ['mw', 75], ['pb', 12.5]] },
-  { id: 'dwall', name: 'Dormer, timber frame 75 mm mineral wool', kind: 'wall', layers: [['timber', 20], ['ply', 18], ['mw', 75], ['pb', 12.5]] },
+  { id: 'dwall', name: 'Dormer, timber frame 75 mm mineral wool', kind: 'wall', layers: [['m_timber_500_kg_m', 20], ['ply', 18], ['mw', 75], ['pb', 12.5]] },
   { id: 'droof', name: 'Dormer flat roof, 50 mm between joists', kind: 'roof', layers: [['ply', 18], ['cavity', 100], ['mw', 50], ['pb', 12.5]] },
   { id: 'dg', name: 'Double glazed, 2010', kind: 'glazing', layers: [], u: 1.4, g: 0.63, frame: 0.3 },
   { id: 'door', name: 'Composite door', kind: 'door', layers: [], u: 1.6 },
@@ -130,7 +130,7 @@ export function upgradeHouse(p: House): House {
     ...d, ...p, vent: { ...d.vent, ...p.vent }, loft: { ...d.loft, ...p.loft }, climate: { ...d.climate, ...p.climate }, hp: { ...d.hp, ...p.hp },
     gains: { ...d.gains, ...p.gains }, suspended: { ...d.suspended, ...p.suspended }, defaults: { ...d.defaults, ...p.defaults }, heating: p.heating,
   };
-  h.buildups = h.buildups.map((b) => ({ ...b, layers: (b.layers ?? []).filter(([m, t]) => !!MAT[m] && Number.isFinite(t) && t > 0) }));
+  h.buildups = h.buildups.map((b) => ({ ...b, layers: (b.layers ?? []).filter(([m, t]) => !!MAT[m] && Number.isFinite(t) && t > 0).map(([m, t]) => [canonId(m), t] as [string, number]) }));
   for (const id of Object.values(h.defaults)) {
     if (!h.buildups.some((b) => b.id === id)) { const b = d.buildups.find((x) => x.id === id); if (b) h.buildups.push(b); }
   }

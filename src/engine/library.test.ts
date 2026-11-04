@@ -28,7 +28,7 @@ describe('roof orientation', () => {
   const base = (orient: string): Scenario => ({
     ...DEFAULT_SCENARIO,
     orient,
-    layers: [{ id: 1, mat: 'pir', t: 100 }, { id: 2, mat: 'conc', t: 150 }],
+    layers: [{ id: 1, mat: 'pir', t: 100 }, { id: 2, mat: 'm_concrete_reinforced', t: 150 }],
   });
 
   it('uses a different inside surface resistance for a roof than for a wall', () => {

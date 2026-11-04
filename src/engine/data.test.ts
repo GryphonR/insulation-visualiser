@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAT, MATERIAL_CATEGORIES, MATERIAL_GROUPS, MATERIALS, PRESETS } from './data';
+import { canonId, ID_ALIASES, MAT, MATERIAL_CATEGORIES, MATERIAL_GROUPS, MATERIALS, PRESETS } from './data';
 
 describe('material library', () => {
   it('has no duplicate ids', () => {
@@ -49,6 +49,16 @@ describe('material library', () => {
       for (const [matId] of p.layers) {
         expect(MAT[matId]).toBeTruthy();
       }
+    }
+  });
+});
+
+describe('retired material ids', () => {
+  it('still resolve to a live material, so old saves keep working', () => {
+    for (const [old, id] of Object.entries(ID_ALIASES)) {
+      expect(MATERIALS.some((m) => m.id === old)).toBe(false);
+      expect(MAT[old]).toBe(MAT[id]);
+      expect(canonId(old)).toBe(id);
     }
   });
 });

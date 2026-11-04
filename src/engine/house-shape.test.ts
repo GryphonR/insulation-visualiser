@@ -66,7 +66,7 @@ describe('room shapes', () => {
 
 describe('floor types', () => {
   const h = defaultHouse();
-  const deck = { id: 'x', name: 'Boards, uninsulated', kind: 'floor' as const, layers: [['timber', 22]] as Array<[string, number]>, floorType: 'suspended' as const };
+  const deck = { id: 'x', name: 'Boards, uninsulated', kind: 'floor' as const, layers: [['m_timber_500_kg_m', 22]] as Array<[string, number]>, floorType: 'suspended' as const };
 
   it('suspended floor U sits between the deck alone and zero, and falls with less ventilation', () => {
     const u = suspendedFloorU(deck, 4, 1500, 0.3);

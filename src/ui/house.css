@@ -234,3 +234,5 @@ svg.draw .vx.moving { fill: #c2410c; }
 .float-panel .layer-stack { border: 0; }
 .float-panel .layer-storey button { min-height: 36px; font-size: 13px; }
 .float-panel .layer-band > button { min-height: 32px; }
+.north-arrow { display: inline-block; font-weight: 700; line-height: 1; transition: transform 0.15s; }
+.float-top .thk-input { width: 4.5em; }

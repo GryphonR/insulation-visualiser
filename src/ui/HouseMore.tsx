@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { SHADING, buildupU } from '../engine/house';
-import type { Buildup } from '../engine/house';
+import { SHADING, UPSTAND_PSI, bearingLabel, buildupU } from '../engine/house';
+import type { Buildup, FloorEdge } from '../engine/house';
+import { Chip } from './controls';
 import { MAT } from '../engine/data';
 import { Card, Num, fmt } from './hform';
 import { GainsCard } from './HouseRuns';
@@ -13,9 +14,13 @@ export function GainsPage() {
   return <div className="house"><GainsCard house={house} upd={upd} /></div>;
 }
 
-/** Board 2b: what the ground floor sits on. The edge upstand and junction values are not modelled yet. */
+const EDGE0: FloorEdge = { edge: 'none', D: 0.6, R: 1.5, upstand: 'off', psi: UPSTAND_PSI.none };
+
+/** Board 2b: what the ground floor sits on, and its edge: foundation edge insulation and the upstand junction. */
 export function FloorPage() {
   const { house, upd, res } = useProject();
+  const fe = house.floorEdge ?? EDGE0;
+  const setFe = (patch: Partial<FloorEdge>) => upd((h) => { h.floorEdge = { ...(h.floorEdge ?? EDGE0), ...patch }; });
   const floors = res.rooms.flatMap((r) => r.faces.filter((f) => f.kind === 'floor' && (f.to.k === 'ground')).map((f) => ({ r, f })));
   const area = floors.reduce((a, x) => a + x.f.area, 0);
   const W = res.rooms.reduce((a, r) => a + r.rows.filter((x) => x.kind === 'floor' && x.to === 'ground').reduce((b, x) => b + x.W, 0), 0);
@@ -34,6 +39,26 @@ export function FloorPage() {
             {kinds.map((b) => <FloorLayers key={b.id} b={b} />)}
           </div>
           <p className="small muted">The U-value is the BS EN ISO 13370 figure for the whole floor: it depends on the floor area and exposed perimeter, so a bigger footprint loses less per m². Change the layers or the floor type in the build-up library.</p>
+        </Card>
+        <Card title="Floor edge" note="Solid slabs on the ground only. Both lower or add to every ground-floor room's floor U-value.">
+          <div className="stack-10">
+            <div className="eyebrow">Foundation edge insulation (BS EN ISO 13370)</div>
+            <div className="chips" role="group" aria-label="Edge insulation">
+              {([['none', 'None'], ['horizontal', 'Horizontal, round the edge'], ['vertical', 'Vertical, down the foundation']] as const).map(([k, l]) => <Chip key={k} on={fe.edge === k} onClick={() => setFe({ edge: k })}>{l}</Chip>)}
+            </div>
+            {fe.edge !== 'none' && (
+              <div className="hf-row">
+                <Num label={fe.edge === 'vertical' ? 'Depth below ground' : 'Width from the wall'} unit="m" step={0.1} value={fe.D} onChange={(v) => setFe({ D: Math.max(0, v) })} />
+                <Num label="Its thermal resistance" unit="m²K/W" step={0.25} value={fe.R} onChange={(v) => setFe({ R: Math.max(0, v) })} />
+              </div>
+            )}
+            <div className="eyebrow">Floor-to-wall junction (perimeter upstand)</div>
+            <div className="chips" role="group" aria-label="Perimeter upstand">
+              {([['off', 'Leave out'], ['none', `No upstand, Ψ ${UPSTAND_PSI.none}`], ['insulated', `Insulated upstand, Ψ ${UPSTAND_PSI.insulated}`], ['custom', 'Own Ψ']] as const).map(([k, l]) => <Chip key={k} on={fe.upstand === k} onClick={() => setFe({ upstand: k })}>{l}</Chip>)}
+            </div>
+            {fe.upstand === 'custom' && <div className="hf-row"><Num label="Ψ" unit="W/mK" step={0.01} value={fe.psi} onChange={(v) => setFe({ psi: Math.max(0, v) })} /></div>}
+            <p className="small muted">The junction is a loss per metre of outside wall on the ground floor, spread over each room's floor. The two set values are SAP Table K1 (E5, ground floor): the default for an unchecked detail, and an approved detail with an insulated upstand at the screed edge. Use your own Ψ from a junction calculation if you have one.</p>
+          </div>
         </Card>
         <Card title="Suspended timber floors" note="Used when a ground floor build-up is set to suspended timber.">
           <div className="hf-row">
@@ -56,7 +81,7 @@ export function FloorPage() {
               </tbody>
             </table>
           </div>
-          <p className="small muted">Not modelled yet: the edge upstand and the floor-to-wall junction. Heated floors (UFH) use the same U-value; their warmer screed is not treated separately.</p>
+          <p className="small muted">U includes the floor edge set on the left. Heated floors (UFH) use the same U-value; their warmer screed is not treated separately.</p>
         </Card>
       </div>
     </div>
@@ -113,7 +138,7 @@ export function OpeningsPage() {
                     const isGlass = house.buildups.find((b) => b.id === o.buildup)?.kind === 'glazing';
                     return (
                       <tr key={o.id}>
-                        <td>{room ? <a href={href('room', room.id, 'openings')}>{room.name}</a> : '—'}</td><td>{o.name}</td><td>{o.side}</td><td className="n mono">{fmt(o.w * o.h, 1)}</td>
+                        <td>{room ? <a href={href('room', room.id, 'openings')}>{room.name}</a> : '—'}</td><td>{o.name}</td><td>{(() => { const f = res.rooms.find((r) => r.room.id === o.room)?.faces.find((x) => x.key === `op:${o.id}`); return f?.az != null ? bearingLabel(f.az) : o.side; })()}</td><td className="n mono">{fmt(o.w * o.h, 1)}</td>
                         <td><select className="h-sel" value={o.buildup} aria-label={`${o.name} type`} onChange={(e) => set(o.id, { buildup: e.target.value })}>{glass.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></td>
                         <td>{isGlass ? <select className="h-sel" value={o.shade ?? 'none'} aria-label={`${o.name} shading`} onChange={(e) => set(o.id, { shade: e.target.value })}>{Object.entries(SHADING).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}</select> : '—'}</td>
                         <td className="n mono">{fmt(loss.get(o.id) ?? 0)}</td>
@@ -124,7 +149,7 @@ export function OpeningsPage() {
                 <tfoot><tr><td colSpan={6}>Total</td><td className="n mono">{fmt(total)}</td></tr></tfoot>
               </table>
             </div>
-            <p className="small muted">Junctions (thermal bridges) are left out for now, as decided; the design day isn't helped by sun, so shading only changes the year runs.</p>
+            <p className="small muted">Junctions (thermal bridges) are left out apart from the ground-floor edge (Floor page); the design day isn't helped by sun, so shading only changes the year runs.</p>
           </Card>
         </div>
       </div>

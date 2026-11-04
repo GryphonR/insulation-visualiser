@@ -4,6 +4,7 @@ import {
 import type { Location, Orient, Weather } from './data';
 import { simulate } from './simulate';
 import { solarAt } from './solar';
+import { bearingLabel } from './geom';
 import type { LayerInput, SimParams, SimResult } from './simulate';
 
 export type HeatMode = 'fixed' | 'schedule' | 'free';
@@ -15,6 +16,10 @@ export interface Scenario {
   month: number;
   weather: string;
   orient: string;
+  /** Roofs: pitch in degrees (0 = flat). */
+  pitch?: number;
+  /** True bearing the face (or a pitched roof's slope) looks out on, degrees from north; unset, the orientation's own. */
+  az?: number;
   colour: string;
   heat: HeatMode;
   /** Fixed room temperature, °C. */
@@ -68,7 +73,11 @@ export interface ScenarioContext {
 export function buildParams(sc: Scenario): ScenarioContext {
   const loc = LOCATIONS.find((l) => l.id === sc.loc) ?? LOCATIONS[1];
   const weather = WEATHER.find((w) => w.id === sc.weather) ?? WEATHER[1];
-  const orient = ORIENTS.find((o) => o.id === sc.orient) ?? ORIENTS[0];
+  const base = ORIENTS.find((o) => o.id === sc.orient) ?? ORIENTS[0];
+  const pitch = Math.min(90, Math.max(0, sc.pitch ?? 0)), az = sc.az ?? base.az;
+  const orient: Orient = base.id === 'roof'
+    ? { ...base, tilt: pitch, az, name: pitch > 0 ? `Roof, ${Math.round(pitch)}° pitch facing ${bearingLabel(az)}` : 'Flat roof', label: pitch > 0 ? `${Math.round(pitch)}° roof` : 'Flat roof' }
+    : sc.az != null ? { ...base, az, name: `Wall facing ${bearingLabel(az)}`, label: bearingLabel(az) } : base;
   const colour = COLOURS.find((c) => c.id === sc.colour) ?? COLOURS[1];
   const params: SimParams = {
     layers: sc.layers,

@@ -31,7 +31,6 @@
 Aerated concrete	0.100	300	1370
 Aerated concrete	0.140	500	1290
 Aerated concrete	0.270	900	1180
-AGEPAN  THD Static      40/60/80 mm	0.050	230	2100
 AGEPAN  THD Static 	0.050	230	2100
 Agepan DWD protect	0.090	565	2100
 AGEPAN OSB 3 PUR EN 300	0.130	600	2100
@@ -87,7 +86,6 @@ Concrete hollow brickwork - medium	0.620	1400	1110
 Concrete hollow stone (unfilled)	0.600	800	1190
 Concrete hollow stone (unfilled)	1.200	1400	1110
 Concrete reinforced	2.300	2300	1000
-Concrete reinforced 1%	2.300	2300	1000
 Concrete reinforced 2%	2.500	2500	1000
 Copper	380.000	8900	380
 Cork Board	0.042	170	1670
@@ -111,7 +109,6 @@ Glass wool	0.035	50	1030
 Gold	316.000	19260	129
 Gypsum (1200)	0.430	1200	1000
 Gypsum (1500)	0.560	1500	1000
-Gypsum (600)	0.180	600	1000
 Gypsum (900)	0.300	900	1000
 Gypsum fibre board	0.400	1125	1000
 Gypsum insulating plaster	0.180	600	1000
@@ -210,10 +207,8 @@ Polyurethane (PU)	0.250	1200	1800
 Polyurethane (PU) foam	0.050	70	1500
 Polyvinylchloride (PVC)	0.170	1390	900
 Polyvinylchloride (PVC) flexible, with 40 % softener	0.140	1200	1000
-PU (Polyurethane)	0.250	1200	1800
 PVC (polyvinyl chloride)	0.170	1390	960
 Quartz glass	1.400	2200	750
-Reinforced concrete (1%)	2.300	2300	1000
 Reinforced concrete (2%)	2.500	2400	1000
 Rock wool - Roll	0.034	60	1030
 Rock wool - Batt	0.040	160	1030
@@ -232,8 +227,6 @@ Soda lime glass (float glass)	1.000	2500	750
 Stainless steel	17.000	7900	460
 Steel	50.000	7800	450
 Therma fleece Sheeps Wool	0.035	31	1800
-Tiles, clay	1.000	2000	800
-Tiles, concrete	1.500	2100	1000
 Tiles, cork	0.065	400	1500
 Timber (500 kg/m³)	0.130	500	1600
 Timber (700 kg/m³)	0.180	700	1600
@@ -242,8 +235,6 @@ Underlay, cellular	0.100	270	1400
 Underlay, felt	0.050	120	1300
 Underlay, wool	0.060	200	1300
 Water at 10°C	0.600	1000	4190
-Wood 500 kg/m³	0.130	500	1600
-Wood 700 kg/m³	0.180	700	1600
 Wood fibre insulation board	0.039	150	2500
 Wood Wool- Celenit board	0.065	278	1810
 Wood wool layer 10mm (WW)	0.100	600	1470
@@ -253,5 +244,4 @@ XPS 031	0.031	35	1450
 XPS 033	0.033	35	1450
 XPS 035	0.035	35	1450
 XPS 037	0.037	35	1450
-XPS 039	0.039	35	1450
 Zinc	121.000	7100	387

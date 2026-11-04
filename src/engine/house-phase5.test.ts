@@ -3,6 +3,7 @@ import { buildupU, calcHouse } from './house';
 import { defaultHouse } from './house-default';
 import { KWH_PER_M3, NO_KNOBS, bestFit, calibrate, demoBills, parseMeterCsv } from './house-calibrate';
 import { buildupMoisture, dewPoint, roomMoisture, vsat } from './house-moisture';
+import { runMoisture } from './moisture';
 import { AGE_BANDS, TEMPLATES, newHouse } from './house-templates';
 import { simulate } from './house-sim';
 
@@ -88,7 +89,7 @@ describe('room moisture', () => {
   it('default build-ups list layers outside → inside: a ventilated gap sits outside the insulation', () => {
     for (const b of defaultHouse().buildups) {
       const gap = b.layers.findIndex(([m]) => m.startsWith('vgap'));
-      const ins = b.layers.findIndex(([m]) => ['mw', 'pir', 'eps', 'wf', 'cel'].includes(m));
+      const ins = b.layers.findIndex(([m]) => ['mw', 'pir', 'eps', 'wf', 'h_cellulose_loft'].includes(m));
       if (gap >= 0 && ins >= 0) expect(gap, b.name).toBeLessThan(ins);
     }
   });
@@ -97,7 +98,7 @@ describe('room moisture', () => {
     const h = defaultHouse(), res = calcHouse(h);
     const m = buildupMoisture(h, res);
     expect(m.map((x) => x.b.id).sort()).toEqual(['cav', 'loft', 'solid']);
-    expect(m.every((x) => x.r !== null)).toBe(true);
+    expect(m.every((x) => runMoisture(x.input) !== null)).toBe(true);
   });
 });
 

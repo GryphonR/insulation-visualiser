@@ -85,9 +85,8 @@ const RULES: Record<string, Rule[]> = {
 // Curated common materials and the heritage set, by id: [dry, wet?].
 const BY_ID: Record<string, [number, number?]> = {
   // curated
-  brick: [16, 10], stone: [200, 150], earth: [10, 6], conc: [130, 80], dblock: [100, 60], aac: [10, 6],
-  render: [25, 15], lime: [10, 6], pb: [10, 4], ply: [100, 50], timber: [50, 20], cavity: [1], vgap: [1],
-  cavity_le1: [1], cavity_le2: [1], vgap_le1: [1], pir: [60], eps: [60], mw: [1], wf: [5, 3], cel: [2],
+  brick: [16, 10], earth: [10, 6], dblock: [100, 60], pb: [10, 4], ply: [100, 50], cavity: [1], vgap: [1],
+  cavity_le1: [1], cavity_le2: [1], vgap_le1: [1], pir: [60], eps: [60], mw: [1], wf: [5, 3],
   tlx: [MU_CLOSED], boostr: [MU_CLOSED], hemp: [5],
   // building stones (est. mid-range except where EN ISO 10456 classes apply)
   h_portland_limestone: [40, 25], h_bath_stone: [15, 10], h_cotswold_limestone: [40, 25], h_magnesian_limestone: [40, 25],
@@ -108,11 +107,53 @@ const BY_ID: Record<string, [number, number?]> = {
 };
 
 /** Organic materials that absorb condensate; ~18% moisture by dry mass is the usual onset of rot risk. Mineral porous materials are left out (no single limit). */
-const HYGRO = /wood_fibre|agepan|cork|sheeps_wool|fleece|^h_(wf_|sheep|hemp_batt|flax|cotton|cellulose|cork|reed|straw|water_reed|long_straw)|^(wf|cel|timber|ply)$/;
+const HYGRO = /wood_fibre|agepan|cork|sheeps_wool|fleece|^h_(wf_|sheep|hemp_batt|flax|cotton|cellulose|cork|reed|straw|water_reed|long_straw)|^(wf|ply)$/;
 const HYGRO_CRIT = 0.18;
+
+// Capillary and storage data for the moisture model: [A water absorption coefficient kg/(m² s^0.5),
+// wf free water saturation kg/m³, w80 moisture content at 80% RH kg/m³]. Brick is MASEA's "Vollziegel";
+// the rest are typical mid-range values for the material type from published hygrothermal data
+// (WUFI / MASEA-style tables, EN 1015-18 render tests), so treat them as representative, not measured
+// for a product. Lime renders and plasters take up water roughly 5-10x faster than cement ones.
+// Materials with no entry are treated as non-capillary with almost no hygroscopic storage.
+type Hyg = [number, number, number];
+const LIME: Hyg = [0.08, 250, 6], NHL: Hyg = [0.06, 250, 6], LIME_CEMENT: Hyg = [0.03, 220, 20], CEMENT: Hyg = [0.01, 200, 30];
+const BRICK: Hyg = [0.18, 188, 3.1], CONCRETE: Hyg = [0.018, 155, 85], AAC: Hyg = [0.04, 350, 6], GYPSUM: Hyg = [0.29, 400, 6.3];
+const EARTH: Hyg = [0.08, 300, 15], HEMPCRETE: Hyg = [0.04, 450, 20], SANDSTONE: Hyg = [0.08, 140, 6], DENSE_STONE: Hyg = [0.0005, 10, 0.5];
+const HYG_BY_ID: Record<string, Hyg> = {
+  brick: BRICK, h_soft_brick: [0.3, 250, 4], h_stock_brick: [0.25, 230, 4], h_engineering_brick: [0.01, 60, 2],
+  earth: EARTH, h_cob: EARTH, h_clay_lump: EARTH, h_wattle_daub: EARTH, h_straw_clay: [0.05, 250, 12],
+  dblock: CONCRETE, pb: GYPSUM, ply: [0.001, 600, 70], wf: [0.003, 300, 16], h_wf_dense: [0.003, 300, 16],
+  hemp: HEMPCRETE, h_hemp_lime_roof: HEMPCRETE, h_hemp_lime_floor: HEMPCRETE, h_limecrete: [0.03, 250, 10],
+  h_lime_putty_mortar: LIME, h_lime_putty_plaster: LIME, h_lime_hair_plaster: LIME, h_nhl_mortar: NHL, h_nhl_render: NHL,
+  h_clay_plaster: [0.07, 330, 15], h_calsitherm: [1.0, 830, 6],
+  h_portland_limestone: [0.04, 150, 3], h_cotswold_limestone: [0.06, 170, 3], h_magnesian_limestone: [0.04, 150, 3],
+  h_bath_stone: [0.15, 230, 4], h_chalk_clunch: [0.2, 300, 5], h_purbeck_limestone: [0.01, 60, 2], h_mountain_limestone: [0.005, 30, 1],
+  h_gritstone: SANDSTONE, h_yorkshire_sandstone: SANDSTONE, h_red_sandstone: SANDSTONE, h_blond_sandstone: SANDSTONE,
+  h_granite: DENSE_STONE, h_whinstone: DENSE_STONE, h_flint: DENSE_STONE, h_slate: [0.001, 20, 1], h_rubble_wall: [0.1, 180, 8],
+};
+const HYG_RULES: Record<string, Array<[RegExp, Hyg]>> = {
+  masonry: [
+    [/aerated_concrete|thermalite/, AAC],
+    [/lightweight_concrete|light_gravel|expanded_shale|expanded_clay/, [0.03, 300, 20]],
+    [/clinker|engineering/, [0.01, 60, 2]],
+    [/brick/, BRICK],
+    [/light_mortar|lime_cement|cement_lime/, LIME_CEMENT],
+    [/concrete|tile_concrete/, CONCRETE],
+    [/roof_tile_clay/, [0.1, 150, 3]],
+    [/cement|one_coat|^m_mortar$/, CEMENT],
+  ],
+  plaster: [[/lime_hemp/, HEMPCRETE], [/cement_lime|ext_rendering|coloured/, LIME_CEMENT], [/gypsum|general_purpose|^m_plaster$/, GYPSUM]],
+  stone: [[/marble|crystalline/, DENSE_STONE], [/limestone_hard|sedimentary/, [0.01, 60, 2]], [/sandstone/, SANDSTONE], [/porous/, [0.15, 230, 4]]],
+  other: [[/cement_sand/, CEMENT], [/lime_sand/, LIME]],
+};
+/** Wood products: slow capillary uptake across the grain; about 15% moisture by mass at 80% RH. */
+const timberHyg = (m: Material): Hyg => [0.002, 600, 0.15 * m.rho];
 
 export function withMu(m: Material): Material {
   const hit = BY_ID[m.id] ?? RULES[m.cat ?? '']?.find(([re]) => re.test(m.id))?.slice(1);
-  const out = hit ? { ...m, mu: hit[0], muWet: hit[1] ?? hit[0] } : m;
+  let out: Material = hit ? { ...m, mu: hit[0], muWet: hit[1] ?? hit[0] } : m;
+  const hyg = HYG_BY_ID[m.id] ?? HYG_RULES[m.cat ?? '']?.find(([re]) => re.test(m.id))?.[1] ?? (m.cat === 'timber' && !/wood_wool|cement_bonded/.test(m.id) ? timberHyg(m) : undefined);
+  if (hyg) out = { ...out, A: hyg[0], wf: hyg[1], w80: hyg[2] };
   return m.cat === 'timber' || HYGRO.test(m.id) ? { ...out, hygro: HYGRO_CRIT } : out;
 }

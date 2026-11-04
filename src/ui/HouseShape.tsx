@@ -1,4 +1,5 @@
-import { roomEdges, shapeGeo, shapeOf } from '../engine/house';
+import { bearingLabel, roomEdges, shapeGeo, shapeOf, trueBearing } from '../engine/house';
+import { useProject } from './project';
 import type { EdgeSlope, Room, RoomShape, SlopeSide } from '../engine/house';
 import { Chip } from './controls';
 
@@ -107,6 +108,7 @@ const SIDE_LABEL: Record<SlopeSide, string> = { full: 'Full-height wall', plate:
 
 /** Sloping ceilings on a room of any shape: one setting per wall, slopes rising inward from each sloped wall. */
 function PolyShapeEditor({ room, setShape, outside }: { room: Room; setShape: (s: RoomShape | undefined) => void; outside: boolean[] }) {
+  const { house } = useProject();
   const sh = room.shape, es = roomEdges(room);
   const edges: EdgeSlope[] = es.map((_, i) => sh?.edges?.[i] ?? { side: 'full', eaves: 'cold', dormer: null });
   const only = (side: SlopeSide) => edges.every((e, i) => e.side === (outside[i] ? side : 'full'));
@@ -142,7 +144,7 @@ function PolyShapeEditor({ room, setShape, outside }: { room: Room; setShape: (s
             <tbody>
               {es.map((e, i) => (
                 <tr key={i}>
-                  <td>Wall {i + 1} <span className="muted small">({e.side}, {fmt(e.len, 2)} m{outside[i] ? '' : ', inside'})</span></td>
+                  <td>Wall {i + 1} <span className="muted small">({bearingLabel(trueBearing(house, e.az))}, {fmt(e.len, 2)} m{outside[i] ? '' : ', inside'})</span></td>
                   <td>
                     <select className="h-sel" value={edges[i].side} aria-label={`Wall ${i + 1} slope`} onChange={(ev) => setEdge(i, { side: ev.target.value as SlopeSide, dormer: ev.target.value === 'full' ? null : edges[i].dormer })}>
                       {(Object.keys(SIDE_LABEL) as SlopeSide[]).map((k) => <option key={k} value={k}>{SIDE_LABEL[k]}</option>)}

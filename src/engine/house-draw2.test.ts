@@ -69,7 +69,7 @@ describe('floor and ceiling zones', () => {
 
   it('an insulated patch of ground floor keeps the area and lowers the loss', () => {
     const h = defaultHouse(), before = calcHouse(h).rooms.find((r) => r.room.id === 'living')!, a0 = sum(h, 'living', 'floor');
-    h.buildups.push({ id: 'warm', name: 'Floor, 200 mm PIR', kind: 'floor', layers: [['conc', 100], ['pir', 200], ['render', 65]] });
+    h.buildups.push({ id: 'warm', name: 'Floor, 200 mm PIR', kind: 'floor', layers: [['m_concrete_reinforced', 100], ['pir', 200], ['m_cement_sand', 65]] });
     addFloorZone(h, 'z1', 0, [[0, 0], [2.25, 0], [2.25, 4.2], [0, 4.2]]);
     h.zones![0].buildup = 'warm';
     const after = calcHouse(h).rooms.find((r) => r.room.id === 'living')!;
@@ -81,7 +81,7 @@ describe('floor and ceiling zones', () => {
 
   it('a patch of the floor between storeys is the same area above and below', () => {
     const h = defaultHouse();
-    h.buildups.push({ id: 'warm', name: 'Floor, deep', kind: 'floor', layers: [['pb', 12.5], ['cavity', 150], ['timber', 20]] });
+    h.buildups.push({ id: 'warm', name: 'Floor, deep', kind: 'floor', layers: [['pb', 12.5], ['cavity', 150], ['m_timber_500_kg_m', 20]] });
     addFloorZone(h, 'z2', 1, [[0, 0], [4.5, 0], [4.5, 2], [0, 2]]);
     h.zones![0].buildup = 'warm';
     const res = calcHouse(h), part = (id: string) => res.rooms.find((r) => r.room.id === id)!.faces.filter((f) => f.key.includes('~z2')).reduce((t, f) => t + f.area, 0);

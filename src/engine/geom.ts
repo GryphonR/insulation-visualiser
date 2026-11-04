@@ -26,6 +26,9 @@ export function edges(p: Pt[]): Edge[] {
   });
 }
 
+/** "SW 215°": a bearing for labels. */
+export const bearingLabel = (az: number) => `${(['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const)[Math.round(az / 45) % 8]} ${Math.round(az) % 360}°`;
+
 export const compass = (az: number): 'N' | 'E' | 'S' | 'W' => (['N', 'E', 'S', 'W'] as const)[Math.round(az / 90) % 4];
 
 /** Stretch of edge e (as [t0, t1] along it, metres from e.a) that lies against edge f running the other way. */

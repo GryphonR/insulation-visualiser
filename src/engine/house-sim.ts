@@ -1,11 +1,18 @@
 // Hour-by-hour whole-house runs (boards 6, 6a, 4b): one air-and-contents node per room plus the loft,
 // heating on a schedule with a setback, sun through windows, people, appliances and cooking.
-import { DOY, MEAN, ORIENTS, SWING } from './data';
+import { COLOURS, DOY, MEAN, ORIENTS, SWING } from './data';
 import { solarAt, solarFromData } from './solar';
 import type { Tmy } from './weather-tmy';
 import { calcHouse, heatPumpCop } from './house';
-import type { House, HouseResult, RoomType } from './house';
+import type { Face, House, HouseResult, RoomType } from './house';
+import type { Orient } from './data';
 import { roomOut, roomSchedule, systemFlow } from './house-heating';
+
+/** Where a face looks for the sun: its true bearing and tilt (vertical unless set). */
+export function faceOrient(f: Pick<Face, 'az' | 'tilt' | 'side'>): Orient {
+  const az = f.az ?? ORIENTS.find((o) => o.id === f.side)?.az ?? 0, tilt = f.tilt ?? 90;
+  return { id: `az${Math.round(az)}t${Math.round(tilt)}`, name: '', label: '', az, tilt };
+}
 
 export type CaseId = 'design' | 'summer' | 'snap' | 'year';
 export const CASES: Array<{ id: CaseId; name: string; use: string }> = [
@@ -101,7 +108,15 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
   const links: Array<[number, number, number]> = [];
   const Hout = new Float64Array(N), Hg = new Float64Array(N), Hp = new Float64Array(N);
   const seen = new Set<string>();
+  // Sun on glass (area × g), and on roofs as sol-air: U·A × α·Rse of the absorbed sun, less a clear-night sky loss.
   const solar: Array<{ node: number; area: number; g: number; orient: (typeof ORIENTS)[number] }> = [];
+  const sky: Array<{ node: number; UA: number; f: number }> = [];
+  const alpha = (COLOURS.find((c) => c.id === h.roofColour) ?? COLOURS[1]).a, RSE = 0.04;
+  const roofSun = (node: number, UA: number, orient: Orient) => {
+    solar.push({ node, area: UA, g: alpha * RSE, orient });
+    // shortcut: sky loss of 3.6·c K on the sol-air temperature (as the one-build-up run uses) scaled by cos(tilt), so walls see none.
+    sky.push({ node, UA, f: Math.max(0, Math.cos((orient.tilt * Math.PI) / 180)) });
+  };
   rooms.forEach((r, i) => {
     for (const f of r.faces) {
       const UA = f.U * f.area;
@@ -114,12 +129,8 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
         const j = idx.get(f.to.id);
         if (j !== undefined) links.push([i, j, UA]);
       }
-      // Windows in slopes or dormer roofs face the sky: treat as a flat roof light.
-      if (f.kind === 'window') {
-        const orient = f.key.startsWith('rl:') ? ORIENTS.find((o) => o.id === 'roof')!
-          : f.az != null ? { id: `az${Math.round(f.az)}`, name: '', label: '', az: f.az, tilt: 90 } : ORIENTS.find((o) => o.id === f.side)!;
-        solar.push({ node: i, area: f.area, g: f.gEff ?? g.g, orient });
-      }
+      if (f.kind === 'window') solar.push({ node: i, area: f.area, g: f.gEff ?? g.g, orient: faceOrient(f) });
+      else if (f.kind === 'ceiling' && f.to.k === 'out') roofSun(i, UA, faceOrient({ ...f, tilt: f.tilt ?? 0 }));
     }
     Hout[i] += 0.33 * r.n * r.V;
   });
@@ -127,6 +138,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
     // Roof plus loft ventilation, recovered from the design calc's balance: H = Σ(links)·(Tin − T)/(T − Tout).
     const Hin = links.filter((l) => l[1] === LOFT).reduce((t, l) => t + l[2] * (rooms[l[0]].T - base.loft!.T), 0);
     Hout[LOFT] = Math.max(1, Hin / Math.max(0.05, base.loft.T - base.Tout));
+    for (const s of base.loft.slopes) roofSun(LOFT, base.loft.U * s.area, faceOrient(s));
   }
 
   // Heating: each room's emitters at the system flow for this hour, on its zone's schedule.
@@ -176,6 +188,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
     rooms.forEach((_, i) => { gain[i] = awake * sLiv[i] + asleep * sBed[i] + app * sLiv[i] + cook * sKit[i]; });
     const c = wx.c(tc), doy = wx.doy(tc);
     for (const w of solar) if (w.orient) gain[w.node] += (wx.sol ? wx.sol(tc, w.orient) : solarAt(lat, doy, (tc % 24) + 0.5 / stepsPerH, c, w.orient)) * w.area * w.g;
+    for (const s of sky) gain[s.node] -= s.UA * 3.6 * c * s.f;
 
     // Air: balance of heat in and out given the mass and the neighbours' last air temperatures.
     for (let i = 0; i < N; i++) rhs[i] = gain[i] + Hout[i] * To + Hg[i] * base.Tg + Hp[i] * h.neighbourT + Hms[i] * Tm[i];

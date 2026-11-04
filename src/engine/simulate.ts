@@ -112,7 +112,10 @@ export interface Frames {
  */
 export function simulate(P: SimParams) {
   const Rse = 0.04;
-  const Rsi = P.orient.id === 'roof' ? 0.1 : 0.13;
+  // Upward heat flow under a roof below 60° tilt (BS EN ISO 6946), horizontal otherwise.
+  const Rsi = P.orient.tilt < 60 ? 0.1 : 0.13;
+  // Clear-sky long-wave loss on the sol-air temperature, full for a flat roof, none for a wall.
+  const skyF = Math.max(0, Math.cos((P.orient.tilt * Math.PI) / 180));
   const cells: Cell[] = [];
   const lay: LayerGeom[] = [];
   let xmm = 0;
@@ -178,7 +181,7 @@ export function simulate(P: SimParams) {
     tinK[k] = P.tinF(h);
     Ik[k] = solarAt(P.lat, P.doy, h, P.c, P.orient);
     tairK[k] = P.tmean + (P.swing / 2) * Math.cos((2 * Math.PI * (h - 15)) / 24);
-    tsaK[k] = tairK[k] + P.alpha * Ik[k] * Rse - (P.orient.id === 'roof' ? 3.6 * P.c : 0);
+    tsaK[k] = tairK[k] + P.alpha * Ik[k] * Rse - (skyF > 1e-9 ? 3.6 * P.c * skyF : 0);
     tsaMean += tsaK[k] / spd;
     tinMean += tinK[k] / spd;
   }

@@ -226,7 +226,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
             <li><b>Dynamic performance:</b> how much of the outside temperature swing reaches the inside (the decrement factor) and how long it takes (the decrement delay).</li>
             <li><b>Temperatures:</b> the temperature in every slice of every layer, plus the surface temperatures on the outer and inner faces, over the day.</li>
             <li><b>Heat flow:</b> how much heat enters or leaves the room through the wall, compared with what a simple U-value calculation would predict.</li>
-            <li><b>Sun:</b> how much solar radiation lands on a wall facing north, east, south or west, or on a flat roof, for a UK location and month.</li>
+            <li><b>Sun:</b> how much solar radiation lands on a wall facing any bearing, or on a flat or pitched roof facing any way, for a UK location and month.</li>
             <li><b>Room response (optional):</b> if you let the room float rather than holding it at a set temperature, how the room air itself rises and falls with the wall, windows, ventilation and internal gains.</li>
           </ul>
           <Callout title="A teaching tool, not a compliance tool">
@@ -479,7 +479,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
               <b>Cloud.</b> The weather's clearness <em>c</em> weakens the direct beam by c<sup>1.3</sup> and adds sky light (diffuse radiation) that grows as the sky gets cloudier.
             </li>
             <li>
-              <b>Onto the surface.</b> The direct beam is multiplied by the cosine of the angle between the sun and the wall's surface direction, so a wall facing away from the sun receives none of it. Diffuse sky light is spread evenly across the sky dome, and the wall sees the part of the dome in front of it. The ground reflects 20% of the light reaching it, and a wall sees half the ground, so it receives 10% of that light. For a flat roof the sun's height directly sets the angle.
+              <b>Onto the surface.</b> The direct beam is multiplied by the cosine of the angle between the sun and the wall's surface direction, so a wall facing away from the sun receives none of it. Diffuse sky light is spread evenly across the sky dome, and the wall sees the part of the dome in front of it. The ground reflects 20% of the light reaching it, and a wall sees half the ground, so it receives 10% of that light. A roof tilts the surface: its angle to the sun mixes the sun's height and its bearing against the slope's pitch and facing, so a flat roof follows the sun's height alone and a south-facing pitched roof catches more winter sun than a flat one. A tilted surface sees more sky and less ground the flatter it is.
             </li>
           </ol>
           <p>
@@ -492,7 +492,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
           <p>The outside driving temperature is then:</p>
           <Eq>T<sub>sol-air</sub> = T<sub>air</sub> + α × I × R<sub>se</sub>    (walls)</Eq>
           <p>
-            where α is the surface absorptance (0.3, 0.55 or 0.85), <em>I</em> is the irradiance from step 2 and R<sub>se</sub> is the 0.04 m²K/W outside surface film. For a flat roof there is one further term: a long-wave radiation correction of −3.6 × clearness (in kelvin), representing heat radiated away to the sky. It is applied all day and night, and scales with clearness: about −3.4 K on a clear day and about −0.5 K when overcast. Walls get no such term, because they face the ground and surrounding buildings as much as the sky.
+            where α is the surface absorptance (0.3, 0.55 or 0.85), <em>I</em> is the irradiance from step 2 and R<sub>se</sub> is the 0.04 m²K/W outside surface film. For a roof there is one further term: a long-wave radiation correction of −3.6 × clearness (in kelvin) on a flat roof, representing heat radiated away to the sky, scaled by the cosine of the pitch for a sloping one. It is applied all day and night, and scales with clearness: about −3.4 K on a clear day and about −0.5 K when overcast. Walls get no such term, because they face the ground and surrounding buildings as much as the sky.
           </p>
           <p>
             From here on, the outside of the wall is treated as if it sat in air at exactly the sol-air temperature, connected to the wall's outer surface through the outside film resistance.

@@ -44,7 +44,7 @@ describe('steady state', () => {
 
 describe('ventilated gap', () => {
   const roofLayers = (gap: string) =>
-    [['conc', 20], [gap, 40], ['mw', 150], ['pb', 12.5]].map(([mat, t], i) => ({ id: i, mat: mat as string, t: t as number }));
+    [['m_concrete_reinforced', 20], [gap, 40], ['mw', 150], ['pb', 12.5]].map(([mat, t], i) => ({ id: i, mat: mat as string, t: t as number }));
   const roof = (gap: string, over: Partial<SimParams> = {}) => wall('roofl', { layers: roofLayers(gap), ...over });
 
   it('reproduces its own U-value in steady state', () => {
@@ -67,7 +67,7 @@ describe('ventilated gap', () => {
 
 describe('low-emissivity gaps', () => {
   const U = (gap: string) =>
-    simulate(wall('roofl', { layers: [['conc', 20], [gap, 40], ['mw', 150], ['pb', 12.5]].map(([mat, t], i) => ({ id: i, mat: mat as string, t: t as number })), alpha: 0, swing: 0 })).U;
+    simulate(wall('roofl', { layers: [['m_concrete_reinforced', 20], [gap, 40], ['mw', 150], ['pb', 12.5]].map(([mat, t], i) => ({ id: i, mat: mat as string, t: t as number })), alpha: 0, swing: 0 })).U;
 
   it('lowers U-value with a foil face, and more with two', () => {
     expect(U('cavity_le1')).toBeLessThan(U('cavity'));

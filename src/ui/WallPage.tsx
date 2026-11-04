@@ -52,7 +52,7 @@ export function WallPage({ buildupId }: { buildupId?: string }) {
   const from = found ?? (preset && { id: preset.id, name: preset.name, layers: preset.layers, kind: preset.orient === 'roof' ? 'roof' : 'wall' });
   useEffect(() => {
     if (!from || !from.layers.length) return;
-    setSc((s) => ({ ...s, layers: mkLayers(from.layers), orient: from.kind === 'roof' ? 'roof' : s.orient === 'roof' ? 'W' : s.orient, ...(found ? projectDay(houseRes, found.id, found.kind === 'roof')?.patch : undefined) }));
+    setSc((s) => ({ ...s, layers: mkLayers(from.layers), orient: from.kind === 'roof' ? 'roof' : s.orient === 'roof' ? 'W' : s.orient, az: undefined, ...(found ? projectDay(houseRes, found.id, found.kind === 'roof')?.patch : undefined) }));
   }, [from?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { frame, playing, setPlaying, scrub } = useClock(90); // 15:00
@@ -73,7 +73,7 @@ export function WallPage({ buildupId }: { buildupId?: string }) {
     return [...mine, ...library.filter((s) => !names.has(s.name))];
   }, [house.buildups, library]);
   const applyDraft = (draft: StackupDraft) => {
-    setSc((s) => ({ ...s, layers: mkLayers(draft.layers), orient: draft.orient ?? (s.orient === 'roof' ? 'W' : s.orient) }));
+    setSc((s) => ({ ...s, layers: mkLayers(draft.layers), orient: draft.orient ?? (s.orient === 'roof' ? 'W' : s.orient), ...(draft.orient === 'roof' || s.orient === 'roof' ? { az: undefined } : {}) }));
     setEditing(false);
   };
   const saveAndApply = (draft: StackupDraft) => {

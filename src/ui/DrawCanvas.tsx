@@ -539,6 +539,137 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   const cursor = drag?.k === 'pan' && drag.moved ? 'grabbing' : tool === 'select' ? 'default' : 'crosshair';
   const dragPoly = drag?.k === 'move' ? onThis.filter((r) => drag.verts.some(([id]) => id === r.id)) : [];
 
+  // Walls, as thick as their build-up: all the bands first (so where they meet they read as one wall), the selected ones on top, then the drawn lines.
+  // Memoised: the walls are the costly part of a render, and hovering re-renders the canvas on every pointer move.
+  const gapMax = maxWallGap(house) + 0.03;
+  // A corner of a room that lies against another room's wall is a T-junction, not an outside corner: its wall must not stick out there.
+  const atOther = (r: Room, p: Pt) => onThis.some((o) => o.id !== r.id && (pointInPoly(p, roomPoly(o)) || roomEdges(o).some((f) => {
+    const t = Math.max(0, Math.min(f.len, (p[0] - f.a[0]) * f.d[0] + (p[1] - f.a[1]) * f.d[1]));
+    return Math.hypot(p[0] - f.a[0] - f.d[0] * t, p[1] - f.a[1] - f.d[1] * t) <= gapMax;
+  })));
+  // Windows and doors of a room on one of its walls, as two points in the plan (placed the way they are drawn).
+  const opsOn = (room: Room, e: { idx: number; side: string; len: number; a: Pt; d: Pt }) => {
+    const es = roomEdges(room), isPoly = !!room.poly;
+    const ops = house.openings.filter((o) => o.room === room.id && (isPoly ? (o.edge ?? es.findIndex((x) => x.side === o.side)) === e.idx : o.side === e.side));
+    return ops.map((o, i) => {
+      const half = Math.min(o.w, e.len) / 2, c = o.t != null ? Math.max(half, Math.min(e.len - half, o.t)) : (e.len * (i + 0.5)) / ops.length;
+      return { room, door: house.buildups.find((x) => x.id === o.buildup)?.kind === 'door', p: [e.a[0] + e.d[0] * (c - half), e.a[1] + e.d[1] * (c - half)] as Pt, q: [e.a[0] + e.d[0] * (c + half), e.a[1] + e.d[1] * (c + half)] as Pt };
+    });
+  };
+  const wallItems = (r: Room, moving: boolean) => {
+    return roomEdges({ ...r, poly: polyOf(r), x: 0, y: 0 }).flatMap((e) => {
+      // While a wall is being dragged the pieces are not recomputed: the whole wall moves as one.
+      const pieces: WallPiece[] = moving ? [{ span: [0, e.len] }] : wallPieces(house, r.id, e.idx, storey);
+      return pieces.map((pc, k) => {
+        const s = !moving && isSelPiece(r.id, e.idx, pc) || (moving && sel.walls.some((w) => w.room === r.id && w.edge === e.idx));
+        // Thickness comes from the build-up, on the side of the line the alignment says; rooms drawn a wall apart share a wall that fills the space between them.
+        const between = !moving && !!pc.other && (pc.gap ?? 0) > 0.01;
+        const th = moving ? 0 : between ? pc.gap! : pieceThickness(house, r.id, e.idx, storey, pc), al = between ? 'out' : pieceAlign(house, r.id, e.idx, storey, pc);
+        const tm = Math.max(th, z(3) / S), lo = al === 'out' ? 0 : al === 'in' ? -tm : -tm / 2, hi = al === 'out' ? tm : al === 'in' ? 0 : tm / 2;
+        const reach = al === 'out' ? tm : al === 'ctr' ? tm / 2 : 0;
+        const p0: Pt = [e.a[0] + e.d[0] * pc.span[0], e.a[1] + e.d[1] * pc.span[0]], p1: Pt = [e.a[0] + e.d[0] * pc.span[1], e.a[1] + e.d[1] * pc.span[1]];
+        const atStart = pc.span[0] < 1e-6, atEnd = pc.span[1] > e.len - 1e-6;
+        const x0 = !between && atStart && !atOther(r, p0) ? reach : 0, x1 = !between && atEnd && !atOther(r, p1) ? reach : 0;
+        const q = (t: number, o: number) => to([e.a[0] + e.d[0] * t + e.n[0] * o, e.a[1] + e.d[1] * t + e.n[1] * o]).join(',');
+        const owns = th > 0 && (!pc.other || r.id < pc.other);
+        const hit = owns ? [q(pc.span[0] - x0, lo), q(pc.span[1] + x1, lo), q(pc.span[1] + x1, hi), q(pc.span[0] - x0, hi)].join(' ') : null;
+        const bands: string[] = [], strips: Array<{ pts: string; door: boolean }> = [], cuts: Array<{ pts: string; color: string }> = [];
+        if (owns) {
+          // Windows and doors cut the wall: where one sits, only a thin strip is left.
+          const holes: Array<[number, number, boolean, Room]> = [];
+          const take = (o: { room: Room; door: boolean; p: Pt; q: Pt }) => {
+            const t = (v: Pt) => (v[0] - e.a[0]) * e.d[0] + (v[1] - e.a[1]) * e.d[1], n = (v: Pt) => (v[0] - e.a[0]) * e.n[0] + (v[1] - e.a[1]) * e.n[1];
+            const t0 = Math.max(pc.span[0], Math.min(t(o.p), t(o.q))), t1 = Math.min(pc.span[1], Math.max(t(o.p), t(o.q)));
+            if (t1 - t0 > 0.02 && Math.abs(n(o.p)) <= gapMax && Math.abs(n(o.q)) <= gapMax) holes.push([t0, t1, o.door, o.room]);
+          };
+          if (!moving) {
+            opsOn(r, e).forEach(take);
+            const other = pc.other ? house.rooms.find((x) => x.id === pc.other) : null;
+            if (other) roomEdges(other).forEach((f) => { if (sharedSpan(e, f, 0.02, gapMax)) opsOn(other, f).forEach(take); });
+          }
+          holes.sort((u, v) => u[0] - v[0]);
+          let at = pc.span[0] - x0;
+          for (const [t0, t1, door] of holes) {
+            // The cut shows what is on each side of the thin strip: this room's colour on its side, and the colour of the room behind an inside wall, or of the outside for an outside wall.
+            const mid = (lo + hi) / 2, near = zoneMode ? '#f7f7f4' : fill(r), far = pc.other ? (zoneMode ? '#f7f7f4' : fill(house.rooms.find((x) => x.id === pc.other) ?? r)) : '#fff';
+            cuts.push({ pts: [q(t0, lo), q(t1, lo), q(t1, mid), q(t0, mid)].join(' '), color: near }, { pts: [q(t0, mid), q(t1, mid), q(t1, hi), q(t0, hi)].join(' '), color: far });
+            if (t0 > at) bands.push([q(at, lo), q(t0, lo), q(t0, hi), q(at, hi)].join(' '));
+            const m = (lo + hi) / 2, thin = Math.min(tm, Math.max(0.06, z(2) / S));
+            strips.push({ pts: [q(t0, m - thin / 2), q(t1, m - thin / 2), q(t1, m + thin / 2), q(t0, m + thin / 2)].join(' '), door });
+            at = Math.max(at, t1);
+          }
+          if (pc.span[1] + x1 > at) bands.push([q(at, lo), q(pc.span[1] + x1, lo), q(pc.span[1] + x1, hi), q(at, hi)].join(' '));
+          // An outside wall carries on across an inside wall that ends against it: bridge to the next room's outside wall on the same line.
+          if (!pc.other && !moving) for (const [end, at2] of [[atStart, 0], [atEnd, e.len]] as const) {
+            if (!end) continue;
+            for (const o of onThis) if (o.id !== r.id) for (const f of roomEdges(o)) {
+              // The same outside face, on the same line (whichever way the outline is wound), starting just past this wall's end.
+              if (f.n[0] * e.n[0] + f.n[1] * e.n[1] < 0.999 || Math.abs((f.a[0] - e.a[0]) * e.n[0] + (f.a[1] - e.a[1]) * e.n[1]) > 0.02) continue;
+              const ts = [f.a, f.b].map((v) => (v[0] - e.a[0]) * e.d[0] + (v[1] - e.a[1]) * e.d[1]);
+              const beyond = ts.filter((v) => (at2 === 0 ? v <= 0.001 && v >= -gapMax : v >= e.len - 0.001 && v <= e.len + gapMax));
+              if (!beyond.length || Math.abs(ts[0] - ts[1]) < 0.01) continue;
+              const far = at2 === 0 ? Math.max(...beyond) : Math.min(...beyond);
+              if (Math.abs(far - at2) > 0.001) bands.push([q(at2, lo), q(far, lo), q(far, hi), q(at2, hi)].join(' '));
+            }
+          }
+        }
+        return { key: `${r.id}-${e.idx}-${k}`, r, e, pc, s, th, hit, bands, strips, cuts, a: to(p0), b: to(p1), out: !pc.other };
+      });
+    });
+  };
+  const moveDrag = drag?.k === 'move' ? drag : null;
+  const movingKey = moveDrag?.moved ? [...new Set(moveDrag.verts.map(([id]) => id))].join() : '';
+  // The walls of the rooms not being dragged only change with the plan, the selection or the zoom, so a drag rebuilds just the moving rooms' walls.
+  const still = useMemo(() => new Map(onThis.filter((r) => !movingKey.split(',').includes(r.id)).map((r) => [r.id, wallItems(r, false)])),
+    [house, storey, zoneMode, fill, u, sel, movingKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const wallLayer = useMemo(() => {
+    const items = onThis.flatMap((r) => still.get(r.id) ?? wallItems(r, true));
+    return (
+      <>
+        {/* Closing (grow, then shrink) fills the small squares left where inside walls meet at a junction. */}
+        <defs><filter id="wall-close" x="-10%" y="-10%" width="120%" height="120%"><feMorphology operator="dilate" radius={Math.min(gapMax / 2, 0.12) * S} /><feMorphology operator="erode" radius={Math.min(gapMax / 2, 0.12) * S} /></filter></defs>
+        <g filter="url(#wall-close)">
+          {items.filter((i) => !i.s).flatMap((i) => i.bands.map((pts, n) => <polygon key={`b${i.key}-${n}`} points={pts} fill="#26343f" pointerEvents="none" />))}
+        </g>
+        {items.flatMap((i) => i.cuts.map((c, n) => <polygon key={`c${i.key}-${n}`} points={c.pts} fill={c.color} fillOpacity={0.92} pointerEvents="none" />))}
+        {items.filter((i) => i.s).flatMap((i) => i.bands.map((pts, n) => <polygon key={`s${i.key}-${n}`} points={pts} fill="#c2410c" pointerEvents="none" />))}
+        {items.flatMap((i) => i.strips.map((t, n) => <polygon key={`t${i.key}-${n}`} points={t.pts} fill={t.door ? '#8a5a2b' : '#1f6fb5'} pointerEvents="none" />))}
+        {items.map((i) => (
+          <g key={i.key}>
+            <line x1={i.a[0]} y1={i.a[1]} x2={i.b[0]} y2={i.b[1]} stroke={i.th > 0 ? (i.s ? '#fff' : '#9fb0bc') : i.s ? '#c2410c' : '#14212b'} strokeWidth={i.th > 0 ? z(1) : z(i.s ? 5 : i.out ? 4 : 2)} strokeDasharray={i.th > 0 ? `${z(5)} ${z(3)}` : undefined} strokeLinecap={i.th > 0 || i.pc.span[0] > 1e-6 || i.pc.span[1] < i.e.len - 1e-6 ? 'butt' : 'round'} pointerEvents="none" />
+            {tool === 'select' && !zoneMode && i.hit && <polygon points={i.hit} fill="transparent" className="wall-hit" {...wallEvents(i.r, i.e.idx, i.pc)} />}
+            {tool === 'select' && !zoneMode && <line x1={i.a[0]} y1={i.a[1]} x2={i.b[0]} y2={i.b[1]} stroke="transparent" strokeWidth={z(14 * hs)} className="wall-hit" {...wallEvents(i.r, i.e.idx, i.pc)} />}
+          </g>
+        ))}
+      </>
+    );
+  }, [still, house, storey, zoneMode, fill, u, sel, tool, hs, grid, moveDrag]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const opDrag = drag?.k === 'op' ? drag : null;
+  const opLayer = useMemo(() => zoneMode ? null : onThis.flatMap((r) => {
+          const es = roomEdges(r), isPoly = !!r.poly;
+          return es.flatMap((e) => {
+            const ops = house.openings.filter((o) => o.room === r.id && (isPoly ? (o.edge ?? es.findIndex((x) => x.side === o.side)) === e.idx : o.side === e.side));
+            return ops.map((o, i) => {
+              const L = e.len, half = Math.min(o.w, L) / 2;
+              const dragged = drag?.k === 'op' && drag.id === o.id && drag.moved ? openingAt(drag.cur, o.w, isDoorOp(o)) : null;
+              const rr = dragged?.room ?? r, ee = dragged ? roomEdges(rr)[dragged.edge] : e;
+              const c = dragged ? dragged.t : o.t != null ? Math.max(half, Math.min(L - half, o.t)) : (L * (i + 0.5)) / ops.length;
+              const a = to([ee.a[0] + ee.d[0] * (c - half), ee.a[1] + ee.d[1] * (c - half)]), b = to([ee.a[0] + ee.d[0] * (c + half), ee.a[1] + ee.d[1] * (c + half)]);
+              const door = house.buildups.find((x) => x.id === o.buildup)?.kind === 'door', on = sel.item?.k === 'op' && sel.item.id === o.id;
+              return (
+                <g key={o.id}>
+                  {on && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="#c2410c" strokeWidth={z(12)} strokeLinecap="round" opacity={0.35} pointerEvents="none" />}
+                  {!wallIsThick(r.id, e.idx, c) && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={door ? '#8a5a2b' : '#1f6fb5'} strokeWidth={z(6)} pointerEvents="none" />}
+                  {tool === 'select' && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="transparent" strokeWidth={z(16 * hs)} style={{ cursor: 'grab' }}
+                    onPointerDown={(ev) => { setSel({ room: r.id, walls: [], item: { k: 'op', id: o.id } }); begin(ev, { k: 'op', id: o.id, start: raw(ev), cur: raw(ev), moved: false }); }}
+                    onContextMenu={menuOn({ k: 'op', id: o.id })} />}
+                </g>
+              );
+            });
+          });
+  }), [house, storey, zoneMode, u, sel, tool, hs, opDrag]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="draw-wrap">
       <svg ref={svgRef} className="draw" tabIndex={0} style={{ cursor }} viewBox={`${view.x} ${view.y} ${view.w} ${view.w * ratio}`} role="application"
@@ -590,105 +721,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
           );
         })}
 
-        {/* Walls, as thick as their build-up: all the bands first (so where they meet they read as one wall), the selected ones on top, then the drawn lines. */}
-        {(() => {
-          const gapMax = maxWallGap(house) + 0.03;
-          // A corner of a room that lies against another room's wall is a T-junction, not an outside corner: its wall must not stick out there.
-          const atOther = (r: Room, p: Pt) => onThis.some((o) => o.id !== r.id && (pointInPoly(p, roomPoly(o)) || roomEdges(o).some((f) => {
-            const t = Math.max(0, Math.min(f.len, (p[0] - f.a[0]) * f.d[0] + (p[1] - f.a[1]) * f.d[1]));
-            return Math.hypot(p[0] - f.a[0] - f.d[0] * t, p[1] - f.a[1] - f.d[1] * t) <= gapMax;
-          })));
-          // Windows and doors of a room on one of its walls, as two points in the plan (placed the way they are drawn).
-          const opsOn = (room: Room, e: { idx: number; side: string; len: number; a: Pt; d: Pt }) => {
-            const es = roomEdges(room), isPoly = !!room.poly;
-            const ops = house.openings.filter((o) => o.room === room.id && (isPoly ? (o.edge ?? es.findIndex((x) => x.side === o.side)) === e.idx : o.side === e.side));
-            return ops.map((o, i) => {
-              const half = Math.min(o.w, e.len) / 2, c = o.t != null ? Math.max(half, Math.min(e.len - half, o.t)) : (e.len * (i + 0.5)) / ops.length;
-              return { room, door: house.buildups.find((x) => x.id === o.buildup)?.kind === 'door', p: [e.a[0] + e.d[0] * (c - half), e.a[1] + e.d[1] * (c - half)] as Pt, q: [e.a[0] + e.d[0] * (c + half), e.a[1] + e.d[1] * (c + half)] as Pt };
-            });
-          };
-          const items = onThis.flatMap((r) => {
-            const moving = drag?.k === 'move' && drag.moved && drag.verts.some(([id]) => id === r.id);
-            return roomEdges({ ...r, poly: polyOf(r), x: 0, y: 0 }).flatMap((e) => {
-              // While a wall is being dragged the pieces are not recomputed: the whole wall moves as one.
-              const pieces: WallPiece[] = moving ? [{ span: [0, e.len] }] : wallPieces(house, r.id, e.idx, storey);
-              return pieces.map((pc, k) => {
-                const s = !moving && isSelPiece(r.id, e.idx, pc) || (moving && sel.walls.some((w) => w.room === r.id && w.edge === e.idx));
-                // Thickness comes from the build-up, on the side of the line the alignment says; rooms drawn a wall apart share a wall that fills the space between them.
-                const between = !moving && !!pc.other && (pc.gap ?? 0) > 0.01;
-                const th = moving ? 0 : between ? pc.gap! : pieceThickness(house, r.id, e.idx, storey, pc), al = between ? 'out' : pieceAlign(house, r.id, e.idx, storey, pc);
-                const tm = Math.max(th, z(3) / S), lo = al === 'out' ? 0 : al === 'in' ? -tm : -tm / 2, hi = al === 'out' ? tm : al === 'in' ? 0 : tm / 2;
-                const reach = al === 'out' ? tm : al === 'ctr' ? tm / 2 : 0;
-                const p0: Pt = [e.a[0] + e.d[0] * pc.span[0], e.a[1] + e.d[1] * pc.span[0]], p1: Pt = [e.a[0] + e.d[0] * pc.span[1], e.a[1] + e.d[1] * pc.span[1]];
-                const atStart = pc.span[0] < 1e-6, atEnd = pc.span[1] > e.len - 1e-6;
-                const x0 = !between && atStart && !atOther(r, p0) ? reach : 0, x1 = !between && atEnd && !atOther(r, p1) ? reach : 0;
-                const q = (t: number, o: number) => to([e.a[0] + e.d[0] * t + e.n[0] * o, e.a[1] + e.d[1] * t + e.n[1] * o]).join(',');
-                const owns = th > 0 && (!pc.other || r.id < pc.other);
-                const hit = owns ? [q(pc.span[0] - x0, lo), q(pc.span[1] + x1, lo), q(pc.span[1] + x1, hi), q(pc.span[0] - x0, hi)].join(' ') : null;
-                const bands: string[] = [], strips: Array<{ pts: string; door: boolean }> = [], cuts: Array<{ pts: string; color: string }> = [];
-                if (owns) {
-                  // Windows and doors cut the wall: where one sits, only a thin strip is left.
-                  const holes: Array<[number, number, boolean, Room]> = [];
-                  const take = (o: { room: Room; door: boolean; p: Pt; q: Pt }) => {
-                    const t = (v: Pt) => (v[0] - e.a[0]) * e.d[0] + (v[1] - e.a[1]) * e.d[1], n = (v: Pt) => (v[0] - e.a[0]) * e.n[0] + (v[1] - e.a[1]) * e.n[1];
-                    const t0 = Math.max(pc.span[0], Math.min(t(o.p), t(o.q))), t1 = Math.min(pc.span[1], Math.max(t(o.p), t(o.q)));
-                    if (t1 - t0 > 0.02 && Math.abs(n(o.p)) <= gapMax && Math.abs(n(o.q)) <= gapMax) holes.push([t0, t1, o.door, o.room]);
-                  };
-                  if (!moving) {
-                    opsOn(r, e).forEach(take);
-                    const other = pc.other ? house.rooms.find((x) => x.id === pc.other) : null;
-                    if (other) roomEdges(other).forEach((f) => { if (sharedSpan(e, f, 0.02, gapMax)) opsOn(other, f).forEach(take); });
-                  }
-                  holes.sort((u, v) => u[0] - v[0]);
-                  let at = pc.span[0] - x0;
-                  for (const [t0, t1, door] of holes) {
-                    // The cut shows what is on each side of the thin strip: this room's colour on its side, and the colour of the room behind an inside wall, or of the outside for an outside wall.
-                    const mid = (lo + hi) / 2, near = zoneMode ? '#f7f7f4' : fill(r), far = pc.other ? (zoneMode ? '#f7f7f4' : fill(house.rooms.find((x) => x.id === pc.other) ?? r)) : '#fff';
-                    cuts.push({ pts: [q(t0, lo), q(t1, lo), q(t1, mid), q(t0, mid)].join(' '), color: near }, { pts: [q(t0, mid), q(t1, mid), q(t1, hi), q(t0, hi)].join(' '), color: far });
-                    if (t0 > at) bands.push([q(at, lo), q(t0, lo), q(t0, hi), q(at, hi)].join(' '));
-                    const m = (lo + hi) / 2, thin = Math.min(tm, Math.max(0.06, z(2) / S));
-                    strips.push({ pts: [q(t0, m - thin / 2), q(t1, m - thin / 2), q(t1, m + thin / 2), q(t0, m + thin / 2)].join(' '), door });
-                    at = Math.max(at, t1);
-                  }
-                  if (pc.span[1] + x1 > at) bands.push([q(at, lo), q(pc.span[1] + x1, lo), q(pc.span[1] + x1, hi), q(at, hi)].join(' '));
-                  // An outside wall carries on across an inside wall that ends against it: bridge to the next room's outside wall on the same line.
-                  if (!pc.other && !moving) for (const [end, at2] of [[atStart, 0], [atEnd, e.len]] as const) {
-                    if (!end) continue;
-                    for (const o of onThis) if (o.id !== r.id) for (const f of roomEdges(o)) {
-                      // The same outside face, on the same line (whichever way the outline is wound), starting just past this wall's end.
-                      if (f.n[0] * e.n[0] + f.n[1] * e.n[1] < 0.999 || Math.abs((f.a[0] - e.a[0]) * e.n[0] + (f.a[1] - e.a[1]) * e.n[1]) > 0.02) continue;
-                      const ts = [f.a, f.b].map((v) => (v[0] - e.a[0]) * e.d[0] + (v[1] - e.a[1]) * e.d[1]);
-                      const beyond = ts.filter((v) => (at2 === 0 ? v <= 0.001 && v >= -gapMax : v >= e.len - 0.001 && v <= e.len + gapMax));
-                      if (!beyond.length || Math.abs(ts[0] - ts[1]) < 0.01) continue;
-                      const far = at2 === 0 ? Math.max(...beyond) : Math.min(...beyond);
-                      if (Math.abs(far - at2) > 0.001) bands.push([q(at2, lo), q(far, lo), q(far, hi), q(at2, hi)].join(' '));
-                    }
-                  }
-                }
-                return { key: `${r.id}-${e.idx}-${k}`, r, e, pc, s, th, hit, bands, strips, cuts, a: to(p0), b: to(p1), out: !pc.other };
-              });
-            });
-          });
-          return (
-            <>
-              {/* Closing (grow, then shrink) fills the small squares left where inside walls meet at a junction. */}
-              <defs><filter id="wall-close" x="-10%" y="-10%" width="120%" height="120%"><feMorphology operator="dilate" radius={Math.min(gapMax / 2, 0.12) * S} /><feMorphology operator="erode" radius={Math.min(gapMax / 2, 0.12) * S} /></filter></defs>
-              <g filter="url(#wall-close)">
-                {items.filter((i) => !i.s).flatMap((i) => i.bands.map((pts, n) => <polygon key={`b${i.key}-${n}`} points={pts} fill="#26343f" pointerEvents="none" />))}
-              </g>
-              {items.flatMap((i) => i.cuts.map((c, n) => <polygon key={`c${i.key}-${n}`} points={c.pts} fill={c.color} fillOpacity={0.92} pointerEvents="none" />))}
-              {items.filter((i) => i.s).flatMap((i) => i.bands.map((pts, n) => <polygon key={`s${i.key}-${n}`} points={pts} fill="#c2410c" pointerEvents="none" />))}
-              {items.flatMap((i) => i.strips.map((t, n) => <polygon key={`t${i.key}-${n}`} points={t.pts} fill={t.door ? '#8a5a2b' : '#1f6fb5'} pointerEvents="none" />))}
-              {items.map((i) => (
-                <g key={i.key}>
-                  <line x1={i.a[0]} y1={i.a[1]} x2={i.b[0]} y2={i.b[1]} stroke={i.th > 0 ? (i.s ? '#fff' : '#9fb0bc') : i.s ? '#c2410c' : '#14212b'} strokeWidth={i.th > 0 ? z(1) : z(i.s ? 5 : i.out ? 4 : 2)} strokeDasharray={i.th > 0 ? `${z(5)} ${z(3)}` : undefined} strokeLinecap={i.th > 0 || i.pc.span[0] > 1e-6 || i.pc.span[1] < i.e.len - 1e-6 ? 'butt' : 'round'} pointerEvents="none" />
-                  {tool === 'select' && !zoneMode && i.hit && <polygon points={i.hit} fill="transparent" className="wall-hit" {...wallEvents(i.r, i.e.idx, i.pc)} />}
-                  {tool === 'select' && !zoneMode && <line x1={i.a[0]} y1={i.a[1]} x2={i.b[0]} y2={i.b[1]} stroke="transparent" strokeWidth={z(14 * hs)} className="wall-hit" {...wallEvents(i.r, i.e.idx, i.pc)} />}
-                </g>
-              ))}
-            </>
-          );
-        })()}
+        {wallLayer}
 
         {/* Problems: rooms overlapping or crossing themselves, and walls that almost touch */}
         {!zoneMode && onThis.filter((r) => probs.overlap.has(r.id)).map((r) => <polygon key={`o${r.id}`} points={pts(polyOf(r))} fill="none" stroke="#c0392b" strokeWidth={z(3)} strokeDasharray={`${z(8)} ${z(4)}`} pointerEvents="none"><title>{r.name} overlaps another room</title></polygon>)}
@@ -755,29 +788,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         })}
 
         {/* Windows and doors */}
-        {!zoneMode && onThis.flatMap((r) => {
-          const es = roomEdges(r), isPoly = !!r.poly;
-          return es.flatMap((e) => {
-            const ops = house.openings.filter((o) => o.room === r.id && (isPoly ? (o.edge ?? es.findIndex((x) => x.side === o.side)) === e.idx : o.side === e.side));
-            return ops.map((o, i) => {
-              const L = e.len, half = Math.min(o.w, L) / 2;
-              const dragged = drag?.k === 'op' && drag.id === o.id && drag.moved ? openingAt(drag.cur, o.w, isDoorOp(o)) : null;
-              const rr = dragged?.room ?? r, ee = dragged ? roomEdges(rr)[dragged.edge] : e;
-              const c = dragged ? dragged.t : o.t != null ? Math.max(half, Math.min(L - half, o.t)) : (L * (i + 0.5)) / ops.length;
-              const a = to([ee.a[0] + ee.d[0] * (c - half), ee.a[1] + ee.d[1] * (c - half)]), b = to([ee.a[0] + ee.d[0] * (c + half), ee.a[1] + ee.d[1] * (c + half)]);
-              const door = house.buildups.find((x) => x.id === o.buildup)?.kind === 'door', on = sel.item?.k === 'op' && sel.item.id === o.id;
-              return (
-                <g key={o.id}>
-                  {on && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="#c2410c" strokeWidth={z(12)} strokeLinecap="round" opacity={0.35} pointerEvents="none" />}
-                  {!wallIsThick(r.id, e.idx, c) && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={door ? '#8a5a2b' : '#1f6fb5'} strokeWidth={z(6)} pointerEvents="none" />}
-                  {tool === 'select' && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="transparent" strokeWidth={z(16 * hs)} style={{ cursor: 'grab' }}
-                    onPointerDown={(ev) => { setSel({ room: r.id, walls: [], item: { k: 'op', id: o.id } }); begin(ev, { k: 'op', id: o.id, start: raw(ev), cur: raw(ev), moved: false }); }}
-                    onContextMenu={menuOn({ k: 'op', id: o.id })} />}
-                </g>
-              );
-            });
-          });
-        })}
+        {opLayer}
 
         {/* Heat emitters */}
         {house.heating.emitters.filter((e) => { const r = house.rooms.find((x) => x.id === e.room); return r && r.storey === storey && !e.fromZone && (!zoneMode || (e.kind === 'ufh' && !!e.rect && band! <= house.storeys.length - 1)); }).map((e) => {

@@ -90,7 +90,7 @@ export function StackupModal({ initial, library, title, onCancel, onSave, onAppl
           ) : (
             <label className="roof-check">
               <input type="checkbox" checked={isRoof} onChange={(e) => setIsRoof(e.target.checked)} />
-              {onApply ? 'This is a roof build-up (modelled as a flat roof)' : 'This is a roof build-up (always compared as a flat roof, whatever orientation is set)'}
+              {onApply ? 'This is a roof build-up (run as a roof at the pitch and facing set in the conditions)' : 'This is a roof build-up (always compared as a roof at the pitch and facing set, whatever orientation is chosen)'}
             </label>
           )}
 

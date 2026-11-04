@@ -67,7 +67,9 @@ export function EnvironmentPanel({ sc, params, solar, set, wide, project }: Prop
 
       <div className="stack-6">
         <Eyebrow>Faces</Eyebrow>
-        <ChipGroup label="Orientation" items={ORIENTS} value={sc.orient} onPick={(orient) => set({ orient })} text={(o) => o.label} />
+        <ChipGroup label="Orientation" items={ORIENTS} value={sc.orient} onPick={(orient) => set({ orient, az: undefined })} text={(o) => o.label} />
+        {sc.orient === 'roof' && <Slider id="env-pitch" label="Roof pitch (0 = flat)" value={sc.pitch ?? 0} min={0} max={70} step={1} unit="°" onChange={(pitch) => set({ pitch })} />}
+        {(sc.orient !== 'roof' || (sc.pitch ?? 0) > 0) && <Slider id="env-az" label={sc.orient === 'roof' ? 'Slope faces (bearing)' : 'Faces (bearing)'} value={Math.round(params.orient.az)} min={0} max={355} step={5} unit="°" onChange={(az) => set({ az })} />}
       </div>
 
       <div className="stack-6">

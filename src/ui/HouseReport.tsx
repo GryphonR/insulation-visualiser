@@ -124,7 +124,7 @@ export function HouseReport({ house, scenarioName, project, onImport }: { house:
           <ul className="small">
             {house.calib && <li>{house.calib.note}: rooms {house.calib.dt > 0 ? '+' : ''}{house.calib.dt} K against setpoints, {Math.round(house.calib.hf * 100)}% of rooms heated.</li>}
             {house.vent.source !== 'meas' && <li>Airtightness is estimated from the house's age and features ({house.vent.factors.filter((f) => f.on).map((f) => f.label.toLowerCase()).join(', ')}). A blower-door test would firm it up.</li>}
-            <li>Thermal bridges at junctions are not yet included.</li>
+            <li>{house.floorEdge && house.floorEdge.upstand !== 'off' ? 'The ground floor-to-wall junction is included; other' : 'Thermal bridges at'} junctions are not included.</li>
             {res.checks.map((c, i) => <li key={i} className={c.level === 'error' ? 'bad' : 'warn'}>{c.text}</li>)}
           </ul>
         </section>}

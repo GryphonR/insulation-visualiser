@@ -3,11 +3,12 @@ import { LOCATIONS, MONTHS, MONTHS_FULL } from '../engine/data';
 import { BUILTIN_STACKUPS, layersFromTuples } from '../engine/library';
 import type { Stackup } from '../engine/library';
 import { clamp } from '../lib/util';
-import { EXPOSURES, FOOTINGS, LOADS, MOULD_RH, YEAR_ORDER, psat, runMoisture } from '../engine/moisture';
-import type { MoistureResult } from '../engine/moisture';
+import { EXPOSURES, FOOTINGS, LOADS, MOULD_RH, YEARS, YEAR_ORDER, psat } from '../engine/moisture';
+import type { MoistureInput, MoistureResult } from '../engine/moisture';
 import { ChipGroup, Eyebrow, Field, Slider } from './controls';
 import { StackupModal } from './StackupModal';
 import type { StackupDraft } from './StackupModal';
+import { useMoisture } from './useMoisture';
 
 const W = 600;
 const PL = 52;
@@ -109,18 +110,21 @@ function YearChart({ title, sub, unit, lines, yMax, refs = [], alt, step }: {
 /** Vapour pressure (solid) against saturation pressure (blue) through the wall for one month; outside on the left. */
 function PressureChart({ res, month }: { res: MoistureResult; month: number }) {
   const m = res.months[month];
-  const n = m.p.length;
+  const n = m.p.length; // layer boundaries
+  const L = res.layers.length;
   const target = [...m.p, ...m.T, ...m.stored, niceMax(Math.max(...m.ps, ...m.p) * 1.05), ...m.flux, m.wetFace, ...m.drained];
   const a = useTween(target);
-  // Month state with every number eased from the previous month's.
-  const s = { p: a.slice(0, n), T: a.slice(n, 2 * n), stored: a.slice(2 * n, 3 * n), ps: a.slice(n, 2 * n).map(psat) };
-  const flux = a.slice(3 * n + 1, 4 * n); // one per layer (n - 1)
-  const wetFace = a[4 * n];
-  const drained = a.slice(4 * n + 1, 5 * n + 1);
+  // Month state with every number eased from the previous month's: p and T per boundary; stored, flux and drained per layer.
+  const s = { p: a.slice(0, n), T: a.slice(n, 2 * n), stored: a.slice(2 * n, 2 * n + L), ps: a.slice(n, 2 * n).map(psat) };
+  const yMax = a[2 * n + L];
+  const flux = a.slice(2 * n + L + 1, 2 * n + 2 * L + 1);
+  const wetFace = a[2 * n + 2 * L + 1];
+  const drained = a.slice(2 * n + 2 * L + 2, 2 * n + 3 * L + 2);
   const total = res.layers.reduce((a, l) => a + l.t, 0);
   const xs = [0];
   res.layers.forEach((l, i) => xs.push(xs[i] + l.t));
   const x = (mm: number) => PL + ((PR - PL) * mm) / total;
+  const mid = (k: number) => (xs[k] + xs[k + 1]) / 2;
   const pts: Array<[number, number]> = []; // saturation curve, sampled inside each layer
   res.layers.forEach((_, i) => {
     for (let j = 0; j <= 8; j++) {
@@ -128,11 +132,10 @@ function PressureChart({ res, month }: { res: MoistureResult; month: number }) {
       pts.push([xs[i] + (xs[i + 1] - xs[i]) * f, psat(s.T[i] + (s.T[i + 1] - s.T[i]) * f)]);
     }
   });
-  const yMax = a[3 * n];
   const y = (v: number) => PB - ((PB - PT) * v) / yMax;
   const line = (arr: Array<[number, number]>) => arr.map(([mm, v]) => `${x(mm).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
   return (
-    <svg viewBox={`0 0 ${W} 250`} role="img" aria-label={`Vapour pressure, saturation pressure and vapour flow through the wall in ${MONTHS_FULL[month]}`} className="svg-fluid">
+    <svg viewBox={`0 0 ${W} 250`} role="img" aria-label={`Vapour pressure, saturation pressure and moisture flow through the wall in ${MONTHS_FULL[month]}`} className="svg-fluid">
       {res.layers.map((l, i) => (
         <rect key={i} x={x(xs[i])} y={PT} width={x(xs[i + 1]) - x(xs[i])} height={PB - PT} fill={l.col} opacity={0.35} />
       ))}
@@ -156,16 +159,16 @@ function PressureChart({ res, month }: { res: MoistureResult; month: number }) {
       ))}
       <polyline fill="none" stroke={COL.ps} strokeWidth={2} strokeDasharray="6 4" points={line(pts)} />
       <polyline fill="none" stroke={COL.p} strokeWidth={2.5} points={line(xs.map((mm, k) => [mm, s.p[k]]))} />
-      {drained.map((g, k) => g > 0.05 && (
+      {drained.map((g, k) => g > 0.5 && (
         <g key={`d${k}`}>
-          <circle cx={x(xs[k])} cy={y(s.ps[k])} r={5} fill="#fff" stroke="#1d5f94" strokeWidth={2} />
-          <text x={x(xs[k])} y={y(s.ps[k]) - 9} className="svt-mid" style={{ fill: '#1d5f94', fontWeight: 600 }}>{fmt(g)} g/m² drains</text>
+          <circle cx={x(mid(k))} cy={y((s.p[k] + s.p[k + 1]) / 2)} r={5} fill="#fff" stroke="#1d5f94" strokeWidth={2} />
+          <text x={x(mid(k))} y={y((s.p[k] + s.p[k + 1]) / 2) - 9} className="svt-mid" style={{ fill: '#1d5f94', fontWeight: 600 }}>{fmt(g)} g/m² drains</text>
         </g>
       ))}
-      {s.stored.map((g, k) => g > 0.05 && (
+      {s.stored.map((g, k) => g > 0.5 && (
         <g key={k}>
-          <circle cx={x(xs[k])} cy={y(s.ps[k])} r={5} fill={COL.warn} stroke="#fff" strokeWidth={1.5} />
-          <text x={x(xs[k])} y={y(s.ps[k]) - 9} className="svt-mid" style={{ fill: COL.warn, fontWeight: 600 }}>{fmt(g)} g/m²</text>
+          <circle cx={x(mid(k))} cy={y((s.p[k] + s.p[k + 1]) / 2)} r={5} fill={COL.warn} stroke="#fff" strokeWidth={1.5} />
+          <text x={x(mid(k))} y={y((s.p[k] + s.p[k + 1]) / 2) - 9} className="svt-mid" style={{ fill: COL.warn, fontWeight: 600 }}>{fmt(g)} g/m²</text>
         </g>
       ))}
       {res.layers.map((l, i) => {
@@ -178,13 +181,13 @@ function PressureChart({ res, month }: { res: MoistureResult; month: number }) {
         const col = '#1d5f94';
         return (
           <g key={`f${i}`} opacity={0.3 + 0.7 * f}>
-            <title>{`${l.name}: ${Math.abs(g) < 0.01 ? 'almost no' : fmt(Math.abs(g)) + ' g/m² per day of'} vapour flow ${dir > 0 ? 'towards the inside' : 'towards the outside'}`}</title>
+            <title>{`${l.name}: ${Math.abs(g) < 0.01 ? 'almost no' : fmt(Math.abs(g)) + ' g/m² per day of'} moisture flow ${dir > 0 ? 'towards the inside' : 'towards the outside'}`}</title>
             <line x1={cx - half} x2={cx + half} y1={FLUX_Y} y2={FLUX_Y} stroke={col} strokeWidth={1 + 3 * f} strokeDasharray="5 4" className={`flux-flow${dir < 0 ? ' flux-rev' : ''}`} />
             <polygon points={`${tip + dir * 5},${FLUX_Y} ${tip - dir * 1},${FLUX_Y - 4 - 2 * f} ${tip - dir * 1},${FLUX_Y + 4 + 2 * f}`} fill={col} />
           </g>
         );
       })}
-      <text x={(PL + PR) / 2} y={FLUX_Y + 22} className="svt-mid">vapour flow: thicker is more, the arrow points the way it travels</text>
+      <text x={(PL + PR) / 2} y={FLUX_Y + 22} className="svt-mid">moisture flow (vapour and liquid): thicker is more, the arrow points the way it travels</text>
       <circle cx={x(0)} cy={y(s.p[0])} r={4.5} fill={COL.p} stroke="#fff" strokeWidth={1.5} />
       <circle cx={x(total)} cy={y(s.p[n - 1])} r={4.5} fill={COL.p} stroke="#fff" strokeWidth={1.5} />
       <text x={PL} y={246} className="svt"><tspan style={{ fontWeight: 600 }}>Outside</tspan> {m.te.toFixed(1)} °C · {m.rhe.toFixed(0)}% RH · <tspan style={{ fontWeight: 600 }}>{Math.round(m.pe)} Pa</tspan></text>
@@ -194,49 +197,51 @@ function PressureChart({ res, month }: { res: MoistureResult; month: number }) {
   );
 }
 
-/** How the peak condensate sits in the adjacent layers: soaked into hygroscopic ones, or free water on a non-absorbent face. */
+/** The wettest timber or fibre layer against its rot threshold. */
 function Absorbed({ res }: { res: MoistureResult }) {
   const a = res.absorbed;
-  if (!a) return <>{res.peak > 500 ? 'No absorbent layer beside it, so this sits as free water, above the 500 g/m² commonly used as a limit.' : 'No absorbent layer beside it, so this sits as free water.'}</>;
+  if (!a) return null;
   return (
-    <>
-      Soaked into the adjacent absorbent layer(s) it is about {a.pct.toFixed(1)}% moisture by mass, {a.pct > a.crit ? <strong>above</strong> : 'below'} the ~{a.crit.toFixed(0)}% where rot risk begins.
-    </>
+    <p className="small">
+      {a.pct > a.crit && <strong>Rot risk. </strong>}{res.layers[a.layer].name} reaches about {a.pct.toFixed(0)}% moisture by mass at its wetter face, {a.pct > a.crit ? <strong>above</strong> : 'below'} the ~{a.crit.toFixed(0)}% where rot risk begins.
+    </p>
   );
 }
 
 function Verdict({ res }: { res: MoistureResult }) {
-  const where = (k: number) => `${res.layers[k - 1].name} / ${res.layers[k].name}`;
-  const peakMonth = YEAR_ORDER[res.year1.indexOf(Math.max(...res.year1))];
+  const where = (k: number) => res.layers[k].name;
+  const peakMonth = YEAR_ORDER[res.yearN.indexOf(res.peak)];
   return (
     <div className="stack-6" aria-live="polite">
       {res.verdict === 'none' && (
-        res.drainedNode >= 0
-          ? <p className="small"><strong>No water is held in the wall.</strong> The only condensation is on a cavity face, below.</p>
-          : <p className="small"><strong>No interstitial condensation.</strong> Vapour reaches the inside without saturating anywhere.</p>
+        res.drainedLayer >= 0
+          ? <p className="small"><strong>No water is held in the wall.</strong> The only condensation is in a cavity, below.</p>
+          : <p className="small"><strong>Stays dry.</strong> No layer holds liquid water at any point in the year.</p>
       )}
       {res.verdict === 'dries' && (
         <p className="small">
-          <strong>Condenses, then dries out.</strong> At {where(res.peakNode)}: peak {fmt(res.peak)} g/m² around {MONTHS_FULL[peakMonth]}
-          {res.dryMonth !== undefined && <>, dry again by {MONTHS_FULL[res.dryMonth]}</>}. <Absorbed res={res} />
+          <strong>Gets wet, then dries out.</strong> Most is in the {where(res.peakLayer)}: peak {fmt(res.peak)} g/m² of liquid water around {MONTHS_FULL[peakMonth]}
+          {res.dryMonth !== undefined && <>, dry again by {MONTHS_FULL[res.dryMonth]}</>}.
         </p>
       )}
       {res.verdict === 'accumulates' && (
         <p className="small">
-          <strong>Builds up year on year.</strong> At {where(res.peakNode)}: peak {fmt(res.peak)} g/m², still {fmt(res.yearN[11])} g/m² after 5 years. Risks rot, frost damage and lost insulation. <Absorbed res={res} />
+          <strong>Doesn't dry out{res.growing ? ', and gets wetter year on year' : ''}.</strong> Most is in the {where(res.peakLayer)}: peak {fmt(res.peak)} g/m², still {fmt(res.yearN[11])} g/m² at the end of September. Risks rot, frost damage and lost insulation.
         </p>
       )}
+      <Absorbed res={res} />
       <p className="small">
         {res.mouldMonths.length === 0
           ? `Inner surface stays below ${MOULD_RH}% RH: mould unlikely.`
           : <><strong>Mould risk</strong> on the inner surface in {res.mouldMonths.map((m) => MONTHS[m]).join(', ')}.</>}
       </p>
-      {res.drainedNode >= 0 && (
+      {res.drainedLayer >= 0 && (
         <p className="small">
-          <strong>Drained condensation.</strong> About {fmt(res.drainedTotal)} g/m² a year condenses on the cavity face at {where(res.drainedNode)}. It is assumed to run down the cavity and out through the weep holes, so it is not counted as water held in the wall.
+          <strong>Drained condensation.</strong> About {fmt(res.drainedTotal)} g/m² a year condenses in the {where(res.drainedLayer)}. It is assumed to run down the cavity and out through the weep holes, so it is not counted as water held in the wall.
         </p>
       )}
       {res.missing.length > 0 && <p className="small muted">No vapour data for {res.missing.join(', ')}; treated as open (µ 1).</p>}
+      {res.noCapillary.length > 0 && <p className="small muted">No capillary data for {res.noCapillary.join(', ')}; treated as not wicking or storing water.</p>}
       {res.cutAtVent && <p className="small muted">Layers outside the ventilated gap are ignored.</p>}
     </div>
   );
@@ -271,19 +276,23 @@ export function MoisturePage({ customStackups, setCustomStackups }: Props) {
   }, [playing]);
   const dv = LOADS.find((l) => l.id === load)?.dv ?? 4;
 
-  const runs = useMemo(
+  const inputs = useMemo(
     () =>
-      slots.map((id, i) => {
+      slots.map((id): MoistureInput | null => {
         const s = library.find((x) => x.id === id);
-        if (!s) return null;
-        const res = runMoisture({
+        return s ? {
           layers: layersFromTuples(s.layers), loc, tin, dv, roof: s.orient === 'roof',
           catch: EXPOSURES.find((e) => e.id === exposure)?.catch, footing: FOOTINGS.find((f) => f.id === footing)?.rh,
-        });
-        return { stackup: s, res, color: SLOT_COLORS[i % SLOT_COLORS.length] };
+        } : null;
       }),
     [slots, library, loc, tin, dv, exposure, footing],
   );
+  const { results, busy } = useMoisture(inputs);
+  // res is undefined until the first run finishes, and null when everything is outside a ventilated gap.
+  const runs = slots.map((id, i) => {
+    const s = library.find((x) => x.id === id);
+    return s ? { stackup: s, res: results?.[i], color: SLOT_COLORS[i % SLOT_COLORS.length] } : null;
+  });
   const withRes = runs.filter((r): r is NonNullable<typeof r> & { res: MoistureResult } => !!r?.res);
 
   const pick = (slot: number, value: string) => (value === NEW_OPTION ? setModal({ slot }) : setSlots((prev) => prev.map((id, i) => (i === slot ? value : id))));
@@ -303,8 +312,8 @@ export function MoisturePage({ customStackups, setCustomStackups }: Props) {
   };
 
   const lines = withRes.flatMap((r) => [
-    { name: r.stackup.name, vals: r.res.year1, col: r.color },
-    ...(r.res.verdict === 'accumulates' ? [{ name: `${r.stackup.name} (year 5)`, vals: r.res.yearN, col: r.color, dash: '6 4' }] : []),
+    { name: r.stackup.name, vals: r.res.yearN, col: r.color },
+    ...(r.res.growing ? [{ name: `${r.stackup.name} (year 1)`, vals: r.res.year1, col: r.color, dash: '6 4' }] : []),
   ]);
   const peak = Math.max(1, ...withRes.map((r) => r.res.peak));
   const rhMax = Math.max(MOULD_RH, ...withRes.flatMap((r) => r.res.months.map((m) => m.rhSurf)));
@@ -338,8 +347,8 @@ export function MoisturePage({ customStackups, setCustomStackups }: Props) {
       <section className="card panel">
         <div className="section-head">
           <div>
-            <h2>Vapour moving through each wall</h2>
-            <p className="muted small">Vapour travels from the side with the higher vapour pressure (the actual amount of water in the air, shown at each end) to the lower, whatever the relative humidity. Where the solid line reaches the dashed one, the air is full and water condenses. Press play to run through the year from October, or drag the slider.</p>
+            <h2>Moisture moving through each wall</h2>
+            <p className="muted small">Vapour travels from the side with the higher vapour pressure (the actual amount of water in the air, shown at each end) to the lower, whatever the relative humidity. Liquid water also moves through materials that wick, like brick, stone and lime, from wetter to drier. Where the solid line reaches the dashed one the material is saturated and can hold liquid water. Each month shows averages from an hourly simulation. Press play to run through the year from October, or drag the slider.</p>
           </div>
         </div>
         <div className="player" style={{ flex: 'none' }}>
@@ -352,20 +361,21 @@ export function MoisturePage({ customStackups, setCustomStackups }: Props) {
           </button>
           <input type="range" aria-label="Month of the year" min={0} max={11} step={1} value={step} onChange={(e) => { setStep(Number(e.target.value)); setPlaying(false); }} />
           <span className="mono clock" style={{ minWidth: '6.5em' }}>{MONTHS_FULL[month]}</span>
+          {busy && <span className="small muted" role="status">Calculating…</span>}
         </div>
         <div className="legend" aria-label="Key to the vapour charts">
           <span className="legend-item"><span style={{ display: 'inline-block', width: 24, borderTop: `3px solid ${COL.p}` }} />Actual vapour pressure (what is really in the wall)</span>
           <span className="legend-item"><span style={{ display: 'inline-block', width: 24, borderTop: `3px dashed ${COL.ps}` }} />Saturation pressure (the most the air can hold at that temperature)</span>
-          <span className="legend-item"><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: COL.warn }} />Condensation, with the water held</span>
-          <span className="legend-item"><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', border: '2px solid #1d5f94' }} />Condensation on a cavity face, assumed to drain away</span>
-          <span className="legend-item"><span style={{ display: 'inline-block', width: 24, borderTop: '3px dashed #1d5f94' }} />Vapour flow along the bottom (moving dashes show the direction)</span>
+          <span className="legend-item"><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: COL.warn }} />Liquid water held in the layer at month end</span>
+          <span className="legend-item"><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', border: '2px solid #1d5f94' }} />Condensation in a cavity, assumed to drain away</span>
+          <span className="legend-item"><span style={{ display: 'inline-block', width: 24, borderTop: '3px dashed #1d5f94' }} />Moisture flow along the bottom (moving dashes show the direction)</span>
         </div>
         <div className="compare-grid">
           {slots.map((id, i) => {
             const s = library.find((x) => x.id === id);
             const r = runs[i];
             return (
-              <div key={i} className="compare-card">
+              <div key={i} className="compare-card" style={{ opacity: busy ? 0.6 : 1, transition: 'opacity 0.2s' }}>
                 <div className="compare-card-head">
                   <span className="dot" style={{ background: SLOT_COLORS[i % SLOT_COLORS.length] }} />
                   <select className="select grow" aria-label={`Build-up for column ${i + 1}`} value={id} onChange={(e) => pick(i, e.target.value)}>
@@ -391,7 +401,8 @@ export function MoisturePage({ customStackups, setCustomStackups }: Props) {
                       {MONTHS[month]}: out {r.res.months[month].te.toFixed(1)} °C · room {r.res.months[month].rhi.toFixed(0)}% RH · surface {r.res.months[month].rhSurf.toFixed(0)}% RH · held {fmt(r.res.months[month].total)} g/m²
                     </p>
                   </>
-                ) : r && <p className="small muted">Every layer is outside a ventilated gap, so there is nothing to analyse.</p>}
+                ) : r?.res === null ? <p className="small muted">Every layer is outside a ventilated gap, so there is nothing to analyse.</p>
+                  : r && <p className="small muted">Calculating…</p>}
               </div>
             );
           })}
@@ -403,7 +414,7 @@ export function MoisturePage({ customStackups, setCustomStackups }: Props) {
         <section aria-label="Charts over the year" className="charts">
           <YearChart
             title="Moisture held in the wall"
-            sub="Starts in October with a dry wall and runs 5 years. A dashed line means it hadn't dried out by year 5."
+            sub={`Liquid water held at each month end, in the last of ${YEARS} simulated years from October (the first starts at 80% RH). A dashed line is year 1, shown where the wall is still getting wetter.`}
             unit="g/m²"
             alt="Moisture stored in each wall by month"
             step={step}
@@ -424,7 +435,7 @@ export function MoisturePage({ customStackups, setCustomStackups }: Props) {
       )}
 
       <p className="small muted">
-        Method: monthly steady-state vapour diffusion (Glaser method, as in EN ISO 13788) using typical UK monthly temperature and humidity, with condensate accumulating at layer interfaces and evaporating again when conditions allow. Indoor vapour load is set by the moisture class and shrinks as outdoor temperature rises. It does not model rain, rising damp, air leakage, or moisture stored in absorbent materials such as lime, clay, wood fibre or stone, which matters most in old buildings. Rain and rising damp are vapour sources only: rain raises the vapour pressure at the sun-warmed outer face in proportion to exposure and how absorbent the outer layer is, and rising damp holds the base masonry (outside any insulation) at 85% or 97% humidity. Water is not tracked as liquid, so there is no capillary movement, and the sun-warming uses monthly averages. Layers above 70% humidity use their wet-cup µ, otherwise the dry-cup value. Condensate beside a hygroscopic layer (wood fibre, cork, wool, timber boards) is shown as moisture content, assuming it reaches only 30 mm into the layer; mineral materials like stone, brick and lime are not treated as absorbent. Treat the result as a screening check, not a hygrothermal simulation.
+        Method: transient heat and moisture transport in the style of EN 15026 (Künzel), stepped every 2 hours for {YEARS} years through a typical UK year built from monthly temperature, humidity and rainfall. Each layer is cut into thin slices. Moisture moves as vapour (by µ) and as capillary liquid, at a rate worked out from each material's water absorption coefficient and free saturation, and is stored along each material's sorption curve. Rain arrives as showers on the outer face, which takes up only as much as its capillarity allows; the rest runs off. Rising damp is fed by capillary flow up from the footing into the outer run of wicking layers. Indoor vapour load is set by the moisture class and shrinks as outdoor temperature rises. "Liquid water held" is water above what each layer holds at 95% RH. Timber and fibre layers are judged for rot over their outer 10 mm. Material data are typical values for each material type, not measured for a product. Not modelled: cracks letting rain past a render, air leakage, freezing, and measured hourly weather. Treat the result as a screening check, not a substitute for a full hygrothermal study.
       </p>
 
       {modal && (

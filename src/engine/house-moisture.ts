@@ -1,7 +1,7 @@
 // Room moisture and mould risk on a mean January day (board 4f), and the interstitial check for each build-up in use.
 import { LOCATIONS, MEAN } from './data';
-import { MOULD_RH, RH_OUT, runMoisture } from './moisture';
-import type { MoistureResult } from './moisture';
+import { MOULD_RH, RH_OUT } from './moisture';
+import type { MoistureInput } from './moisture';
 import type { Buildup, House, HouseResult, RoomType } from './house';
 
 /** Water vapour at saturation, g/m³. */
@@ -77,8 +77,8 @@ export function roomMoisture(h: House, res: HouseResult, opt: MoistureOptions): 
   return { Tout, rhOut, rooms };
 }
 
-/** Interstitial condensation (EN ISO 13788 monthly, the app's moisture engine) for each outside wall and roof build-up in use. */
-export function buildupMoisture(h: House, res: HouseResult): Array<{ b: Buildup; where: string[]; r: MoistureResult | null }> {
+/** Moisture-model inputs (the app's year-long heat and moisture engine) for each outside wall and roof build-up in use. */
+export function buildupMoisture(h: House, res: HouseResult): Array<{ b: Buildup; where: string[]; input: MoistureInput }> {
   const lat = res.climate.lat;
   const loc = LOCATIONS.reduce((a, l) => (Math.abs(l.lat - lat) < Math.abs(a.lat - lat) ? l : a), LOCATIONS[0]).id;
   const used = new Map<string, { b: Buildup; where: Set<string> }>();
@@ -94,6 +94,6 @@ export function buildupMoisture(h: House, res: HouseResult): Array<{ b: Buildup;
   }
   return [...used.values()].map(({ b, where }) => ({
     b, where: [...where],
-    r: runMoisture({ layers: b.layers.map(([mat, t], i) => ({ id: i + 1, mat, t })), loc, tin: 20, dv: 4, roof: b.kind === 'roof' }),
+    input: { layers: b.layers.map(([mat, t], i) => ({ id: i + 1, mat, t })), loc, tin: 20, dv: 4, roof: b.kind === 'roof' },
   }));
 }

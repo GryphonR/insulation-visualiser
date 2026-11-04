@@ -18,7 +18,7 @@ function sun(lat: number, doy: number, h: number) {
 /** Beam, sky and ground-reflected irradiance on a surface (isotropic sky, 0.2 albedo), W/m². */
 function onSurface(s: ReturnType<typeof sun>, dni: number, dhi: number, orient: Orient): number {
   const rad = Math.PI / 180, beta = orient.tilt * rad, ghi = dni * Math.max(0, s.sinAlt) + dhi;
-  const cosT = orient.id === 'roof' ? s.sinAlt : s.cosAlt * Math.cos(s.az - orient.az * rad);
+  const cosT = s.sinAlt * Math.cos(beta) + s.cosAlt * Math.sin(beta) * Math.cos(s.az - orient.az * rad);
   return dni * Math.max(0, cosT) + (dhi * (1 + Math.cos(beta))) / 2 + (0.2 * ghi * (1 - Math.cos(beta))) / 2;
 }
 
