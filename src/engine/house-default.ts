@@ -52,8 +52,8 @@ const OPENINGS: Opening[] = [
 
 const D = (id: string, room: string, name: string, fan: boolean, opts: Array<[string, number]>, pick: number): Device => ({ id, room, name, fan, opts, pick });
 // SAP 10.2 Table 2.1 allowances, m³/h
-const CHIMNEY: Array<[string, number]> = [['Open', 80], ['Blocked (boarded fireplace)', 20], ['Closed fire', 10], ['Removed / sealed', 0]];
-const FAN: Array<[string, number]> = [['Fitted', 10], ['None', 0]];
+export const CHIMNEY: Array<[string, number]> = [['Open', 80], ['Blocked (boarded fireplace)', 20], ['Closed fire', 10], ['Removed / sealed', 0]];
+export const FAN: Array<[string, number]> = [['Fitted', 10], ['None', 0]];
 
 const hours = (on: number[]) => Array.from({ length: 24 }, (_, h) => (on.includes(h) ? 1 : 0));
 
@@ -155,13 +155,5 @@ export function loadHouse(): House {
     return upgradeHouse(p);
   } catch {
     return defaultHouse();
-  }
-}
-
-export function saveHouse(h: House): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(h));
-  } catch {
-    // Private browsing or full storage: the house just won't persist.
   }
 }

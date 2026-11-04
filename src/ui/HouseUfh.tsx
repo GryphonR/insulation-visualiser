@@ -8,8 +8,8 @@ import type { Corner, LoopPattern } from '../engine/house-ufh';
 import type { Pt } from '../engine/geom';
 import { Chip } from './controls';
 import { HousePlan } from './HousePlan';
+import { fmt } from './hform';
 
-const fmt = (v: number, d = 0) => v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d });
 type Drag = { kind: 'move' | 'size'; id: string; start: Pt; orig: { x: number; y: number; w: number; h: number } } | { kind: 'man'; id: string; start: Pt; orig: { x: number; y: number } };
 
 /** A room's bounding box less 10 cm all round: where a new loop starts. */

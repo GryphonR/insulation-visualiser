@@ -1,9 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { LOCATIONS, MONTHS, MONTHS_FULL } from '../engine/data';
-import { BUILTIN_STACKUPS, layersFromTuples } from '../engine/library';
+import { layersFromTuples } from '../engine/library';
 import type { Stackup } from '../engine/library';
 import { clamp } from '../lib/util';
-import { EXPOSURES, FOOTINGS, LOADS, MOULD_RH, YEARS, YEAR_ORDER, psat } from '../engine/moisture';
+import { EXPOSURES, FOOTINGS, LOADS, MAX_YEARS, MIN_YEARS, MOULD_RH, YEAR_ORDER, psat } from '../engine/moisture';
 import type { MoistureInput, MoistureResult } from '../engine/moisture';
 import { ChipGroup, Eyebrow, Field, Slider } from './controls';
 import { StackupModal } from './StackupModal';
@@ -18,7 +18,6 @@ const PB = 188;
 const SLOT_COLORS = ['#0b63b5', '#c75b00', '#2d7a4d', '#a23b72'];
 const MAX_SLOTS = 4;
 const NEW_OPTION = '__new__';
-const DEFAULT_SLOTS = ['preset:solid', 'preset:retro'];
 const FLUX_Y = 206;
 const COL = { warn: '#b91c1c', p: '#14212b', ps: '#1f6fb2' };
 /** Top of the ground moisture chart, m of wall height. */
@@ -306,6 +305,14 @@ function Absorbed({ res }: { res: MoistureResult }) {
   );
 }
 
+/** WTA 6-5 durability checks: frost, the interface behind internal insulation, gypsum. */
+function Checks({ res }: { res: MoistureResult }) {
+  return <>{res.checks.map((c, i) => {
+    const at = c.text.indexOf(':');
+    return <p key={i} className="small">{c.level === 'ok' ? c.text : <><strong>{c.text.slice(0, at + 1)}</strong>{c.text.slice(at + 1)}</>}</p>;
+  })}</>;
+}
+
 function Verdict({ res }: { res: MoistureResult }) {
   const where = (k: number) => res.layers[k].name;
   const peakMonth = YEAR_ORDER[res.yearN.indexOf(res.peak)];
@@ -326,10 +333,11 @@ function Verdict({ res }: { res: MoistureResult }) {
         <p className="small">
           {res.growing
             ? <><strong>Gets wetter year on year.</strong> Most is in the {where(res.peakLayer)}: peak {fmt(res.peak)} g/m², and never below {fmt(res.low)} g/m² even in its driest month, more than the year before. Risks rot, frost damage and lost insulation.</>
-            : <><strong>Stays damp all year.</strong> Most is in the {where(res.peakLayer)}: peak {fmt(res.peak)} g/m², and never below {fmt(res.low)} g/m² even in its driest month, but no wetter from one year to the next.</>}
+            : <><strong>Stays damp all year.</strong> Most is in the {where(res.peakLayer)}: peak {fmt(res.peak)} g/m², and never below {fmt(res.low)} g/m² even in its driest month, but no wetter from one year to the next. That alone does no harm: the checks below say whether it does.</>}
         </p>
       )}
       <Absorbed res={res} />
+      <Checks res={res} />
       {res.riseHeight > 0 && (
         <p className="small">
           <strong>Ground moisture</strong> {res.riseHeight < 10 ? <>wicks about {res.riseHeight.toFixed(Math.abs(res.riseHeight - 1) < 0.05 ? 2 : 1)} m up this wall at its highest</> : 'would wick up the full height of this wall'}
@@ -359,17 +367,17 @@ function Verdict({ res }: { res: MoistureResult }) {
 }
 
 interface Props {
-  customStackups: Stackup[];
+  library: Stackup[];
   setCustomStackups: (updater: (prev: Stackup[]) => Stackup[]) => void;
+  /** Build-up ids, one per column; shared with the other Simulate views. */
+  slots: string[];
+  setSlots: (updater: (prev: string[]) => string[]) => void;
+  /** Opens the page's build-up picker; shown in place of the column dropdown when there is one build-up. */
+  onChangeBuildup: () => void;
 }
 
-export function MoisturePage({ customStackups, setCustomStackups }: Props) {
-  const library = useMemo(() => [...BUILTIN_STACKUPS, ...customStackups], [customStackups]);
-  const [slots, setSlots] = useState<string[]>(() => {
-    const ids = new Set(library.map((s) => s.id));
-    const def = DEFAULT_SLOTS.filter((id) => ids.has(id));
-    return def.length ? def : library.slice(0, 2).map((s) => s.id);
-  });
+export function MoisturePage({ library, setCustomStackups, slots, setSlots, onChangeBuildup }: Props) {
+  const single = slots.length === 1;
   const [modal, setModal] = useState<null | { draft?: StackupDraft; slot: number }>(null);
   const [loc, setLoc] = useState('bir');
   const [tin, setTin] = useState(20);
@@ -458,7 +466,7 @@ export function MoisturePage({ customStackups, setCustomStackups }: Props) {
       <section className="card panel">
         <div className="section-head">
           <div>
-            <h2>Moisture moving through each wall</h2>
+            <h2>Moisture moving through {single ? 'the' : 'each'} wall</h2>
             <p className="muted small">Vapour travels from the side with the higher vapour pressure (the actual amount of water in the air, shown at each end) to the lower, whatever the relative humidity. Liquid water also moves through materials that wick, like brick, stone and lime, from wetter to drier. Where the solid line reaches the dashed one the material is saturated and can hold liquid water. Each month shows averages from a simulation in two-hour steps. Press play to run through the year from October, or drag the slider.</p>
           </div>
         </div>
@@ -481,12 +489,18 @@ export function MoisturePage({ customStackups, setCustomStackups }: Props) {
           <span className="legend-item"><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', border: '2px solid #1d5f94' }} />Condensation in a cavity, assumed to drain away</span>
           <span className="legend-item"><span style={{ display: 'inline-block', width: 24, borderTop: '3px dashed #1d5f94' }} />Moisture flow along the bottom (moving dashes show the direction)</span>
         </div>
-        <div className="compare-grid">
+        <div className={single ? 'compare-grid single' : 'compare-grid'}>
           {slots.map((id, i) => {
             const s = library.find((x) => x.id === id);
             const r = runs[i];
             return (
               <div key={i} className="compare-card" style={{ opacity: busy ? 0.6 : 1, transition: 'opacity 0.2s' }}>
+                {single ? (
+                  <div className="chips">
+                    <button type="button" className="btn-secondary" onClick={onChangeBuildup}>Change build-up</button>
+                    {s && <button type="button" className="btn-secondary" onClick={() => edit(i, s)}>{s.builtin ? 'Customize a copy' : 'Edit build-up'}</button>}
+                  </div>
+                ) : (
                 <div className="compare-card-head">
                   <span className="dot" style={{ background: SLOT_COLORS[i % SLOT_COLORS.length] }} />
                   <select className="select grow" aria-label={`Build-up for column ${i + 1}`} value={id} onChange={(e) => pick(i, e.target.value)}>
@@ -504,6 +518,7 @@ export function MoisturePage({ customStackups, setCustomStackups }: Props) {
                     </button>
                   )}
                 </div>
+                )}
                 {r?.res ? (
                   <>
                     <Verdict res={r.res} />
@@ -524,14 +539,14 @@ export function MoisturePage({ customStackups, setCustomStackups }: Props) {
             );
           })}
         </div>
-        {slots.length < MAX_SLOTS && <button type="button" className="btn-link" onClick={addColumn}>+ Add a build-up to compare</button>}
+        {!single && slots.length < MAX_SLOTS && <button type="button" className="btn-link" onClick={addColumn}>+ Add a build-up to compare</button>}
       </section>
 
       {withRes.length > 0 && (
         <section aria-label="Charts over the year" className="charts">
           <YearChart
             title="Moisture held in the wall"
-            sub={`Liquid water held at each month end, in the last of ${YEARS} simulated years from October (the first starts at 80% RH). If it never comes back to zero, the wall doesn't dry out. A dashed line is year 1, shown where the wall is still getting wetter.`}
+            sub={`Liquid water held at each month end, in the last simulated year, once one year repeats the next (${MIN_YEARS} to ${MAX_YEARS} years from October, the first starting at 80% RH). If it never comes back to zero, the wall doesn't dry out. A dashed line is year 1, shown where the wall is still getting wetter.`}
             unit="g/m²"
             alt="Moisture stored in each wall by month"
             step={step}
@@ -552,7 +567,7 @@ export function MoisturePage({ customStackups, setCustomStackups }: Props) {
       )}
 
       <p className="small muted">
-        Method: transient heat and moisture transport in the style of EN 15026 (Künzel), stepped every 2 hours for {YEARS} years through a typical UK year built from monthly temperature, humidity and rainfall. Each layer is cut into thin slices. Moisture moves as vapour (by µ) and as capillary liquid, at a rate worked out from each material's water absorption coefficient and free saturation, and is stored along each material's sorption curve. Rain arrives as showers on the outer face, which takes up only as much as its capillarity allows; the rest runs off. Ground moisture is capillary flow up from water at the base of the wall (all year, or November to March) into the outer run of wicking layers. Indoor vapour load is set by the moisture class and shrinks as outdoor temperature rises. "Liquid water held" is water above what each layer holds at 95% RH. Timber and fibre layers are judged for rot over their outer 10 mm. Material data are typical values for each material type, not measured for a product. Not modelled: cracks letting rain past a render, air leakage, freezing, and measured hourly weather. Treat the result as a screening check, not a substitute for a full hygrothermal study.
+        Method: transient heat and moisture transport in the style of EN 15026 (Künzel), stepped every 2 hours through a typical UK year, run again and again until one year repeats the last ({MIN_YEARS} to {MAX_YEARS} years: thick masonry takes longest) built from monthly temperature, humidity and rainfall. Each layer is cut into thin slices. Moisture moves as vapour (by µ) and as capillary liquid, at a rate worked out from each material's water absorption coefficient and free saturation, and is stored along each material's sorption curve. Rain arrives as showers on the outer face, which takes up only as much as its capillarity allows; the rest runs off. Ground moisture is capillary flow up from water at the base of the wall (all year, or November to March) into the outer run of wicking layers. Indoor vapour load is set by the moisture class and shrinks as outdoor temperature rises. "Liquid water held" is water above what each layer holds at 95% RH. Timber and fibre layers are judged for rot over their outer 10 mm. Harm is judged layer by layer as WTA 6-5 does for internal insulation: frost in the part of the masonry that freezes on a −5 °C night (against the same wall without insulation), humidity behind internal insulation, and gypsum. Material data are typical values for each material type, not measured for a product. Not modelled: cracks letting rain past a render, air leakage, freezing, and measured hourly weather. Treat the result as a screening check, not a substitute for a full hygrothermal study.
       </p>
 
       {modal && (

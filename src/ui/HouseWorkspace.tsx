@@ -10,8 +10,8 @@ import { Chip } from './controls';
 import { useProject } from './project';
 import { href } from './route';
 import './house.css';
+import { fmt } from './hform';
 
-const fmt = (v: number, d = 0) => v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d });
 const sgn = (v: number, d = 0) => (Math.abs(v) < 0.5 * 10 ** -d ? '0' : `${v > 0 ? '+' : '−'}${fmt(Math.abs(v), d)}`);
 const uid = () => `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 const KIND_LABEL: Record<Scenario['kind'], string> = { base: 'base · the house today', plan: 'plan', whatif: 'what-if' };

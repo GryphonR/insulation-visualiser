@@ -12,6 +12,7 @@ import { projectDay } from './projectSim';
 import { HeatMap } from './HeatMap';
 import { LineChart } from './LineChart';
 import { MoisturePage } from './MoisturePage';
+import { ComparePage } from './ComparePage';
 import { Player } from './Player';
 import { StackupModal } from './StackupModal';
 import type { StackupDraft } from './StackupModal';
@@ -25,11 +26,27 @@ import { useProject } from './project';
 import { AddBuildupModal } from './AddBuildupModal';
 import { go, href } from './route';
 
-/** The old single-wall tool, now the element level of the drill-down: reached from a face or a build-up, it simulates that build-up on its own. */
-export function WallPage({ buildupId }: { buildupId?: string }) {
+const DEFAULT_COMPARE = ['preset:cavity_old', 'preset:cavity_new'];
+
+/** Simulate: heat flow or moisture, for one build-up or several side by side. The build-ups live in the URL (#/wall/a/b…), so every view shows the same ones. */
+export function WallPage({ ids }: { ids: string[] }) {
+  const buildupId = ids[0];
   const { house, res: houseRes, customStackups, setCustomStackups } = useProject();
   const [view, setView] = useState<'flow' | 'moisture'>('flow');
   const library = useMemo(() => [...BUILTIN_STACKUPS, ...customStackups], [customStackups]);
+  // Project walls and roofs can be picked too; marked builtin so they're copied, never edited or deleted, from here.
+  const simLib = useMemo(() => [
+    ...house.buildups.filter((b) => (b.kind === 'wall' || b.kind === 'roof') && b.layers.length > 0).map((b): Stackup => ({ id: b.id, name: b.name, layers: b.layers, orient: b.kind === 'roof' ? 'roof' : undefined, builtin: true })),
+    ...library,
+  ], [house.buildups, library]);
+  const setIds = (f: (prev: string[]) => string[]) => go('wall', ...f(ids));
+  const compare = ids.length > 1;
+  // Fill up to n columns, keeping the ones already chosen.
+  const ensure = (n: number) => {
+    if (ids.length >= n) return;
+    const have = new Set(simLib.map((s) => s.id));
+    setIds(() => [...new Set([...ids, ...DEFAULT_COMPARE.filter((id) => have.has(id)), ...simLib.map((s) => s.id)])].slice(0, n));
+  };
 
   const idRef = useRef(100);
   const nextId = useCallback(() => idRef.current++, []);
@@ -92,16 +109,24 @@ export function WallPage({ buildupId }: { buildupId?: string }) {
 
   return (
     <>
-      <Crumbs items={[[house.name || 'House', href('results')], ['Build-ups', href('buildups', from?.id ?? '')], [from?.name ?? 'Single wall', null], ['Simulate', null]]} />
+      <Crumbs items={compare
+        ? [[house.name || 'House', href('results')], ['Build-ups', href('buildups')], ['Simulate', null]]
+        : [[house.name || 'House', href('results')], ['Build-ups', href('buildups', from?.id ?? '')], [from?.name ?? 'Single wall', null], ['Simulate', null]]} />
       <div className="page-title">
         <div>
-          <div className="eyebrow">Element simulation</div>
-          <h1>{from?.name ?? 'Single wall'}</h1>
-          {view === 'flow' && <p className="mono small muted">{res.loc.name} · {MONTHS_FULL[sc.month]} · {res.weather.name} · {res.orient.name}</p>}
+          <div className="eyebrow">Simulate</div>
+          <h1>{compare ? 'Compare build-ups' : from?.name ?? 'Single wall'}</h1>
+          {view === 'flow' && !compare && <p className="mono small muted">{res.loc.name} · {MONTHS_FULL[sc.month]} · {res.weather.name} · {res.orient.name}</p>}
         </div>
-        <div className="chips" role="tablist" aria-label="Element view">
-          <Chip on={view === 'flow'} onClick={() => setView('flow')}>Heat flow through the layers</Chip>
-          <Chip on={view === 'moisture'} onClick={() => setView('moisture')}>Moisture over a year</Chip>
+        <div className="stack-6">
+          <div className="chips" role="tablist" aria-label="What to simulate">
+            <Chip on={view === 'flow'} onClick={() => setView('flow')}>Heat flow through the layers</Chip>
+            <Chip on={view === 'moisture'} onClick={() => { setView('moisture'); ensure(1); }}>Moisture over a year</Chip>
+          </div>
+          <div className="chips" role="tablist" aria-label="How many build-ups">
+            <Chip on={!compare} onClick={() => go('wall', ...ids.slice(0, 1))}>One build-up</Chip>
+            <Chip on={compare} onClick={() => ensure(2)}>Compare build-ups</Chip>
+          </div>
         </div>
       </div>
       {notice.length > 0 && (
@@ -113,7 +138,9 @@ export function WallPage({ buildupId }: { buildupId?: string }) {
         </aside>
       )}
       {view === 'moisture' ? (
-        <MoisturePage customStackups={customStackups} setCustomStackups={setCustomStackups} />
+        <MoisturePage library={simLib} setCustomStackups={setCustomStackups} slots={ids} setSlots={setIds} onChangeBuildup={() => setChanging(true)} />
+      ) : compare ? (
+        <ComparePage library={simLib} setCustomStackups={setCustomStackups} slots={ids} setSlots={setIds} />
       ) : (
     <>
     <EnvironmentPanel wide sc={sc} params={res.params} solar={res.sim.solar} set={set} project={proj} />
@@ -167,9 +194,9 @@ export function WallPage({ buildupId }: { buildupId?: string }) {
     </div>
     </>
       )}
-      <p className="foot">
+      {view === 'flow' && <p className="foot">
         Model: one-dimensional transient conduction through uniform layers (implicit finite volume, 2-minute steps, repeated until the daily cycle settles). Outside is driven by sol-air temperature (air + absorbed sun, with a long-wave loss for roofs); indoor air is held constant unless the room is free-floating. Weather is a synthetic clear-sky-scaled day built from typical UK monthly means, not measured data. Thermal bridging, moisture, ventilated cavities and window gains in the fixed and scheduled modes are not modelled. Values are for teaching and early design, not compliance.
-      </p>
+      </p>}
       {changing && (
         <AddBuildupModal title="Change build-up" actionLabel="View" layeredOnly library={pool} have={new Set()} onClose={() => setChanging(false)}
           onAdd={(_, key) => { setChanging(false); go('wall', key); }} />

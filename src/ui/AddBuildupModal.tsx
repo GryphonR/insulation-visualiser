@@ -71,7 +71,7 @@ export function PresetBrowser({ library, have, onAdd, onDelete, tools, actionLab
             {tools && (
               <div style={{ padding: 12, borderTop: '1px solid var(--line-strong)', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10 }}>
                 <span className="small muted">{pick.length}/2 ticked to compare</span>
-                <button type="button" className="btn-primary" disabled={pick.length !== 2} onClick={() => go('compare-buildups', pick[0], pick[1])}>Compare</button>
+                <button type="button" className="btn-primary" disabled={pick.length !== 2} onClick={() => go('wall', pick[0], pick[1])}>Compare</button>
               </div>
             )}
           </div>

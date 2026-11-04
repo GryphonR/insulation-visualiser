@@ -1,6 +1,6 @@
 // Whole-house design-day heat loss: rooms are rectangles on storeys, every face is derived from how they touch.
 // Plan and rules: docs/whole-house-plan.md.
-import { MAT, MEAN } from './data';
+import { DAYS, MAT, MEAN } from './data';
 import { layerR } from './swap';
 import { bearingLabel, compass, edges, overlapArea3, overlapAreaPoly, polyArea, selfIntersects, sharedSpan } from './geom';
 import type { Edge, Pt } from './geom';
@@ -240,7 +240,6 @@ export const CIBSE_ACH: Record<RoomType, number> = {
   living: 1.5, dining: 1.5, kitchen: 2, bedroom: 1, bathroom: 3, wc: 2, hall: 2, landing: 2, utility: 2, study: 1.5, store: 1, other: 1.5,
   garage: 3, conservatory: 1.5, porch: 3, cellar: 0.5,
 };
-const DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 export const layersR = (b: Buildup) => b.layers.reduce((s, [m, t]) => (MAT[m] ? s + layerR(MAT[m], t) : s), 0);
 export const buildupU = (b: Buildup, films = FILMS.extWall) => b.u ?? 1 / (films + layersR(b));
@@ -289,11 +288,7 @@ export function shapeGeo(r: Room, sh: RoomShape) {
   const run = sloped.map((s) => (s ? (hc - k) / t : 0));
   const fw = Math.max(0, W - run[0] - run[1]);
   const A = W * hc - sloped.reduce((a, s, i) => a + (s ? 0.5 * run[i] * (hc - k) : 0), 0);
-  const dormers = sh.dormers.map((d, i) => {
-    if (!d || !sloped[i]) return null;
-    const hd = Math.max(k + 0.3, Math.min(d.front, hc)), xr = (hd - k) / t, dw = Math.max(0.5, Math.min(d.w, L - 0.2));
-    return { hd, xr, dw, front: dw * (hd - k), cheeks: xr * (hd - k), roof: xr * dw, slopeCut: ((hd - k) / sn) * dw, vol: 0.5 * xr * (hd - k) * dw, window: Math.min(d.window, dw * (hd - k) * 0.9) };
-  });
+  const dormers = sh.dormers.map((d, i) => dormerGeo(sloped[i] ? d : null, k, hc, t, sn, L));
   const slopeArea = sloped.map((s, i) => (s ? ((hc - k) / sn) * L - (dormers[i]?.slopeCut ?? 0) : 0));
   const V = A * L + dormers.reduce((a, d) => a + (d?.vol ?? 0), 0);
   return { W, L, k, hc, hcMax, t, sn, run, fw, A, V, slopeSides, gables, sloped, dormers, slopeArea };

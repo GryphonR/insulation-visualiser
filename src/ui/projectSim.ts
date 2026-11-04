@@ -1,8 +1,8 @@
 import { LOCATIONS } from '../engine/data';
+import { clamp } from '../lib/util';
 import type { Scenario } from '../engine/scenario';
 import type { HouseResult } from '../engine/house';
 
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 /**
  * Simulation settings taken from the project: the nearest city, and a typical room built from the largest face that uses

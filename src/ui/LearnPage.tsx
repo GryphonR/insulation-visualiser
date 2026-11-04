@@ -648,7 +648,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
             The heat simulation asks how warm the wall gets. The <b>Moisture over a year</b> tab asks a different question: <em>can water build up inside this wall?</em> Water in a wall rots timber, damages brick and stone when it freezes, ruins insulation and grows mould, and many problems with insulating old buildings come from getting this wrong.
           </p>
           <p>
-            You pick up to four build-ups, set a location, the room temperature, how much moisture the household produces, how exposed the wall is to rain and whether the ground at its base is wet. The tool then simulates a typical UK year in two-hour steps, three years running, and shows:
+            You pick up to four build-ups, set a location, the room temperature, how much moisture the household produces, how exposed the wall is to rain and whether the ground at its base is wet. The tool then simulates a typical UK year in two-hour steps, year after year until it settles, and shows:
           </p>
           <ul>
             <li><b>Whether liquid water collects inside the wall,</b> in which layer, and how much, whether it comes from indoor vapour condensing, rain soaking in or damp rising from the ground.</li>
@@ -798,13 +798,13 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
         <section id="moist-reading" className="learn-section">
           <h2>Reading the moisture charts</h2>
           <h3>The verdict</h3>
-          <p>Above each wall's chart is one of these results, followed by a rot check for any timber or fibre layer, and a mould check.</p>
+          <p>Above each wall's chart is one of these results. They only describe how much water the wall holds and when. Whether that water does harm is judged separately, layer by layer, in the checks that follow: rot for timber and fibre layers, frost for masonry, the interface behind internal insulation, gypsum, and mould on the inner surface. This follows how hygrothermal results are normally assessed, under WTA 6-5 for internal insulation.</p>
           <table className="learn-table">
             <thead><tr><th>Result</th><th>What it means</th></tr></thead>
             <tbody>
               <tr><td>Stays dry</td><td>No layer holds liquid water at any point in the year: every layer stays below the moisture it would hold at 95% humidity.</td></tr>
               <tr><td>Gets wet, then dries out</td><td>Liquid water collects in winter, with a peak amount, month and layer, and has gone again by the month named. Rain-exposed walls often start to rewet in the autumn, which is normal. This is generally acceptable if the materials can tolerate that much moisture for a few months.</td></tr>
-              <tr><td>Stays damp all year</td><td>Some water is still there even in the driest month, but no more than the year before: the wall has settled at a damp level. Common for rain-exposed masonry. Whether it matters depends on the materials, and on frost.</td></tr>
+              <tr><td>Stays damp all year</td><td>Some water is still there even in the driest month, but no more than the year before: the wall has settled at a damp level. Common for rain-exposed masonry, and not a fault in itself. The checks below say whether the materials suffer from it.</td></tr>
               <tr><td>Gets wetter year on year</td><td>Water is still there even in the driest month, and more than the year before, so it builds up. The danger is rot, frost damage and loss of insulation.</td></tr>
             </tbody>
           </table>
@@ -849,7 +849,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
             <li>Shed rain the face can't take up and water condensing in a cavity, and feed in ground moisture.</li>
           </ol>
           <p>
-            Every layer starts at 80% humidity in October, and the year is run three times. The results come from the third year, by which time that starting guess has mostly washed out. The first year is kept to show whether a wall is still getting wetter.
+            Every layer starts at 80% humidity in October, and the year is run again and again until it repeats: until a year's wettest and driest month ends are within 2% of the year before's. That takes at least three years, and longer for thick masonry, which can take five to eight to settle; the run stops at twelve. The results come from the last year, by which time that starting guess has washed out. The first year is kept to show whether a wall is still getting wetter.
           </p>
         </section>
 
@@ -975,7 +975,26 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
           <h2>7. Working out the results</h2>
           <h3>Water held and the verdict</h3>
           <p>
-            "Liquid water held" in a layer is the water above what it would hold at 95% humidity, added up over its slices, at the end of each month. Hygroscopic moisture below that level is normal and is not counted. Under 5 g/m² in total counts as dry. <b>Stays dry</b> if the total never reaches that in the final year. <b>Gets wet, then dries out</b> if it does, but is dry again at some month end, the wall's driest point (often summer, before autumn rain starts again). Otherwise it <b>gets wetter year on year</b> if its driest month holds over a tenth more than the year before's (and at least 5 g/m² more; smaller rises are the wall still settling from its starting state), and <b>stays damp all year</b> if not. The peak is the largest month-end total, and the layer named is the one holding most of it then.
+            "Liquid water held" in a layer is the water above what it would hold at 95% humidity, added up over its slices, at the end of each month. Hygroscopic moisture below that level is normal and is not counted. <b>Stays dry</b> if the total never reaches 5 g/m² in the final year. <b>Gets wet, then dries out</b> if it does, but at some month end (the wall's driest point, often summer, before autumn rain starts again) every layer is dry again: under 5 g/m², or under a tenth of the water it could hold above 95% humidity, whichever is more. The tenth is a judgement call so that thick masonry, which in a wet climate always keeps a little water in its outer part, is judged against its own size: for a thin board the limit is still 5 g/m², for 500 mm of stone it is several kilograms. A wall that has still not settled after twelve years, its driest month wetter than the year before's, <b>gets wetter year on year</b>, however little it holds yet. Otherwise it <b>stays damp all year</b>. The peak is the largest month-end total, and the layer named is the one holding most of it then.
+          </p>
+          <h3>Settled state</h3>
+          <p>
+            Following WTA 6-5, the wall has settled once the water in every layer, and in the wall as a whole, changes by less than 1% from the same date a year before. Results come from the year after that. A wall still changing after twelve years, with its driest month wetter than the year before's, is reported as getting wetter year on year.
+          </p>
+          <h3>Frost</h3>
+          <p>
+            The part of each masonry layer that can freeze is found from the steady temperatures on a −5 °C night. Through November to March, the water in that part is compared with its open pore volume. WTA 6-5 allows masonry of unknown frost resistance to fill 30% of its pores, about half the saturation at which frost damage usually starts, or more if the humidity there stays under 95%. The model has no porosity data, so open porosity is estimated from free saturation, which typically fills about three quarters of the pores (164 sandstones average 0.71; ASTM C216 caps brick at 0.78).
+          </p>
+          <p>
+            The simulation takes the wall to be in good condition. A sound existing wall has already shown it survives its own winters, so going over 30% only counts as a frost risk where insulation makes the freezing zone wetter than the same wall without it. That before-and-after comparison is how internal insulation is normally judged for frost (WTA 6-5; Straube and Mensinga). For the comparison, insulation lining the wall is taken off, and a filled cavity goes back to an empty one.
+          </p>
+          <h3>Behind internal insulation</h3>
+          <p>
+            Where insulation is fixed inside masonry, with only thin finishes on the room side, the peak monthly humidity where the two meet is graded as WTA 6-5 does. Up to 95% suits any materials. 95–99% suits only materials that tolerate damp, frost and rot: mineral layers such as lime, insulating plaster, mineral board and stone do, while timber and fibre, gypsum and foam boards are flagged. Over 99%, condensation can form and the system needs a full design study.
+          </p>
+          <h3>Gypsum</h3>
+          <p>
+            A gypsum plaster or plasterboard layer is flagged if its humidity goes over 95% at either face (WTA 6-5), as gypsum loses strength when damp.
           </p>
           <h3>Rot</h3>
           <p>
@@ -1003,7 +1022,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
             <li><b>Typical material data.</b> Each material's capillary and storage values are representative figures for its type from published hygrothermal data, not measured for a product. Real bricks and stones vary several-fold, so treat the comparison between build-ups as more reliable than the absolute amounts. Materials with no data are treated as not wicking or storing water, and are listed on the page.</li>
             <li><b>No cracks or gaps.</b> A render is treated as perfect. In practice rain often gets behind a cracked cement render and can't get out, which is a large part of its bad reputation on old walls. None of that is modelled.</li>
             <li><b>No air leakage.</b> Moist air leaking through gaps, joints and service penetrations can carry far more water than diffusion does.</li>
-            <li><b>No freezing.</b> Frost damage, and ice blocking the pores, are not modelled.</li>
+            <li><b>No freezing.</b> Ice in the pores isn't simulated, and the monthly weather never drops below 0 °C. The frost check therefore uses a fixed −5 °C night to find the part of the wall that can freeze, and judges how wet that part is over the winter, rather than counting real freeze–thaw cycles. Porosity is estimated, and the real frost resistance of a brick or stone can only be measured.</li>
             <li><b>Ground moisture in one dimension.</b> The wall is followed at a single height, 1 m above the footing, fed towards a moisture level that tapers from saturation at the base to dry at the front. The rise height uses sharp-front theory and the brick's own wicking, ignoring mortar bed joints, which usually wick more slowly, and the ground is taken as free water, so heights lean high. Salts, which hold water and drive much of the damage, are not modelled.</li>
             <li><b>One dimension.</b> A uniform wall, with no thermal bridges, window reveals, corners or junctions with the floor.</li>
             <li><b>Mould as a single line.</b> 80% surface humidity is a standard simplification. Real mould depends on the material, its temperature and how long the conditions last.</li>

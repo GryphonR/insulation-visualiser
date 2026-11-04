@@ -33,6 +33,8 @@ interface Ctx {
   openProject: (id: string) => void;
   createProject: (p: Project) => void;
   deleteProject: (id: string) => void;
+  /** False once the browser has refused to store the latest edit. */
+  saveOk: boolean;
 }
 
 // Houses are never mutated (edits go to a copy), so a scenario left untouched by an edit keeps its result, and so does undo.
@@ -64,10 +66,11 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
     });
   const undo = () => setHist((h) => (h.past.length ? { past: h.past.slice(0, -1), now: h.past[h.past.length - 1], future: [h.now, ...h.future] } : h));
   const redo = () => setHist((h) => (h.future.length ? { past: [...h.past, h.now], now: h.future[0], future: h.future.slice(1) } : h));
-  useEffect(() => { if (project !== skipSave.current) saveProject(projectId, project); }, [project, projectId]);
+  const [saveOk, setSaveOk] = useState(true);
+  useEffect(() => { if (project !== skipSave.current) setSaveOk(saveProject(projectId, project)); }, [project, projectId]);
   const show = (id: string, p: Project) => { skipSave.current = p; setProjectId(id); setHist({ past: [], now: p, future: [] }); bump((n) => n + 1); };
-  const openProject = (id: string) => { if (id === projectId) return; const p = openStored(id); if (p) show(id, p); };
-  const createProject = (p: Project) => { const id = newProjectId(); saveProject(id, p); show(id, p); };
+  const openProject = (id: string) => { if (id === projectId) return; const p = openStored(id); if (p) { setSaveOk(true); show(id, p); } };
+  const createProject = (p: Project) => { const id = newProjectId(); setSaveOk(saveProject(id, p)); show(id, p); };
   const deleteProject = (id: string) => {
     deleteStored(id);
     if (id !== projectId) { bump((n) => n + 1); return; }
@@ -102,7 +105,7 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
   const value: Ctx = {
     project, setProject, active, house: active.house, setHouse, upd, res: results.get(active.id)!, results, ordered, depth,
     undo, redo, canUndo: hist.past.length > 0, canRedo: hist.future.length > 0, customStackups, setCustomStackups,
-    projects, projectId, openProject, createProject, deleteProject,
+    projects, projectId, openProject, createProject, deleteProject, saveOk,
   };
   return <C.Provider value={value}>{children}</C.Provider>;
 }

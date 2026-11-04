@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calcHouse } from './house';
+import { calcHouse, setOutline } from './house';
 import type { House } from './house';
 import { defaultHouse, withHeating } from './house-default';
 import { applyChanges, describe as describeChange, diff, groupChanges, steps } from './house-scenarios';
@@ -118,5 +118,29 @@ describe('hour-by-hour runs', () => {
     expect(r.heatKWh).toBeGreaterThan(dd * 0.5);
     expect(r.heatKWh).toBeLessThan(dd * 1.3);
     console.log('year', Math.round(r.heatKWh), 'dd', Math.round(dd), 'peak', Math.round(r.peakW), 'scop', (r.heatKWh / r.elecKWh).toFixed(2), y.months.map(Math.round).join(','));
+  });
+
+  it('every shared face links two rooms once: an unheated room wrapped round a heated one, with an inside door, balances over its design-calc faces', () => {
+    const hh = structuredClone(h);
+    const a = { ...hh.rooms[0], id: 'A', name: 'A', x: 0, y: 0, w: 4, d: 4 };
+    const b = { ...hh.rooms[0], id: 'B', name: 'B', heated: false, ach: 0.5 };
+    setOutline(b, [[4, 0], [6, 0], [6, 6], [0, 6], [0, 4], [4, 4]]);
+    hh.storeys = hh.storeys.slice(0, 1);
+    hh.rooms = [a, b];
+    hh.openings = [{ id: 'd1', room: 'A', to: 'B', side: 'E', name: 'Door', w: 0.8, h: 2, buildup: 'door' }];
+    hh.vent.devices = [];
+    hh.gains.people = 0;
+    hh.gains.living = Array(24).fill(1);
+    const ready = withHeating({ ...hh, heating: undefined as unknown as House['heating'] });
+    const base = calcHouse(ready), r = simulate(ready, 'design', base);
+    // Over a settled day B (no gains, no sun) sits at the U·A-weighted mean of what is around it, ventilation included.
+    const avg = (a: Float32Array) => a.reduce((s, v) => s + v, 0) / a.length;
+    const rb = base.rooms.find((x) => x.room.id === 'B')!;
+    const near = (to: (typeof rb.faces)[number]['to']) => (to.k === 'out' ? avg(r.out) : to.k === 'ground' ? base.Tg : to.k === 'loft' ? avg(r.loftT!)
+      : to.k === 'party' ? hh.neighbourT : avg(r.T[r.rooms.findIndex((x) => x.id === to.id)]));
+    const Hv = 0.33 * rb.n * rb.V;
+    const num = rb.faces.reduce((t, f) => t + f.U * f.area * near(f.to), Hv * avg(r.out)), den = rb.faces.reduce((t, f) => t + f.U * f.area, Hv);
+    expect(rb.faces.filter((f) => f.to.k === 'room').length).toBe(3);
+    expect(avg(r.T[r.rooms.findIndex((x) => x.id === 'B')])).toBeCloseTo(num / den, 1);
   });
 });

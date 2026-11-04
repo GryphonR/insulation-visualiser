@@ -68,3 +68,12 @@ export function cmap(u: number): string {
   }
   return 'rgb(185,48,31)';
 }
+
+/** Save text as a file through the browser's download. */
+export function download(name: string, text: string, type: string) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}

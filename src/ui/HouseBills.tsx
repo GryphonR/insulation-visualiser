@@ -4,8 +4,8 @@ import { calcHouse } from '../engine/house';
 import type { House } from '../engine/house';
 import { NO_KNOBS, bestFit, calibrate, demoBills, parseMeterCsv } from '../engine/house-calibrate';
 import type { Bills, Knobs } from '../engine/house-calibrate';
+import { fmt } from './hform';
 
-const fmt = (v: number, d = 0) => (Number.isFinite(v) ? v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—');
 const EMPTY: Bills = { gas: Array(12).fill(NaN), temps: Array(12).fill(NaN), base: NaN };
 
 /** Board 4d: monthly gas against the model, three household knobs, fit statistics and an energy signature. */

@@ -4,19 +4,12 @@ import { buildupU, calcHouse } from '../engine/house';
 import type { House } from '../engine/house';
 import { RAD_LABEL, ratedOf } from '../engine/house-heating';
 import type { Project } from '../engine/house-scenarios';
+import { download } from '../lib/util';
 import { Chip } from './controls';
+import { fmt } from './hform';
 
-const fmt = (v: number, d = 0) => (Number.isFinite(v) ? v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—');
 const SECTIONS = [['cond', 'Design conditions'], ['rooms', 'Room-by-room table'], ['hp', 'Heat pump and running'], ['fabric', 'Build-ups (U-values)'], ['assume', 'Assumptions and checks']] as const;
 type Sec = (typeof SECTIONS)[number][0];
-
-function download(name: string, text: string, type: string) {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type }));
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}
 
 /** Board 4e: a printable heat loss report for the scenario being edited, plus project export and import. */
 export function HouseReport({ house, scenarioName, project, onImport }: { house: House; scenarioName: string; project: Project; onImport: (p: Project) => void }) {

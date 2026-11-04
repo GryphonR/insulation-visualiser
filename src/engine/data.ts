@@ -90,6 +90,8 @@ export const PRESETS: Preset[] = [
 
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+/** Days in each month, January first (a non-leap year). */
+export const DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 /** Typical UK monthly mean air temperature, °C. */
 export const MEAN = [4.5, 4.7, 6.5, 8.8, 11.8, 14.7, 17.0, 16.7, 14.0, 10.8, 7.2, 5.0];
 /** Typical UK monthly mean daily temperature range, K. */

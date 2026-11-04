@@ -1,6 +1,6 @@
 // Hour-by-hour whole-house runs (boards 6, 6a, 4b): one air-and-contents node per room plus the loft,
 // heating on a schedule with a setback, sun through windows, people, appliances and cooking.
-import { COLOURS, DOY, MEAN, ORIENTS, SWING } from './data';
+import { COLOURS, DAYS, DOY, MEAN, ORIENTS, SWING } from './data';
 import { solarAt, solarFromData } from './solar';
 import type { Tmy } from './weather-tmy';
 import { calcHouse, heatPumpCop } from './house';
@@ -40,7 +40,6 @@ export function hourGains(g: House['gains'], h: number, weekend: boolean): [numb
 
 // Smooth repeatable "weather noise" in −1..1, so cold spells last a few days.
 const noise = (d: number) => 0.5 * Math.sin(d * 1.7 + 0.3) * Math.sin(d * 0.23) + 0.3 * Math.sin(d * 0.61 + 1.1) + 0.2 * Math.sin(d * 2.9);
-const DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 const MONTH_OF_DAY = DAYS.flatMap((n, m) => Array(n).fill(m) as number[]);
 const UK_MEAN = MEAN.reduce((a, b) => a + b, 0) / 12;
 
@@ -107,7 +106,6 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
   // Links between nodes (each shared face once) and conductances to fixed temperatures.
   const links: Array<[number, number, number]> = [];
   const Hout = new Float64Array(N), Hg = new Float64Array(N), Hp = new Float64Array(N);
-  const seen = new Set<string>();
   // Sun on glass (area × g), and on roofs as sol-air: U·A × α·Rse of the absorbed sun, less a clear-night sky loss.
   const solar: Array<{ node: number; area: number; g: number; orient: (typeof ORIENTS)[number] }> = [];
   const sky: Array<{ node: number; UA: number; f: number }> = [];
@@ -124,10 +122,10 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
       else if (f.to.k === 'ground') Hg[i] += UA;
       else if (f.to.k === 'party') Hp[i] += UA;
       else if (f.to.k === 'loft') { if (base.loft) links.push([i, LOFT, UA]); else Hout[i] += UA; }
-      else if (!seen.has(f.key) || f.key.startsWith('op:')) {
-        seen.add(f.key);
+      else {
+        // Both rooms list every face they share; take it from the lower-numbered one only.
         const j = idx.get(f.to.id);
-        if (j !== undefined) links.push([i, j, UA]);
+        if (j !== undefined && j > i) links.push([i, j, UA]);
       }
       if (f.kind === 'window') solar.push({ node: i, area: f.area, g: f.gEff ?? g.g, orient: faceOrient(f) });
       else if (f.kind === 'ceiling' && f.to.k === 'out') roofSun(i, UA, faceOrient({ ...f, tilt: f.tilt ?? 0 }));

@@ -1,9 +1,8 @@
 // Check the model against gas bills (board 4d): a monthly degree-day model with three household knobs,
 // ASHRAE Guideline 14 fit statistics, and an energy signature from the bills themselves.
-import { MEAN } from './data';
+import { DAYS, MEAN } from './data';
 import type { HouseResult } from './house';
 
-const DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 const UK_MEAN = MEAN.reduce((a, b) => a + b, 0) / 12;
 
 export interface Bills {

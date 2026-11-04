@@ -6,6 +6,39 @@ const base = { loc: 'bir', tin: 20, dv: 4, roof: false };
 const WET = FOOTINGS[2].months;
 
 describe('runMoisture', () => {
+  it('WTA 6-5 checks: a sound wall passes frost; PIR on solid brick wets the interface and raises frost risk; mineral IWI on stone passes', () => {
+    const run = (...l: Array<[string, number]>) => runMoisture({ ...base, loc: 'man', catch: 0.15, layers: L(...l) })!;
+    const get = (r: ReturnType<typeof run>, id: string) => r.checks.filter((c) => c.id === id);
+    // uninsulated: over WTA's 30% of pores in rain, but taken as a sound wall that copes with its own exposure
+    const brick = run(['brick', 225], ['m_lime_sand', 15]);
+    expect(get(brick, 'frost').every((c) => c.level === 'ok')).toBe(true);
+    expect(get(brick, 'interface')).toHaveLength(0);
+    const pir = run(['brick', 225], ['pir', 60], ['pb', 12.5]);
+    expect(get(pir, 'frost')[0].level).toBe('fail');
+    expect(get(pir, 'frost')[0].value).toBeGreaterThan(get(brick, 'frost')[0].value);
+    expect(get(pir, 'interface')[0].level).toBe('fail');
+    const stone = run(['h_rubble_wall', 500], ['h_lime_putty_plaster', 15], ['h_diathonite', 60], ['h_lime_putty_plaster', 10]);
+    expect(stone.checks.every((c) => c.level === 'ok')).toBe(true); // interface 95–99%, but all mineral
+    // a filled cavity is not internal insulation, and is judged for frost against the empty cavity
+    const fill = run(['brick', 102], ['eps', 50], ['dblock', 100], ['m_lime_sand', 13]);
+    expect(get(fill, 'interface')).toHaveLength(0);
+    expect(get(fill, 'frost')[0].level).toBe('fail');
+    // gypsum plaster behind EPS passes 95% RH
+    const gyp = run(['brick', 225], ['m_gypsum_1200', 13], ['eps', 80], ['pb', 12.5]);
+    expect(get(gyp, 'gypsum')[0]?.level).toBe('fail');
+  });
+
+  it('a thick sound stone wall in moderate rain settles and dries each year; insulating it inside keeps it damp but no wetter year on year', () => {
+    const run = (...l: Array<[string, number]>) => runMoisture({ ...base, loc: 'man', catch: 0.15, layers: L(...l) })!;
+    const bare = run(['h_rubble_wall', 500], ['h_lime_putty_plaster', 20]);
+    expect(bare.years).toBeGreaterThan(3); // takes longer than a thin wall to settle
+    expect(bare.verdict).toBe('dries');
+    const iwi = run(['h_rubble_wall', 500], ['h_lime_putty_plaster', 15], ['h_diathonite', 60], ['h_lime_putty_plaster', 10]);
+    expect(iwi.verdict).toBe('accumulates');
+    expect(iwi.growing).toBe(false);
+    expect(iwi.low).toBeGreaterThan(2 * bare.low);
+  });
+
   it('psat matches standard values', () => {
     expect(psat(20)).toBeCloseTo(2339, -1);
     expect(psat(0)).toBeCloseTo(610.5, 1);
@@ -25,12 +58,14 @@ describe('runMoisture', () => {
     // the water balance still closes to well under 1% of the rain on the wall (~110 kg/m² a year)
     expect(Math.abs(cement.massError)).toBeLessThan(100);
     // ground moisture, no rain: cement slows the drying, so the damp rises higher and the brick holds more; with wet
-    // ground all year the lime-rendered wall still dries out each summer while the cement-rendered one never does
+    // ground all year the lime-rendered wall dries right out each summer while the cement-rendered one keeps some water
+    // (a few percent of what the brick can hold, so it still counts as drying for a wall this thick)
     const [limeW, cementW] = ['m_lime_sand', 'm_cement_sand'].map((r) => wall(r, { footing: WET }));
     expect(cementW.riseHeight).toBeGreaterThan(1.1 * limeW.riseHeight);
     expect(cementW.peak).toBeGreaterThan(1.15 * limeW.peak);
     expect(limeW.verdict).toBe('dries');
-    expect(cementW.verdict).toBe('accumulates');
+    expect(limeW.low).toBe(0);
+    expect(cementW.low).toBeGreaterThan(500);
   });
 
   it('judges drying on the driest month: solid brick in moderate rain dries out; cement-rendered hempcrete builds up', () => {

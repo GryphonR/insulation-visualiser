@@ -11,16 +11,15 @@
 // What this does NOT model: cracks or gaps letting rain past a render, air leakage, freezing, or
 // measured hourly weather. Treat it as a screening tool, not a substitute for WUFI on a real project.
 import { clamp } from '../lib/util';
-import { LOCATIONS, MAT, MEAN } from './data';
+import { DAYS, LOCATIONS, MAT, MEAN } from './data';
 import type { LayerInput } from './simulate';
 
 /** Typical UK monthly mean outdoor relative humidity, %. */
 export const RH_OUT = [89, 86, 82, 77, 74, 74, 75, 78, 82, 86, 89, 90];
-const DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 /** Simulated October first (start of the heating season) so winter wetting builds up, then dries in summer. */
 export const YEAR_ORDER = [9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7, 8];
-/** Years run; results are from the last, by which time the starting state has washed out. */
-export const YEARS = 3;
+/** Years run: until the water in each layer and in the whole wall changes by under 1% from one year to the next (WTA 6-5's settled state; thick masonry takes longer), within these bounds. Results are from the last. */
+export const MIN_YEARS = 3, MAX_YEARS = 12;
 /** Vapour permeability of still air, kg/(m s Pa). */
 const DELTA_A = 2e-10;
 const RSE = 0.04;
@@ -32,6 +31,27 @@ const BETA_E = 7.7e-9 * 17;
 const BETA_I = 7.7e-9 * 3;
 /** Liquid water held above what a layer holds at 95% RH, g/m², below which it counts as dry. */
 const DRY = 5;
+/** A layer is also dry again holding under this share of what it can take above 95% RH: thick masonry in a wet climate always keeps some (a judgement call). */
+const DRY_SHARE = 0.1;
+
+// Durability checks after WTA 6-5-14 (internal insulation), as summarised in the IN2EUROBUILD guide (CORNET, Part 2, Annex)
+// and Scheffler, Bausubstanz 2018. They judge harm layer by layer; how much water a wall holds is only described.
+/** A hard UK frost night outside, °C: the part of a masonry layer below 0 °C then (steady state, dry) is the part that can freeze. */
+const FROST_TE = -5;
+/** Frost (WTA 6-5): water may fill at most this share of the open pores of masonry that may not be frost-resistant (about half the
+ *  usual critical saturation), unless its humidity stays under 95%. Judged on the part that freezes, through the winter months. */
+const FROST_S = 0.3;
+/** Open porosity from free (capillary) saturation: capillary uptake fills about 0.7–0.8 of the pores (164 sandstones average 0.71,
+ *  Hirschwald via C. Hall; ASTM C216 caps brick's saturation coefficient at 0.78). An estimate: the data hold no porosity. */
+const CAP_TO_POR = 0.75;
+/** Where internal insulation meets the old wall, peak monthly RH (WTA 6-5): to 95% suits any materials, to 99% only those that tolerate damp, frost and rot. */
+const IFACE_OK = 0.95, IFACE_MAX = 0.99;
+/** Insulation and masonry by conductivity, W/mK; finishes inside the insulation are at most this thick, mm (thicker means it isn't internal insulation, e.g. a filled cavity). */
+const INSUL_K = 0.07, MASONRY_K = 0.3, FINISH_MM = 30;
+/** Gypsum (WTA 6-5): its humidity should stay at or under 95%. */
+const GYPSUM = /^pb$|gypsum/;
+/** Foam boards: not in WTA's damp-, frost- and rot-tolerant group for 95–99% at the interface. */
+const FOAM = /^(pir|pir_foil|eps)$|polystyrene|polyurethane|xps|kooltherm|phenolic/;
 /** Every layer starts at this RH. */
 const PHI0 = 0.8;
 /** Storage of a material with no sorption data, kg/m³ at saturation: little more than its pore air. */
@@ -81,6 +101,16 @@ export const EXPOSURES = [
   { id: 'exposed', label: 'Exposed (hill, coast, SW face)', catch: 0.3 },
   { id: 'severe', label: 'Severe', catch: 0.5 },
 ];
+/** One durability check: frost in a masonry layer, the internal-insulation interface, or a gypsum layer. */
+export interface MoistureCheck {
+  id: 'frost' | 'interface' | 'gypsum'; level: 'ok' | 'caution' | 'fail';
+  /** The layer judged (interface: the insulation's). */
+  layer: number;
+  /** Frost: peak share of the pores filled; interface and gypsum: peak RH, 0..1. */
+  value: number;
+  text: string; short: string;
+}
+
 /** Rising damp: calendar months (0 = Jan) when liquid water stands at the footing. */
 export const FOOTINGS = [
   { id: 'dry', label: 'Dry ground, or a working DPC', months: [] as number[] },
@@ -104,6 +134,8 @@ export interface MoistureInput {
   catch?: number;
   /** Months with water standing at the footing (see FOOTINGS); default none = dry. */
   footing?: number[];
+  /** Internal: this is the frost comparison run (the wall without its insulation), so don't run another. */
+  bare?: boolean;
 }
 
 export interface MoistureLayer {
@@ -175,7 +207,11 @@ export interface MoistureResult {
   peakLayer: number;
   /** Least total held at any month end of the last year, g/m² (the wall's driest point). */
   low: number;
-  /** Never dries, and its driest point is clearly (over a tenth) wetter than the year before. */
+  /** Years simulated before the yearly cycle repeated (MIN_YEARS to MAX_YEARS). */
+  years: number;
+  /** Durability checks (WTA 6-5). Rot (`absorbed`) and mould (`mouldMonths`) are reported on their own. */
+  checks: MoistureCheck[];
+  /** Still not settled after MAX_YEARS, its driest point wetter than the year before. */
   growing: boolean;
   /** Wettest organic layer in the last year: its peak moisture content, % of dry mass, against its rot threshold. */
   absorbed?: { pct: number; crit: number; layer: number };
@@ -310,6 +346,17 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
   const N = cells.length;
   const rsi = inp.roof ? 0.1 : 0.13;
   const Rtot = RSE + layers.reduce((a, l) => a + l.R, 0) + rsi;
+  // The part of each mineral capillary layer below 0 °C on a FROST_TE night: where frost can do damage.
+  const frostCells: number[][] = layers.map(() => []);
+  {
+    let r = RSE;
+    cells.forEach((c, i) => {
+      const dr = c.dx / c.lam0;
+      if (c.b && layers[c.layer].hygro === undefined && FROST_TE + ((inp.tin - FROST_TE) * (r + dr / 2)) / Rtot < 0) frostCells[c.layer].push(i);
+      r += dr;
+    });
+  }
+  const frostS = new Array<number>(n).fill(0), frostWet = new Array<boolean>(n).fill(false);
 
   // Rising damp wicks into the run of capillary layers from the outside, up to the first that isn't.
   let dampLayers = 0;
@@ -503,8 +550,9 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
   const drainedYear = new Array<number>(n).fill(0);
   const overflowYear = new Array<number>(n).fill(0);
   let hour = 0;
-  for (let y = 0; y < YEARS; y++) {
-    const last = y === YEARS - 1;
+  let last = false, settled = false, prevWater: number[] | null = null;
+  const layerWater = () => { const w = new Array<number>(n).fill(0); cells.forEach((c, i) => (w[c.layer] += wOf(c, phi[i]) * c.dx)); return w; };
+  for (let y = 0; ; y++) {
     if (last) { water0 = water(); netIn = 0; }
     const totals: number[] = [];
     for (const m of YEAR_ORDER) {
@@ -539,6 +587,13 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
         }
         for (let li = 0; li < n; li++) sumF[li] += flow[Math.floor((first[li] + first[li + 1]) / 2)] * 86.4e6; // g/m² per day, mid-layer face
         for (const [li, sets] of evalSets) for (const s of sets) if (s.length) peakMC[li] = Math.max(peakMC[li], mcOf(s));
+        if (WINTER.includes(m)) frostCells.forEach((z, li) => {
+          if (!z.length) return;
+          let w = 0, por = 0, w95 = 0;
+          for (const i of z) { const c = cells[i]; w += wOf(c, phi[i]) * c.dx; por += (c.wf / CAP_TO_POR) * c.dx; w95 += c.w95 * c.dx; }
+          frostS[li] = Math.max(frostS[li], w / por);
+          if (w / por > FROST_S && w > w95) frostWet[li] = true;
+        });
       }
       const held = heldByLayer();
       const total = held.reduce((s, v) => s + v, 0);
@@ -563,24 +618,59 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
       };
     }
     yearTotals.push(totals);
+    if (last) break;
+    // Settled (WTA 6-5): each layer's water, and the wall's, within 1% (or 1 g/m²) of the same date a year before; the next year is then recorded.
+    const wl = layerWater();
+    wl.push(wl.reduce((a, v) => a + v, 0));
+    settled = y + 2 >= MIN_YEARS && !!prevWater && wl.every((v, i) => Math.abs(v - prevWater![i]) <= 0.01 * prevWater![i] + 0.001);
+    prevWater = wl;
+    last = settled || y + 2 >= MAX_YEARS;
   }
+  const years = yearTotals.length;
 
-  const year1 = yearTotals[0], yearN = yearTotals[YEARS - 1], prev = yearTotals[YEARS - 2] ?? year1;
+  const year1 = yearTotals[0], yearN = yearTotals[years - 1], prev = yearTotals[years - 2] ?? year1;
   const peak = Math.max(...yearN);
   const peakIdx = yearN.indexOf(peak);
   const peakHeld = months[YEAR_ORDER[peakIdx]].stored;
   const peakLayer = peak >= DRY ? peakHeld.indexOf(Math.max(...peakHeld)) : -1;
   // Judged on the driest point of the year, not a fixed month: autumn rain can start rewetting a wall before September ends.
   const low = Math.min(...yearN);
-  const verdict = peak < DRY ? 'none' : low < DRY ? 'dries' : 'accumulates';
-  const dryIdx = [...Array(11)].map((_, k) => (peakIdx + 1 + k) % 12).find((i) => yearN[i] < DRY) ?? -1;
+  // Dry again at a month end when every layer holds under DRY or DRY_SHARE of its capacity above 95% RH, whichever is more.
+  const lim = new Array<number>(n).fill(DRY);
+  const cap = new Array<number>(n).fill(0);
+  cells.forEach((c) => { if (!c.air) cap[c.layer] += Math.max(0, c.wSat - c.w95) * c.dx * 1000; });
+  cap.forEach((v, li) => (lim[li] = Math.max(DRY, DRY_SHARE * v)));
+  const dryAt = (i: number) => months[YEAR_ORDER[i]].stored.every((v, li) => v < lim[li]);
+  // Never settled and the driest point still rising: getting wetter, however little it holds yet.
+  const growing = !settled && low > Math.min(...prev) + DRY;
+  const verdict = peak < DRY ? 'none' : !growing && yearN.some((_, i) => dryAt(i)) ? 'dries' : 'accumulates';
+  // Dry again: the first month after the peak with every layer under its limit; for a wall never over its limits, back under DRY (if ever).
+  const after = [...Array(11)].map((_, k) => (peakIdx + 1 + k) % 12);
+  const dryIdx = (yearN.every((_, i) => dryAt(i)) ? after.find((i) => yearN[i] < DRY) : after.find(dryAt)) ?? -1;
   const worst = hygroLayers.reduce((b, li) => (b < 0 || peakMC[li] / (layers[li].hygro as number) > peakMC[b] / (layers[b].hygro as number) ? li : b), -1);
+  // Frost is judged against the same wall without its insulation: a sound wall has shown it copes with its own winter wetness
+  // (WTA 6-5 checks the rise in saturation the insulation causes; Straube compares before and after). A filled cavity was an empty one.
+  const isIns = (l: MoistureLayer) => !l.air && (l.k ?? 1) <= INSUL_K;
+  const insulated = layers.some(isIns);
+  const before: Array<number | undefined> = [];
+  if (insulated && !inp.bare && frostWet.some(Boolean)) {
+    const base: LayerInput[] = [], at: number[] = [];
+    layers.forEach((l, li) => {
+      at[li] = -1;
+      if (!isIns(l)) { at[li] = base.length; base.push(used[li]); return; }
+      if (li === 0 || isIns(layers[li - 1])) return;
+      const o = layers[li - 1], next = layers.slice(li).find((x) => !isIns(x));
+      if (!o.air && (o.k ?? 0) >= MASONRY_K && next && !next.air && (next.k ?? 0) >= MASONRY_K && next.t > FINISH_MM) base.push({ ...used[li], mat: 'cavity' });
+    });
+    const b = runMoisture({ ...inp, layers: base, bare: true });
+    layers.forEach((_, li) => (before[li] = b?.checks.find((c) => c.id === 'frost' && c.layer === at[li])?.value));
+  }
+  const checks = durability(layers, used.map((l) => l.mat), months, frostCells.map((z) => z.reduce((a, i) => a + cells[i].dx, 0) * 1000), frostS, frostWet, insulated, before);
   const drainedTotal = drainedYear.reduce((s, v) => s + v, 0);
   const overflowTotal = overflowYear.reduce((s, v) => s + v, 0);
   return {
     layers, months, year1, yearN, peak, peakLayer, verdict, dampLayers,
-    // a tenth more than last year's driest point: less is the wall still settling from its starting state
-    low, growing: low >= DRY && low > 1.1 * Math.min(...prev) + DRY,
+    low, years, growing, checks,
     absorbed: worst >= 0 ? { pct: peakMC[worst] * 100, crit: (layers[worst].hygro as number) * 100, layer: worst } : undefined,
     drainedTotal, drainedLayer: drainedTotal >= DRY ? drainedYear.indexOf(Math.max(...drainedYear)) : -1,
     overflowTotal, overflowLayer: overflowTotal >= DRY ? overflowYear.indexOf(Math.max(...overflowYear)) : -1,
@@ -591,4 +681,50 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
     massError: (water() - water0 - netIn) * 1000,
     riseHeight: riseMax, riseLow: dampLayers ? riseMin : 0,
   };
+}
+
+const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+/** WTA 6-5 checks: frost in each masonry layer that can freeze, the interface behind internal insulation, and gypsum layers. */
+function durability(layers: MoistureLayer[], mats: string[], months: MonthState[], frostMM: number[], frostS: number[], frostWet: boolean[], insulated: boolean, before: Array<number | undefined>): MoistureCheck[] {
+  const out: MoistureCheck[] = [];
+  const n = layers.length;
+  const rhAt = (k: number) => Math.max(...months.map((s) => Math.min(1, s.p[k] / s.ps[k])));
+  frostMM.forEach((mm, li) => {
+    if (mm <= 0) return;
+    const S = frostS[li], was = before[li], name = layers[li].name;
+    // Over the limit only matters where insulation made it wetter than before (or it didn't freeze before).
+    const fail = frostWet[li] && insulated && (was === undefined || S > was + 0.01);
+    const head = `the outer ${Math.round(mm)} mm of the ${name} is below 0 °C on a ${String(FROST_TE).replace('-', '−')} °C night. Over the winter, water there fills up to ${pct(S)} of its pores`;
+    const why = S <= FROST_S ? `, within the ${pct(FROST_S)} WTA 6-5 allows for masonry of unknown frost resistance.`
+      : !frostWet[li] ? `: over ${pct(FROST_S)}, but it stays under 95% RH, which WTA 6-5 also accepts.`
+      : !insulated ? `: over the ${pct(FROST_S)} WTA 6-5 uses for masonry of unknown frost resistance, but nothing here changes its exposure, and a wall in good condition has shown it copes with this.`
+      : !fail ? `: over ${pct(FROST_S)}, but no wetter than the same wall without its insulation (${pct(was!)}), which it has shown it copes with.`
+      : was === undefined ? `: over the ${pct(FROST_S)} WTA 6-5 allows, and without the insulation this part didn't freeze.`
+      : `, up from ${pct(was)} without the insulation and over the ${pct(FROST_S)} WTA 6-5 allows for masonry of unknown frost resistance.`;
+    out.push({ id: 'frost', layer: li, value: S, level: fail ? 'fail' : 'ok', short: fail ? `frost risk in the ${name}` : '', text: `${fail ? 'Frost risk' : 'Frost'}: ${head}${why}` });
+  });
+  // Internal insulation: an insulation layer with masonry outside it and only thin finishes inside.
+  for (let k = 1; k < n; k++) {
+    const o = layers[k - 1], ins = layers[k];
+    if (o.air || ins.air || (o.k ?? 0) < MASONRY_K || (ins.k ?? 1) > INSUL_K) continue;
+    let j = k;
+    while (j < n && !layers[j].air && (layers[j].k ?? 1) <= INSUL_K) j++;
+    if (layers.slice(j).some((l) => l.t > FINISH_MM)) continue;
+    // 95–99% is WTA's category B: fine only where the materials there tolerate damp, frost and rot, as mineral ones do (not organic, gypsum or foam).
+    const mineral = [k - 1, ...Array.from({ length: j - k }, (_, x) => k + x)].every((i) => layers[i].hygro === undefined && !GYPSUM.test(mats[i]) && !FOAM.test(mats[i]));
+    const rh = rhAt(k), level = rh <= IFACE_OK ? 'ok' : rh <= IFACE_MAX ? (mineral ? 'ok' : 'caution') : 'fail';
+    out.push({
+      id: 'interface', layer: k, value: rh, level, short: level === 'ok' ? '' : `${pct(rh)} RH behind the ${ins.name}`,
+      text: `Behind the internal insulation (${ins.name} on the ${o.name}): up to ${pct(rh)} RH. WTA 6-5: up to 95% suits any materials; ${
+        rh <= IFACE_OK ? 'this is within it.' : level === 'ok' ? 'up to 99% only materials that tolerate damp, frost and rot, which mineral layers like these do.'
+          : level === 'caution' ? 'up to 99% only materials that tolerate damp, frost and rot, which organic, gypsum or foam layers here may not.' : 'over 99% condensation can form, so it needs a full design study.'}`,
+    });
+  }
+  mats.forEach((m, li) => {
+    if (!GYPSUM.test(m)) return;
+    const rh = Math.max(...months.map((s) => Math.max(s.p[li] / s.ps[li], s.p[li + 1] / s.ps[li + 1])));
+    if (rh > IFACE_OK) out.push({ id: 'gypsum', layer: li, value: Math.min(1, rh), level: 'fail', short: `gypsum over 95% RH`, text: `The ${layers[li].name} reaches ${pct(Math.min(1, rh))} RH at a face, above the 95% WTA 6-5 sets for gypsum.` });
+  });
+  return out;
 }

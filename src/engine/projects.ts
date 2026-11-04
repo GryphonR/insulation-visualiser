@@ -31,17 +31,21 @@ export function loadActive(): { id: string; project: Project } {
   return i && p ? { id: i.active, project: p } : { id: i?.active ?? 'p1', project: loadProject() };
 }
 
-export const listProjects = (): ProjectInfo[] => [...(readIndex()?.items ?? [])].sort((a, b) => b.updated - a.updated);
+/** The open project exactly as stored, unchecked: for rescuing it when it can't be shown. */
+export const rawActive = (): string | null => { try { const i = readIndex(); return i && localStorage.getItem(bodyKey(i.active)); } catch { return null; } };
 
-/** Store a project under `id` and make it the open one. */
-export function saveProject(id: string, project: Project): void {
+export const listProjects =(): ProjectInfo[] => [...(readIndex()?.items ?? [])].sort((a, b) => b.updated - a.updated);
+
+/** Store a project under `id` and make it the open one. False if the browser refused (storage full or switched off). */
+export function saveProject(id: string, project: Project): boolean {
   const i = readIndex() ?? { active: id, items: [] };
   const s0 = project.scenarios[0];
   const info: ProjectInfo = { id, name: s0.house.name || 'My house', updated: Date.now(), scenarios: project.scenarios.length, rooms: s0.house.rooms.length };
   i.active = id;
   i.items = [...i.items.filter((x) => x.id !== id), info];
-  try { localStorage.setItem(bodyKey(id), JSON.stringify(project)); } catch { return; }
+  try { localStorage.setItem(bodyKey(id), JSON.stringify(project)); } catch { return false; }
   writeIndex(i);
+  return true;
 }
 
 /** Open a stored project: makes it the active one and returns it (null if it can't be read). */

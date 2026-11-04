@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { BUILTIN_STACKUPS, layersFromTuples } from '../engine/library';
+import { layersFromTuples } from '../engine/library';
 import type { Stackup } from '../engine/library';
 import { DEFAULT_SCENARIO, buildParams, daySolar, runScenario } from '../engine/scenario';
 import type { Scenario } from '../engine/scenario';
@@ -18,11 +18,12 @@ import { useClock } from './useClock';
 const COLORS = ['#0b63b5', '#c75b00', '#2d7a4d', '#a23b72'];
 const NEW_OPTION = '__new__';
 
-const DEFAULT_SLOTS = ['preset:cavity_old', 'preset:cavity_new'];
-
 interface Props {
-  customStackups: Stackup[];
+  library: Stackup[];
   setCustomStackups: (updater: (prev: Stackup[]) => Stackup[]) => void;
+  /** Build-up ids, one per column; shared with the other Simulate views. */
+  slots: string[];
+  setSlots: (updater: (prev: string[]) => string[]) => void;
 }
 
 type Result = { stackup: Stackup; color: string; res: ReturnType<typeof runScenario> };
@@ -56,17 +57,8 @@ function TextComparison({ a, b }: { a: Result; b: Result }) {
   );
 }
 
-export function ComparePage({ customStackups, setCustomStackups, initial }: Props & { initial?: string[] }) {
-  const library = useMemo(() => [...BUILTIN_STACKUPS, ...customStackups], [customStackups]);
+export function ComparePage({ library, setCustomStackups, slots, setSlots }: Props) {
   const findStackup = (id: string) => library.find((s) => s.id === id);
-
-  const [slots, setSlots] = useState<string[]>(() => {
-    const ids = new Set(library.map((s) => s.id));
-    // Arriving from the library's tick boxes: those two, if both still exist.
-    if (initial?.length === 2 && initial.every((id) => ids.has(id))) return initial;
-    const def = DEFAULT_SLOTS.filter((id) => ids.has(id));
-    return def.length ? def : library.slice(0, 2).map((s) => s.id);
-  });
   const { res: houseRes } = useProject();
   const proj = useMemo(() => projectDay(houseRes), [houseRes]);
   const [env, setEnv] = useState<Scenario>(() => ({ ...DEFAULT_SCENARIO, ...proj?.patch }));

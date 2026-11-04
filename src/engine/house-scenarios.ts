@@ -201,14 +201,6 @@ export function loadProject(): Project {
   return newProject(loadHouse());
 }
 
-export function saveProject(p: Project): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(p));
-  } catch {
-    // Private browsing or full storage: the project just won't persist.
-  }
-}
-
 /** Ancestors first, ending with the scenario itself. */
 export function chain(p: Project, id: string): Scenario[] {
   const out: Scenario[] = [];

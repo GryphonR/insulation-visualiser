@@ -15,6 +15,8 @@
 .wf a.on { border-bottom-color: var(--accent); color: var(--ink); font-weight: 600; }
 .wf .n { font-family: var(--mono); font-size: 11px; width: 20px; height: 20px; border: 1.5px solid currentColor; display: grid; place-items: center; }
 .wf .warn { font-family: var(--mono); font-size: 11px; background: var(--accent); color: #fff; padding: 1px 6px; }
+.save-fail { margin: 0; padding: 10px 20px; background: #fdecea; color: #8a1c0b; border-bottom: 2px solid var(--accent); font-size: 14px; }
+.save-fail a { color: inherit; font-weight: 600; }
 .run { display: flex; align-items: center; gap: 8px; }
 .run .btn-secondary { min-height: 36px; padding: 0 12px; font-size: 13px; cursor: pointer; }
 .as-btn { display: inline-flex; align-items: center; text-decoration: none; color: var(--ink); }

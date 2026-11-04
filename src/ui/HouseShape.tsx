@@ -2,8 +2,8 @@ import { bearingLabel, roomEdges, shapeGeo, shapeOf, trueBearing } from '../engi
 import { useProject } from './project';
 import type { EdgeSlope, Room, RoomShape, SlopeSide } from '../engine/house';
 import { Chip } from './controls';
+import { fmt } from './hform';
 
-const fmt = (v: number, d = 1) => v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d });
 const PRESETS: Array<[string, string, [SlopeSide, SlopeSide] | null]> = [
   ['flat', 'Flat ceiling', null], ['c1', 'Coombed, one side', ['plate', 'full']], ['c2', 'Coombed, both sides', ['plate', 'plate']], ['rir', 'Room in roof', ['knee', 'knee']],
 ];
@@ -39,7 +39,7 @@ export function RoomShapeEditor({ room, setShape, outside }: {
         <polygon points={room2.map(([x, y]) => P(x, y)).join(' ')} fill="#fdf3ea" stroke="#14212b" strokeWidth={2} />
         {dorm.map((d, i) => <polygon key={`d${i}`} points={d.map(([x, y]) => P(x, y)).join(' ')} fill="#fdf3ea" stroke="#c2410c" strokeWidth={2} strokeDasharray="5 3" />)}
         {g.hc >= 1.5 && <line x1={(0 - minX) * S} x2={(g.W - minX) * S} y1={(maxY - 1.5) * S} y2={(maxY - 1.5) * S} stroke="#9a3412" strokeDasharray="2 3" />}
-        <text x={(g.W / 2 - minX) * S} y={(maxY - g.hc / 2) * S} textAnchor="middle" className="plan-s">{fmt(g.A)} m² section</text>
+        <text x={(g.W / 2 - minX) * S} y={(maxY - g.hc / 2) * S} textAnchor="middle" className="plan-s">{fmt(g.A, 1)} m² section</text>
         <text x={(g.W / 2 - minX) * S} y={(maxY - 1.5) * S - 4} textAnchor="middle" className="plan-s" fill="#9a3412">1.5 m headroom</text>
       </svg>
     );
@@ -79,7 +79,7 @@ export function RoomShapeEditor({ room, setShape, outside }: {
           </label>
         </div>
         {svg}
-        <p className="small mono">Ceiling {fmt(g.hc, 2)} m{g.hc < sh.ceiling - 0.01 ? ` (the most this pitch allows)` : ''} · flat part {fmt(g.fw, 2)} m wide · volume {fmt(g.V)} m³</p>
+        <p className="small mono">Ceiling {fmt(g.hc, 2)} m{g.hc < sh.ceiling - 0.01 ? ` (the most this pitch allows)` : ''} · flat part {fmt(g.fw, 2)} m wide · volume {fmt(g.V, 1)} m³</p>
         {[0, 1].map((i) => sh.sides[i] !== 'full' && (
           <div key={i} className="hf-row shape-side">
             <span className="small"><b>{sideName(i)} slope</b></span>
@@ -170,7 +170,7 @@ function PolyShapeEditor({ room, setShape, outside }: { room: Room; setShape: (s
             </tbody>
           </table>
         </div>
-        <p className="small mono">Volume {fmt(g.V)} m³ · flat ceiling {fmt(g.flatA, 1)} m² · slopes: {g.slopes.map((x) => `wall ${x.i + 1} ${fmt(x.area, 1)} m²`).join(', ') || 'none'}</p>
+        <p className="small mono">Volume {fmt(g.V, 1)} m³ · flat ceiling {fmt(g.flatA, 1)} m² · slopes: {g.slopes.map((x) => `wall ${x.i + 1} ${fmt(x.area, 1)} m²`).join(', ') || 'none'}</p>
         <p className="small muted">From each sloped wall the ceiling rises at the roof pitch from the knee or plate height; where slopes meet they form hips, and above the flat-ceiling height the ceiling is flat. Slopes, knee walls and dormers take their build-ups from the Build-ups defaults.</p>
       </>}
     </div>

@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
+import { customMaterials } from '../engine/data';
 import type { MoistureInput, MoistureResult } from '../engine/moisture';
 
 /**
  * Runs the moisture model for each input in a worker. Returns the last finished results (null until the
- * first) and whether a newer run is still going. A change of inputs abandons the run in progress.
+ * first) and whether a newer run is still going. A change of inputs, or of a custom material, abandons the run in progress.
  */
 export function useMoisture(inputs: Array<MoistureInput | null>): { results: Array<MoistureResult | null> | null; busy: boolean } {
-  const key = JSON.stringify(inputs);
+  const key = JSON.stringify({ inputs, mats: customMaterials() });
   const [done, setDone] = useState<{ key: string; results: Array<MoistureResult | null> } | null>(null);
   useEffect(() => {
     const w = new Worker(new URL('../engine/moisture.worker.ts', import.meta.url), { type: 'module' });

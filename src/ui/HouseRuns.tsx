@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { MONTHS, MONTHS_FULL } from '../engine/data';
+import { DAYS, MONTHS, MONTHS_FULL } from '../engine/data';
 import { calcHouse } from '../engine/house';
 import type { House } from '../engine/house';
 import { MCS_STATIONS } from '../engine/climate-mcs';
@@ -7,12 +7,12 @@ import { loadTmy } from '../engine/weather-tmy';
 import type { Tmy } from '../engine/weather-tmy';
 import type { Project, Scenario } from '../engine/house-scenarios';
 import { CASES, hourGains, simulate, yearTotals } from '../engine/house-sim';
-import type { CaseId, SimResult } from '../engine/house-sim';
+import type { CaseId } from '../engine/house-sim';
+import { useYearSim } from './useYearSim';
 import { Chip } from './controls';
+import { fmt } from './hform';
 
-const fmt = (v: number, d = 0) => v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d });
 const MASS: Array<[number, string]> = [[80, 'Light (timber frame, 80 kJ/m²K)'], [165, 'Medium (masonry, 165)'], [260, 'Heavy (solid, 260)']];
-const DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 /** Hourly lines over one or more days, with the heat delivered as a shaded area. */
 function DayChart({ out, rooms, heat, hours, start = 0 }: {
@@ -56,39 +56,52 @@ export function HouseRuns({ house, setHouse, project, ordered }: { house: House;
     return () => { live = false; };
   }, [useTmy, base.climate.station]);
   const yearTmy = useTmy && tmy?.station === base.climate.station ? tmy : undefined;
-  const sim = useMemo(() => simulate(house, caseId, base, caseId === 'year' ? yearTmy : undefined), [house, caseId, base, yearTmy]);
+  // One-day cases are quick; the year runs in a worker so editing doesn't freeze the page.
+  const quick = useMemo(() => (caseId === 'year' ? null : simulate(house, caseId, base)), [house, caseId, base]);
+  const yearRun = useYearSim(caseId === 'year' ? house : undefined, yearTmy);
   const cmpHouse = project.scenarios.find((s) => s.id === cmpId)?.house;
-  const cmp = useMemo<SimResult | null>(() => (caseId === 'year' && cmpHouse ? simulate(cmpHouse, 'year', calcHouse(cmpHouse), yearTmy) : null), [cmpHouse, caseId, yearTmy]);
-  const g = house.gains;
+  const cmp = useYearSim(caseId === 'year' ? cmpHouse : undefined, yearTmy).result;
+  const sim = quick ?? yearRun.result;
+  const caseInfo = CASES.find((c) => c.id === caseId)!;
+
+  const left = (
+    <div className="house-col">
+      <section className="card panel">
+        <h2>Test conditions</h2>
+        <div className="cases">
+          {CASES.map((c) => (
+            <button key={c.id} type="button" className={c.id === caseId ? 'node on' : 'node'} onClick={() => setCase(c.id)}>
+              <span><b>{c.name}</b><br /><span className="small muted">{c.use}</span></span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <GainsCard house={house} upd={upd} />
+    </div>
+  );
+  if (!sim) {
+    return (
+      <div className="house-grid">
+        {left}
+        <div className="house-col"><section className="card panel"><h2>{caseInfo.name}</h2><p className="muted" role="status">Running the year, hour by hour…</p></section></div>
+      </div>
+    );
+  }
+
   const ri = Math.max(0, sim.rooms.findIndex((r) => r.id === roomId));
   const room = sim.rooms[ri];
   const year = caseId === 'year' ? yearTotals(sim) : null;
   const cyear = cmp ? yearTotals(cmp) : null;
-
   const lines = sim.rooms.map((r, i) => ({ name: r.name, T: sim.T[i], on: i === ri }));
-  const caseInfo = CASES.find((c) => c.id === caseId)!;
 
   return (
     <div className="house-grid">
-      <div className="house-col">
-        <section className="card panel">
-          <h2>Test conditions</h2>
-          <div className="cases">
-            {CASES.map((c) => (
-              <button key={c.id} type="button" className={c.id === caseId ? 'node on' : 'node'} onClick={() => setCase(c.id)}>
-                <span><b>{c.name}</b><br /><span className="small muted">{c.use}</span></span>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <GainsCard house={house} upd={upd} />
-      </div>
-
+      {left}
       <div className="house-col">
         <section className="card panel">
           <div className="section-head">
-            <div><h2>{caseInfo.name}</h2><p className="muted small">{caseInfo.use}</p></div>
+            <div><h2>{caseInfo.name}</h2><p className="muted small">{caseInfo.use}{caseId === 'year' && yearRun.busy && <span role="status"> Updating…</span>}</p></div>
             {caseId === 'year' && (
               <label className="hf"><span className="eyebrow">Compare with</span>
                 <select className="select" value={cmpId} onChange={(e) => setCmp(e.target.value)}>

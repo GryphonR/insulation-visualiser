@@ -6,8 +6,8 @@ import { buildupMoisture, roomMoisture } from '../engine/house-moisture';
 import type { MoistureOptions } from '../engine/house-moisture';
 import { Chip } from './controls';
 import { useMoisture } from './useMoisture';
+import { fmt } from './hform';
 
-const fmt = (v: number, d = 0) => (Number.isFinite(v) ? v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—');
 const col = (p: number) => (p < 65 ? '#e3f0e8' : p < 75 ? '#fffefb' : p < 80 ? '#f3c9a2' : '#e9965f');
 
 /** Board 4f: surface humidity room by room on a mean January day, and the interstitial check per build-up. */
@@ -81,8 +81,10 @@ export function HouseMoisture({ house }: { house: House }) {
                 <tr key={b.id}>
                   <td>{b.name}</td>
                   <td className="small muted">{where.join(', ')}</td>
-                  <td className={r?.growing ? 'bad' : r?.verdict === 'accumulates' || r?.mouldMonths.length ? 'warn' : 'good'}>
-                    {r === undefined ? 'Calculating…' : !r ? 'not checked' : r.verdict === 'none' ? 'Stays dry' : r.verdict === 'dries' ? `Gets wet, dries by ${MONTHS[r.dryMonth ?? 0]}` : r.growing ? 'Gets wetter year on year' : 'Stays damp all year'}
+                  <td className={!r ? '' : r.growing || r.checks.some((c) => c.level === 'fail') || (r.absorbed && r.absorbed.pct > r.absorbed.crit) ? 'bad' : r.checks.some((c) => c.level === 'caution') || r.mouldMonths.length ? 'warn' : 'good'}>
+                    {r === undefined ? 'Calculating…' : !r ? 'not checked' : r.verdict === 'none' ? 'Stays dry' : r.verdict === 'dries' ? (r.dryMonth === undefined ? 'Gets wet, dries out' : `Gets wet, dries by ${MONTHS[r.dryMonth]}`) : r.growing ? 'Gets wetter year on year' : 'Stays damp all year'}
+                    {r && r.absorbed && r.absorbed.pct > r.absorbed.crit && <span className="small"> · rot risk in the {r.layers[r.absorbed.layer].name}</span>}
+                    {r && r.checks.filter((c) => c.short).map((c) => <span key={c.id + c.layer} className="small"> · {c.short}</span>)}
                     {r && r.mouldMonths.length > 0 && <span className="small"> · inner surface over 80% RH in {r.mouldMonths.map((x) => MONTHS[x]).join(', ')}</span>}
                   </td>
                 </tr>

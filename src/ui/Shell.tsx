@@ -14,7 +14,7 @@ export const SECTIONS = [
 const SUBNAV: Record<string, Array<[string, string]>> = {
   model: [['plan', 'Floor plan'], ['site', 'Site & climate'], ['storeys', 'Storeys & loft'], ['vent', 'Ventilation'], ['floor', 'Floors'], ['openings', 'Windows & doors'], ['spaces', 'Unheated spaces'], ['checks', 'Checks & history']],
   heating: [['heating', 'System & flow'], ['emitters', 'Emitters'], ['zones', 'Zones & UFH'], ['pipes', 'Pipework']],
-  buildups: [['buildups', 'Project'], ['materials', 'Materials'], ['library', 'Build-ups'], ['wall', 'Simulate'], ['compare-buildups', 'Compare build-ups']],
+  buildups: [['buildups', 'Project'], ['materials', 'Materials'], ['library', 'Build-ups'], ['wall', 'Simulate']],
   results: [['results', 'Design day'], ['year', 'Typical year & test conditions'], ['gains', 'Occupancy & gains'], ['energy', 'Energy & cost'], ['bills', 'Check against bills'], ['moisture', 'Moisture & mould'], ['report', 'Report & export']],
   scenarios: [['scenarios', 'Scenarios'], ['compare', 'Compare A vs B']],
 };
@@ -40,7 +40,7 @@ const Arrow = ({ flip }: { flip?: boolean }) => (
 );
 
 export function Shell({ route, children }: { route: string; children: ReactNode }) {
-  const { project, active, res, ordered, depth, setProject, undo, redo, canUndo, canRedo } = useProject();
+  const { project, active, res, ordered, depth, setProject, undo, redo, canUndo, canRedo, saveOk } = useProject();
   const sec = sectionOf(route);
   const sub = sec ? SUBNAV[sec] : undefined;
   const issues = heatingIssues(res);
@@ -80,6 +80,11 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
           <button type="button" className="btn-secondary icon-only" disabled={!canRedo} onClick={redo} title="Redo (Ctrl+Y)" aria-label="Redo"><Arrow flip /></button>
         </div>
       </header>
+      {!saveOk && (
+        <p className="save-fail" role="alert">
+          Not saved: this browser's storage is full. <a href={href('report')}>Export the project</a> to keep your work, then delete old projects or traced plan images.
+        </p>
+      )}
       {sub && (
         <nav className="sub" aria-label="Section pages">
           {sub.map(([id, label], i) => (
