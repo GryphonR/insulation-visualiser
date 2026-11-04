@@ -86,7 +86,7 @@ const RULES: Record<string, Rule[]> = {
 const BY_ID: Record<string, [number, number?]> = {
   // curated
   brick: [16, 10], earth: [10, 6], dblock: [100, 60], pb: [10, 4], ply: [100, 50], cavity: [1], vgap: [1],
-  cavity_le1: [1], cavity_le2: [1], vgap_le1: [1], pir: [60], eps: [60], mw: [1], wf: [5, 3],
+  cavity_le1: [1], cavity_le2: [1], vgap_le1: [1], pir: [60], pir_foil: [MU_CLOSED], eps: [60], mw: [1], wf: [5, 3],
   tlx: [MU_CLOSED], boostr: [MU_CLOSED], hemp: [5],
   // building stones (est. mid-range except where EN ISO 10456 classes apply)
   h_portland_limestone: [40, 25], h_bath_stone: [15, 10], h_cotswold_limestone: [40, 25], h_magnesian_limestone: [40, 25],

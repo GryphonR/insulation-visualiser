@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { psat, runMoisture } from './moisture';
+import { FOOTINGS, psat, runMoisture } from './moisture';
 
 const L = (...a: Array<[string, number]>) => a.map(([mat, t], i) => ({ id: i, mat, t }));
 const base = { loc: 'bir', tin: 20, dv: 4, roof: false };
+const WET = FOOTINGS[2].months;
 
 describe('runMoisture', () => {
   it('psat matches standard values', () => {
@@ -23,9 +24,57 @@ describe('runMoisture', () => {
     expect(lime.months[0].stored[1]).toBeLessThan(cement.months[0].stored[1]); // water held in the brick in January
     // the water balance still closes to well under 1% of the rain on the wall (~110 kg/m² a year)
     expect(Math.abs(cement.massError)).toBeLessThan(100);
-    // rising damp, no rain: the brick behind cement render stays damper at the render than behind lime
-    const rh = (r: ReturnType<typeof wall>) => r.months[0].p[1] / r.months[0].ps[1];
-    expect(rh(wall('m_cement_sand', { footing: 0.97 }))).toBeGreaterThan(rh(wall('m_lime_sand', { footing: 0.97 })) + 0.02);
+    // ground moisture, no rain: cement slows the drying, so the damp rises higher and the brick holds more; with wet
+    // ground all year the lime-rendered wall still dries out each summer while the cement-rendered one never does
+    const [limeW, cementW] = ['m_lime_sand', 'm_cement_sand'].map((r) => wall(r, { footing: WET }));
+    expect(cementW.riseHeight).toBeGreaterThan(1.1 * limeW.riseHeight);
+    expect(cementW.peak).toBeGreaterThan(1.15 * limeW.peak);
+    expect(limeW.verdict).toBe('dries');
+    expect(cementW.verdict).toBe('accumulates');
+  });
+
+  it('judges drying on the driest month: solid brick in moderate rain dries out; cement-rendered hempcrete builds up', () => {
+    const run = (...l: Array<[string, number]>) => runMoisture({ ...base, catch: 0.15, layers: L(...l) })!;
+    const brick = run(['brick', 225], ['m_lime_sand', 15]);
+    expect(brick.verdict).toBe('dries'); // autumn rain starts rewetting it before September ends
+    expect(brick.low).toBeLessThan(5);
+    const iwi = run(['brick', 225], ['wf', 80], ['m_lime_sand', 15]);
+    expect(iwi.growing).toBe(false); // still settling from its starting state, not building up
+    // hempcrete behind cement render gets wetter each winter (peak still rising after 3 years); behind lime it has settled
+    const hempCement = run(['m_cement_sand', 15], ['hemp', 300], ['m_lime_sand', 15]);
+    const hempLime = run(['m_lime_sand', 15], ['hemp', 300], ['m_lime_sand', 15]);
+    expect(Math.max(...hempCement.yearN)).toBeGreaterThan(1.1 * Math.max(...hempCement.year1));
+    expect(Math.max(...hempLime.yearN)).toBeLessThan(1.05 * Math.max(...hempLime.year1));
+    expect(hempCement.peak).toBeGreaterThan(1.5 * hempLime.peak);
+    expect(hempLime.verdict).toBe('dries');
+  });
+
+  it('damp footings only ever add water, never drain a rain-wetted wall', () => {
+    const wall = (months: number[]) => runMoisture({ ...base, catch: 0.15, footing: months, layers: L(['brick', 225], ['m_lime_sand', 15]) })!;
+    const [dry, damp, wet] = FOOTINGS.map((f) => wall(f.months));
+    expect(dry.riseHeight).toBe(0);
+    expect(damp.peak).toBeGreaterThan(dry.peak);
+    expect(wet.low).toBeGreaterThan(damp.low);
+    expect(wet.riseHeight).toBeGreaterThan(0.5);
+    expect(wet.riseHeight).toBeLessThan(3);
+    // winter-only damp climbs no higher than standing damp, and drains away in summer while standing damp stays up
+    expect(wet.riseHeight).toBeGreaterThanOrEqual(damp.riseHeight);
+    expect(damp.riseLow).toBeLessThan(0.1);
+    expect(wet.riseLow).toBeGreaterThan(0.5);
+    // moisture tapers up the wet zone: at 1 m below a ~1.4 m front the brick is damp, not waterlogged (wf is 188 kg/m³)
+    const brickAt1m = (wet.months[1].stored[0] / 1000 + 13.4 * 0.225) / 0.225; // held is above the 95% RH level, 13.4 kg/m³
+    expect(brickAt1m).toBeGreaterThan(0.25 * 188);
+    expect(brickAt1m).toBeLessThan(0.75 * 188);
+  });
+
+  it('a wicking layer never holds more than its free saturation: the excess runs down out of it', () => {
+    const r = runMoisture({ ...base, catch: 0.5, layers: L(['brick', 225], ['pir', 80], ['pb', 12.5]) })!;
+    const brickMax = 188 * 0.225 * 1000; // free saturation x thickness, g/m²
+    for (const m of r.months) expect(m.stored[0]).toBeLessThanOrEqual(brickMax);
+    expect(Math.max(...r.months.map((m) => m.sat[0]))).toBeCloseTo(1, 2);
+    expect(r.overflowLayer).toBe(0);
+    expect(r.overflowTotal).toBeGreaterThan(1000);
+    expect(Math.abs(r.massError)).toBeLessThan(200);
   });
 
   it('a timber frame with no vapour control wets the sheathing above the rot threshold', () => {
@@ -53,7 +102,7 @@ describe('runMoisture', () => {
   });
 
   it('rising damp wicks into the masonry, and vapour-open insulation lets it dry inward faster than PIR', () => {
-    const run = (ins: string) => runMoisture({ ...base, footing: 0.97, layers: L(['h_soft_brick', 215], [ins, 80], ['pb', 12.5]) })!;
+    const run = (ins: string) => runMoisture({ ...base, footing: WET, layers: L(['h_soft_brick', 215], [ins, 80], ['pb', 12.5]) })!;
     const pir = run('pir');
     const wf = run('wf');
     expect(pir.dampLayers).toBe(1);

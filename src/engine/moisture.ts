@@ -36,12 +36,14 @@ const DRY = 5;
 const PHI0 = 0.8;
 /** Storage of a material with no sorption data, kg/m³ at saturation: little more than its pore air. */
 const W_MIN = 0.01;
-/** Water beyond free saturation, kg/m³ per unit of RH above 1, for each kg/m³ of wf: a numerical extension (vapour pressure is capped at saturation). */
+/** Water beyond saturation in a material with no sorption data, kg/m³ per unit of RH above 1: a numerical extension (vapour pressure is capped at saturation). */
 const SUPER = 100;
 /** Moisture supplement to conductivity, % per mass-% of water (the usual default, e.g. WUFI). */
 const LAMBDA_W = 8;
-/** Rising damp is supplied by capillary flow up from the footing over this height of wall, m. */
+/** Rising damp: capillary flow up from water at the footing, averaged over this height of wall, m. */
 const DAMP_H = 1;
+/** November to March: when the ground is wettest and walls dry slowest, so damp climbs highest. */
+const WINTER = [10, 11, 0, 1, 2];
 /** Rain falls as a 6-hour shower every 60 hours (about 12 a month), carrying that month's total. */
 const SHOWER_EVERY = 60;
 const SHOWER_HOURS = 6;
@@ -66,6 +68,8 @@ const RAIN_MM = [70, 50, 52, 53, 60, 60, 58, 65, 62, 80, 75, 78];
 const RAIN_FACTOR: Record<string, number> = { lon: 0.8, bir: 1, car: 1.4, man: 1.3, bel: 1.3, edi: 0.9, abe: 0.9 };
 /** Mean daytime warming of a sunlit outer face above air temperature, K, by month (24-hour mean; it peaks at midday). */
 const SUN_K = [0.5, 1, 2, 3, 4.5, 5.5, 5.5, 4.5, 3, 1.5, 0.5, 0.3];
+/** Share of the driving rain that stays on the face rather than splashing off (the usual default, e.g. WUFI). */
+const RAIN_ADHERE = 0.7;
 /** Rain taken up in a month, mm, that counts as a fully wet outer face (for the chart). */
 const WET_CAP = 15;
 
@@ -77,11 +81,11 @@ export const EXPOSURES = [
   { id: 'exposed', label: 'Exposed (hill, coast, SW face)', catch: 0.3 },
   { id: 'severe', label: 'Severe', catch: 0.5 },
 ];
-/** Rising damp: relative humidity (fraction) of the masonry at the footing. */
+/** Rising damp: calendar months (0 = Jan) when liquid water stands at the footing. */
 export const FOOTINGS = [
-  { id: 'dry', label: 'Dry footings', rh: 0 },
-  { id: 'damp', label: 'Damp (occasional)', rh: 0.85 },
-  { id: 'wet', label: 'Wet (standing damp)', rh: 0.97 },
+  { id: 'dry', label: 'Dry ground, or a working DPC', months: [] as number[] },
+  { id: 'damp', label: 'Wet in winter, no DPC', months: WINTER },
+  { id: 'wet', label: 'Wet all year, no DPC', months: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] },
 ];
 
 export function psat(T: number): number {
@@ -98,8 +102,8 @@ export interface MoistureInput {
   roof: boolean;
   /** Driving-rain catch ratio (see EXPOSURES); default 0 = no rain wetting. */
   catch?: number;
-  /** Rising-damp RH fraction at the footing (see FOOTINGS); default 0 = dry. */
-  footing?: number;
+  /** Months with water standing at the footing (see FOOTINGS); default none = dry. */
+  footing?: number[];
 }
 
 export interface MoistureLayer {
@@ -149,6 +153,14 @@ export interface MonthState {
   flux: number[];
   /** How much rain the outer face took up this month, 0..1 (1 = WET_CAP mm or more). */
   wetFace: number;
+  /** Mean height of the ground moisture front this month, m (0 with dry ground). */
+  front: number;
+  /** Whether water is at the base of the wall this month, and how fast the wet zone dries out through its outer face and inward (into the room or the layer behind it), mm a day. */
+  groundWet: boolean;
+  evapOut: number;
+  evapIn: number;
+  /** How full of water each layer is at month end, 0..1 of its free saturation (0 for layers with no capillary data). */
+  sat: number[];
 }
 
 export interface MoistureResult {
@@ -161,17 +173,22 @@ export interface MoistureResult {
   /** Peak total held in the last year, g/m², and the layer holding most of it then (-1 if none). */
   peak: number;
   peakLayer: number;
-  /** Still wetter at the end of the last year than the year before. */
+  /** Least total held at any month end of the last year, g/m² (the wall's driest point). */
+  low: number;
+  /** Never dries, and its driest point is clearly (over a tenth) wetter than the year before. */
   growing: boolean;
   /** Wettest organic layer in the last year: its peak moisture content, % of dry mass, against its rot threshold. */
   absorbed?: { pct: number; crit: number; layer: number };
   /** Last-year water drained from cavities, g/m², in total and the cavity layer that shed the most (-1 if none). */
   drainedTotal: number;
+  /** Last-year water that ran down out of a wicking layer already full to its free saturation, g/m², in total and the layer it ran out of most (-1 if none). */
+  overflowTotal: number;
+  overflowLayer: number;
   drainedLayer: number;
   /** Number of outer layers (base masonry) that rising damp can wick into; 0 if none. */
   dampLayers: number;
   verdict: 'none' | 'dries' | 'accumulates';
-  /** Calendar month (0..11) in which the last year's water first falls back to dry after the peak. */
+  /** Calendar month (0..11) in which the last year's water first falls back to dry after the peak, counting on round the year. */
   dryMonth?: number;
   mouldMonths: number[];
   /** Layers with no vapour data (treated as open, mu 1), and with no capillary/storage data (treated as non-capillary). */
@@ -181,6 +198,9 @@ export interface MoistureResult {
   cutAtVent: boolean;
   /** Solver self-check: last year's change in stored water minus the net water in, g/m² (should be near 0). */
   massError: number;
+  /** Highest and lowest the rising damp front reaches over the last year (sharp-front theory), m; 0 with dry footings. */
+  riseHeight: number;
+  riseLow: number;
 }
 
 /** One slice of a layer. */
@@ -194,14 +214,16 @@ interface Cell {
   wSat: number; w95: number;
 }
 
+/** dw/dφ beyond saturation: for a sorption curve, its own slope at φ = 1 so storage has no kink there (the solver's linearised storage stays mass-conserving as a slice crosses it). */
+const superSlope = (c: Cell) => (c.b ? (c.wf * c.b) / (c.b - 1) : SUPER * Math.max(c.wSat, 1));
 /** Moisture content at RH f, kg/m³; above f = 1, free water beyond saturation. */
 function wOf(c: Cell, f: number): number {
-  if (f > 1) return c.wSat + SUPER * Math.max(c.wSat, 1) * (f - 1);
+  if (f > 1) return c.wSat + superSlope(c) * (f - 1);
   return c.b ? (c.wf * (c.b - 1) * f) / (c.b - f) : W_MIN * f;
 }
 /** dw/dφ, kg/m³. */
 function capOf(c: Cell, f: number): number {
-  if (f > 1) return SUPER * Math.max(c.wSat, 1);
+  if (f > 1) return superSlope(c);
   return c.b ? (c.wf * (c.b - 1) * c.b) / (c.b - f) ** 2 : W_MIN;
 }
 /** Liquid conductivity on the RH gradient, Dφ = Dw dw/dφ, kg/(m s). Künzel: Dws = 3.8 (A/wf)² 1000^(w/wf - 1); redistribution (no rain) a tenth of that. */
@@ -210,6 +232,12 @@ function dPhi(c: Cell, f: number, suction: boolean): number {
   const w = Math.min(wOf(c, f), c.wf);
   const dws = 3.8 * (c.A / c.wf) ** 2 * Math.exp(6.9078 * (w / c.wf - 1));
   return (suction ? dws : dws / 10) * capOf(c, f);
+}
+/** Kirchhoff potential ∫Dws dw from dry to w, kg/(m s): the capillary flow over 1 m between two moisture contents is the difference. */
+function kirch(c: Cell, w: number): number {
+  if (!c.A) return 0;
+  const L = 6.9078; // ln 1000
+  return ((3.8 * (c.A / c.wf) ** 2 * c.wf) / L) * (Math.exp(L * (Math.min(w, c.wf) / c.wf - 1)) - Math.exp(-L));
 }
 const deltaOf = (c: Cell, f: number) => DELTA_A / (c.mu + (c.muWet - c.mu) * clamp((f - 0.5) / 0.4, 0, 1));
 const lamOf = (c: Cell, w: number) => (c.air ? c.lam0 : c.lam0 * (1 + (LAMBDA_W * w) / c.rho));
@@ -285,27 +313,46 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
 
   // Rising damp wicks into the run of capillary layers from the outside, up to the first that isn't.
   let dampLayers = 0;
-  const footing = inp.footing ?? 0;
-  if (footing > 0) while (dampLayers < n && layers[dampLayers].A > 0) dampLayers++;
+  const footMonths = inp.footing ?? [];
+  if (footMonths.length) while (dampLayers < n && layers[dampLayers].A > 0) dampLayers++;
   const dampCells = first[dampLayers];
+  // Sharp-front rising damp (Hall & Hoff): a saturated wet zone of height h, fed by capillary inflow at the base and
+  // drying through its faces at e per m² of wall: d(h²)/dt = S²/θ² - 2 e h² / (θ b), with S the sorptivity, θ the
+  // saturated water content and b the thickness of the wicking run. Steady state h = S √(b / (2 θ e)).
+  const run = layers.slice(0, dampLayers).map((l, i) => ({ t: l.t / 1000, A: l.A, wf: MAT[used[i].mat].wf ?? 0 }));
+  const runB = run.reduce((s, l) => s + l.t, 0);
+  const runS = runB && run.reduce((s, l) => s + l.A * l.t, 0) / runB / 1000, runTheta = runB && run.reduce((s, l) => s + l.wf * l.t, 0) / runB / 1000;
+  let front2 = 0; // h², m²
+  let eOut = 0, eIn = 0; // the wet zone's drying out through each edge over the last step, kg/(m² s)
+  let riseMax = 0, riseMin = Infinity;
 
   // State.
-  const phi = new Float64Array(N).map((_, i) => (i < dampCells ? Math.max(PHI0, footing) : PHI0));
+  const phi = new Float64Array(N).fill(PHI0);
   const T = new Float64Array(N).fill(inp.tin - 5);
   const vap = new Float64Array(N + 1); // vapour flow across each face, kg/(m² s), inward positive (face i is between cell i-1 and i)
   const flow = new Float64Array(N + 1); // vapour + liquid
   // Work arrays.
   const a = new Float64Array(N), bb = new Float64Array(N), cc = new Float64Array(N), d = new Float64Array(N), x = new Float64Array(N);
   const ps = new Float64Array(N), pk = new Float64Array(N), wn = new Float64Array(N), Gv = new Float64Array(N + 1), Gl = new Float64Array(N + 1);
-  const ap = new Float64Array(N), cp = new Float64Array(N), rv = new Float64Array(N), rl = new Float64Array(N), gd = new Float64Array(N);
+  const ap = new Float64Array(N), cp = new Float64Array(N), al = new Float64Array(N), cl = new Float64Array(N), rv = new Float64Array(N), rl = new Float64Array(N);
+  // Ground moisture tapers up the wet zone: evaporation draws water off evenly with height, so the upward flow falls
+  // linearly to nothing at the front h and the Kirchhoff potential K follows K(z) = K(wf) (1 - z/h)²: saturated at the
+  // base, dry at the front. The slice at z = DAMP_H is fed towards that value, not towards saturation, over the distance
+  // the profile falls to nothing in, h - z (so as the front comes down to z the supply settles at K(wf) / h²).
+  let taper = 0, ell2 = 1;
+  /** Ground moisture into slice i, kg/(m² s), when its water content is w (one way only). */
+  const dampSupply = (i: number, w: number) => Math.max(0, taper * kirch(cells[i], cells[i].wf) - kirch(cells[i], w)) * cells[i].dx / ell2;
   /** Water into the wall over the last step (dampIn, kg/(m² s)) and over the last year (netIn, kg/m²), for the mass balance. */
   let dampIn = 0, netIn = 0;
   const half = (i: number, k: number) => cells[i].dx / 2 / k;
 
-  interface Wx { te: number; tsa: number; pe: number; pi: number; rain: number }
+  interface Wx { te: number; tsa: number; pe: number; pi: number; rain: number; damp: boolean }
 
   /** One implicit step of dt seconds; false if the moisture iteration didn't converge. */
   const step = (dt: number, wx: Wx): boolean => {
+    const feeding = wx.damp && front2 > DAMP_H * DAMP_H; // the 1 m slice is only fed once the damp front has risen past it
+    taper = feeding ? (1 - DAMP_H / Math.sqrt(front2)) ** 2 : 0;
+    ell2 = feeding ? Math.max(1e-4, (Math.sqrt(front2) - DAMP_H) ** 2) : 1; // floor: 1 cm, only to keep the solve well-conditioned
     // Heat, with the latent heat of the vapour condensing or evaporating in each cell (from the last step).
     for (let i = 0; i < N; i++) wn[i] = wOf(cells[i], phi[i]);
     for (let i = 0; i < N; i++) {
@@ -329,9 +376,11 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
         const sat = pk[i] > 1;
         ap[i] = sat ? 0 : ps[i]; // p = ap φ + cp: vapour pressure is capped at saturation
         cp[i] = sat ? ps[i] : 0;
+        al[i] = sat ? 0 : 1; // and so is the RH driving capillary flow: full pores neither draw in nor push on liquid water
+        cl[i] = sat ? 1 : 0;
       }
       // Half-cell resistances to vapour and liquid flow, once per cell.
-      for (let i = 0; i < N; i++) { rv[i] = half(i, deltaOf(cells[i], pk[i])); const dl = dPhi(cells[i], pk[i], suction); rl[i] = dl > 0 ? half(i, dl) : 0; }
+      for (let i = 0; i < N; i++) { rv[i] = half(i, deltaOf(cells[i], pk[i])); const dl = dPhi(cells[i], Math.min(pk[i], 1), suction); rl[i] = dl > 0 ? half(i, dl) : 0; }
       Gv[0] = 1 / (1 / BETA_E + rv[0]);
       Gv[N] = 1 / (1 / BETA_I + rv[N - 1]);
       Gl[0] = Gl[N] = 0;
@@ -344,10 +393,13 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
         let diag = C, rhs = (c.dx / dt) * (wn[i] - wOf(c, pk[i])) + C * pk[i];
         // west face (f = i) and east face (f = i + 1)
         if (i === 0) { diag += Gv[0] * ap[0]; rhs += Gv[0] * (wx.pe - cp[0]) + wx.rain; a[i] = 0; }
-        else { diag += Gl[i] + Gv[i] * ap[i]; a[i] = -(Gl[i] + Gv[i] * ap[i - 1]); rhs += Gv[i] * (cp[i - 1] - cp[i]); }
+        else { diag += Gl[i] * al[i] + Gv[i] * ap[i]; a[i] = -(Gl[i] * al[i - 1] + Gv[i] * ap[i - 1]); rhs += Gl[i] * (cl[i - 1] - cl[i]) + Gv[i] * (cp[i - 1] - cp[i]); }
         if (i === N - 1) { diag += Gv[N] * ap[i]; rhs += Gv[N] * (wx.pi - cp[i]); cc[i] = 0; }
-        else { diag += Gl[i + 1] + Gv[i + 1] * ap[i]; cc[i] = -(Gl[i + 1] + Gv[i + 1] * ap[i + 1]); rhs += Gv[i + 1] * (cp[i + 1] - cp[i]); }
-        if (i < dampCells) { const g = (gd[i] = (dPhi(c, Math.max(pk[i], footing), true) * c.dx) / (DAMP_H * DAMP_H)); diag += g; rhs += g * footing; }
+        else { diag += Gl[i + 1] * al[i] + Gv[i + 1] * ap[i]; cc[i] = -(Gl[i + 1] * al[i + 1] + Gv[i + 1] * ap[i + 1]); rhs += Gl[i + 1] * (cl[i + 1] - cl[i]) + Gv[i + 1] * (cp[i + 1] - cp[i]); }
+        if (feeding && i < dampCells) {
+          const s = dampSupply(i, wOf(c, pk[i]));
+          if (s > 0) { const g = (dPhi(c, Math.min(pk[i], 1), true) * c.dx) / ell2; diag += g; rhs += s + g * pk[i]; } // s linearised in φ
+        }
         bb[i] = diag;
         d[i] = rhs;
       }
@@ -362,10 +414,10 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
     vap[0] = Gv[0] * (wx.pe - p(0));
     vap[N] = Gv[N] * (p(N - 1) - wx.pi);
     for (let f = 1; f < N; f++) vap[f] = Gv[f] * (p(f - 1) - p(f));
-    for (let f = 0; f <= N; f++) flow[f] = vap[f] + (f > 0 && f < N ? Gl[f] * (phi[f - 1] - phi[f]) : 0);
+    for (let f = 0; f <= N; f++) flow[f] = vap[f] + (f > 0 && f < N ? Gl[f] * (Math.min(phi[f - 1], 1) - Math.min(phi[f], 1)) : 0);
     flow[0] += wx.rain;
     dampIn = 0;
-    for (let i = 0; i < dampCells; i++) dampIn += gd[i] * (footing - phi[i]);
+    if (feeding) for (let i = 0; i < dampCells; i++) dampIn += dampSupply(i, wOf(cells[i], phi[i]));
     return true;
   };
 
@@ -380,7 +432,7 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
   /** Advance dt seconds, halving the step where the moisture iteration struggles (sudden rain). */
   const save = { phi: new Float64Array(N), T: new Float64Array(N), vap: new Float64Array(N + 1) };
   let runoff = 0;
-  const drainedNow = new Float64Array(n);
+  const drainedNow = new Float64Array(n), overflowNow = new Float64Array(n);
   const advance = (dt: number, wx: Wx, depth = 0) => {
     save.phi.set(phi); save.T.set(T); save.vap.set(vap);
     if (!step(dt, wx) && depth < 5) {
@@ -390,10 +442,27 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
       return;
     }
     netIn += (flow[0] - flow[N] + dampIn) * dt;
+    if (dampLayers) {
+      // Drying of the wet zone: what the run's two edges would lose if wet, so it depends on the weather and the build-up, not on how wet this slice happens to be.
+      const inner = dampCells === N ? Gv[N] * Math.max(0, ps[N - 1] - wx.pi) : Gv[dampCells] * Math.max(0, ps[dampCells - 1] - Math.min(phi[dampCells], 1) * ps[dampCells]);
+      eOut = Gv[0] * Math.max(0, ps[0] - wx.pe);
+      eIn = inner;
+      const e = (eOut + eIn) / 1000; // m/s of water
+      const k = (2 * e) / (runTheta * runB), src = wx.damp ? (runS / runTheta) ** 2 : 0;
+      front2 = k > 0 ? src / k + (front2 - src / k) * Math.exp(-k * dt) : front2 + src * dt;
+    }
     if (wx.rain > 0) { const r = shed(0); runoff += r; netIn -= r; }
     for (let i = 0; i < N; i++) if (cells[i].air) { const r = shed(i); drainedNow[cells[i].layer] += r; netIn -= r; }
+    // Capillary pores can't hold water beyond free saturation: the rest runs down out of the wall. (Layers with no
+    // storage data still keep condensate as free water, as there is nothing to say how it would move.)
+    for (let i = 0; i < N; i++) if (cells[i].b) { const r = shed(i); overflowNow[cells[i].layer] += r; netIn -= r; }
   };
 
+  const satByLayer = (): number[] => {
+    const w = new Array<number>(n).fill(0), cap = new Array<number>(n).fill(0);
+    cells.forEach((c, i) => { if (c.b) { w[c.layer] += wOf(c, phi[i]) * c.dx; cap[c.layer] += c.wf * c.dx; } });
+    return w.map((v, li) => (cap[li] ? Math.min(1, v / cap[li]) : 0));
+  };
   const heldByLayer = (): number[] => {
     const h = new Array<number>(n).fill(0);
     for (let i = 0; i < N; i++) {
@@ -432,6 +501,7 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
   const months: MonthState[] = new Array(12);
   const yearTotals: number[][] = [];
   const drainedYear = new Array<number>(n).fill(0);
+  const overflowYear = new Array<number>(n).fill(0);
   let hour = 0;
   for (let y = 0; y < YEARS; y++) {
     const last = y === YEARS - 1;
@@ -439,10 +509,12 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
     const totals: number[] = [];
     for (const m of YEAR_ORDER) {
       const hrs = DAYS[m] * 24;
-      const rainRate = rainHours[m] ? (RAIN_MM[m] * (RAIN_FACTOR[loc.id] ?? 1) * catchR) / rainHours[m] / 3600 : 0; // kg/(m² s) while it rains
+      const rainRate = rainHours[m] ? (RAIN_MM[m] * (RAIN_FACTOR[loc.id] ?? 1) * catchR * RAIN_ADHERE) / rainHours[m] / 3600 : 0; // kg/(m² s) while it rains
       const sumT = new Array<number>(n + 1).fill(0), sumP = new Array<number>(n + 1).fill(0), sumF = new Array<number>(n).fill(0);
+      let sumFront = 0, sumOut = 0, sumIn = 0;
       let rainIn = 0;
       drainedNow.fill(0);
+      overflowNow.fill(0);
       for (let k = 0; k < hrs; k += STEP_H, hour += STEP_H) {
         const f = (k + STEP_H / 2) / hrs;
         const te = interp(MEAN, m, f) + loc.dT;
@@ -455,7 +527,8 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
         const pi = Math.min(pe0 + dvh * R_VAPOUR * (inp.tin + 273.15), psat(inp.tin));
         const rain = raining ? rainRate : 0;
         runoff = 0;
-        advance(STEP_H * 3600, { te, tsa: te + sun, pe: raining ? Math.max(rh, 0.95) * psat(te) : pe0, pi, rain });
+        advance(STEP_H * 3600, { te, tsa: te + sun, pe: raining ? Math.max(rh, 0.95) * psat(te) : pe0, pi, rain, damp: footMonths.includes(m) });
+        if (last && dampLayers) { const h = Math.sqrt(front2); riseMax = Math.max(riseMax, h); riseMin = Math.min(riseMin, h); sumFront += h; sumOut += eOut; sumIn += eIn; }
         if (!last) continue;
         rainIn += rain * STEP_H * 3600 - runoff;
         // Monthly means at the layer boundaries: the cells either side of each.
@@ -472,6 +545,7 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
       totals.push(total);
       if (!last) continue;
       drainedNow.forEach((v, li) => (drainedYear[li] += v * 1000));
+      overflowNow.forEach((v, li) => (overflowYear[li] += v * 1000));
       const te = MEAN[m] + loc.dT, ti = inp.tin;
       const pe = (RH_OUT[m] / 100) * psat(te);
       const dvm = ((inp.dv / 1000) * (20 - clamp(te, 0, 20))) / 20;
@@ -484,7 +558,8 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
       months[m] = {
         month: m, te, ti, rhi: (pi / psat(ti)) * 100, rhSurf: (pi / psat(tSurf)) * 100,
         T: Tm, S, p: sumP.map((v) => v / steps), ps: Tm.map(psat), stored: held, total, rhe: RH_OUT[m], pe,
-        drained: Array.from(drainedNow, (v) => v * 1000), flux: sumF.map((v) => v / steps), wetFace: clamp(rainIn / WET_CAP, 0, 1),
+        drained: Array.from(drainedNow, (v) => v * 1000), flux: sumF.map((v) => v / steps), wetFace: clamp(rainIn / WET_CAP, 0, 1), front: sumFront / steps,
+        groundWet: footMonths.includes(m), sat: satByLayer(), evapOut: (sumOut / steps) * 86400, evapIn: (sumIn / steps) * 86400,
       };
     }
     yearTotals.push(totals);
@@ -495,19 +570,25 @@ export function runMoisture(inp: MoistureInput): MoistureResult | null {
   const peakIdx = yearN.indexOf(peak);
   const peakHeld = months[YEAR_ORDER[peakIdx]].stored;
   const peakLayer = peak >= DRY ? peakHeld.indexOf(Math.max(...peakHeld)) : -1;
-  const verdict = peak < DRY ? 'none' : yearN[11] < DRY ? 'dries' : 'accumulates';
-  const dryIdx = yearN.findIndex((v, i) => i > peakIdx && v < DRY);
+  // Judged on the driest point of the year, not a fixed month: autumn rain can start rewetting a wall before September ends.
+  const low = Math.min(...yearN);
+  const verdict = peak < DRY ? 'none' : low < DRY ? 'dries' : 'accumulates';
+  const dryIdx = [...Array(11)].map((_, k) => (peakIdx + 1 + k) % 12).find((i) => yearN[i] < DRY) ?? -1;
   const worst = hygroLayers.reduce((b, li) => (b < 0 || peakMC[li] / (layers[li].hygro as number) > peakMC[b] / (layers[b].hygro as number) ? li : b), -1);
   const drainedTotal = drainedYear.reduce((s, v) => s + v, 0);
+  const overflowTotal = overflowYear.reduce((s, v) => s + v, 0);
   return {
     layers, months, year1, yearN, peak, peakLayer, verdict, dampLayers,
-    growing: yearN[11] >= DRY && yearN[11] > prev[11] + DRY,
+    // a tenth more than last year's driest point: less is the wall still settling from its starting state
+    low, growing: low >= DRY && low > 1.1 * Math.min(...prev) + DRY,
     absorbed: worst >= 0 ? { pct: peakMC[worst] * 100, crit: (layers[worst].hygro as number) * 100, layer: worst } : undefined,
     drainedTotal, drainedLayer: drainedTotal >= DRY ? drainedYear.indexOf(Math.max(...drainedYear)) : -1,
+    overflowTotal, overflowLayer: overflowTotal >= DRY ? overflowYear.indexOf(Math.max(...overflowYear)) : -1,
     dryMonth: dryIdx >= 0 ? YEAR_ORDER[dryIdx] : undefined,
     mouldMonths: months.filter((s) => s.rhSurf > MOULD_RH).map((s) => s.month),
     missing, noCapillary,
     cutAtVent: ventAt >= 0,
     massError: (water() - water0 - netIn) * 1000,
+    riseHeight: riseMax, riseLow: dampLayers ? riseMin : 0,
   };
 }

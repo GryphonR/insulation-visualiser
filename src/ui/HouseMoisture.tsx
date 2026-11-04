@@ -73,7 +73,7 @@ export function HouseMoisture({ house }: { house: House }) {
 
         <section className="card panel">
           <h2>Moisture inside the build-ups</h2>
-          <p className="muted small">The app's year-long heat and moisture simulation (vapour and capillary water, EN 15026 style) for each outside wall and roof in use, at 20 °C inside with a typical moisture load and no rain or rising damp. Open it in "Moisture over a year" to vary rain, rising damp and loads.</p>
+          <p className="muted small">The app's year-long heat and moisture simulation (vapour and capillary water, EN 15026 style) for each outside wall and roof in use, at 20 °C inside with a typical moisture load, no rain, and dry ground or a working DPC. Open it in "Moisture over a year" to vary rain, ground moisture and loads.</p>
           <table className="h-table">
             <thead><tr><th>Build-up</th><th>Used in</th><th>Result</th></tr></thead>
             <tbody>
@@ -81,8 +81,8 @@ export function HouseMoisture({ house }: { house: House }) {
                 <tr key={b.id}>
                   <td>{b.name}</td>
                   <td className="small muted">{where.join(', ')}</td>
-                  <td className={r?.verdict === 'accumulates' ? 'bad' : r?.mouldMonths.length ? 'warn' : 'good'}>
-                    {r === undefined ? 'Calculating…' : !r ? 'not checked' : r.verdict === 'none' ? 'Stays dry' : r.verdict === 'dries' ? `Gets wet, dries by ${MONTHS[r.dryMonth ?? 0]}` : r.growing ? 'Gets wetter year on year' : "Doesn't dry out"}
+                  <td className={r?.growing ? 'bad' : r?.verdict === 'accumulates' || r?.mouldMonths.length ? 'warn' : 'good'}>
+                    {r === undefined ? 'Calculating…' : !r ? 'not checked' : r.verdict === 'none' ? 'Stays dry' : r.verdict === 'dries' ? `Gets wet, dries by ${MONTHS[r.dryMonth ?? 0]}` : r.growing ? 'Gets wetter year on year' : 'Stays damp all year'}
                     {r && r.mouldMonths.length > 0 && <span className="small"> · inner surface over 80% RH in {r.mouldMonths.map((x) => MONTHS[x]).join(', ')}</span>}
                   </td>
                 </tr>

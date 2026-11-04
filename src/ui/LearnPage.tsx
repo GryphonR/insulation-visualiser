@@ -33,16 +33,16 @@ const SECTIONS: Section[] = [
   { id: 'moist-vapour', title: 'Vapour, humidity and vapour pressure', group: 'Moisture: the ideas' },
   { id: 'moist-mu', title: 'Vapour resistance: µ and sd', group: 'Moisture: the ideas' },
   { id: 'moist-condensation', title: 'Condensation: surface and interstitial', group: 'Moisture: the ideas' },
-  { id: 'moist-absorb', title: 'Absorbent and breathable materials', group: 'Moisture: the ideas' },
-  { id: 'moist-rain', title: 'Rain and rising damp', group: 'Moisture: the ideas' },
+  { id: 'moist-absorb', title: 'Absorbent and wicking materials', group: 'Moisture: the ideas' },
+  { id: 'moist-rain', title: 'Rain and ground moisture', group: 'Moisture: the ideas' },
   { id: 'moist-reading', title: 'Reading the moisture charts', group: 'Moisture: the ideas' },
   { id: 'msim-overview', title: 'The moisture simulation at a glance', group: 'Moisture: under the hood' },
   { id: 'msim-climate', title: '1. Building the year', group: 'Moisture: under the hood' },
-  { id: 'msim-profile', title: '2. Temperature and vapour pressure through the wall', group: 'Moisture: under the hood' },
-  { id: 'msim-saturation', title: '3. Where it saturates', group: 'Moisture: under the hood' },
-  { id: 'msim-balance', title: '4. Condensing and drying through the year', group: 'Moisture: under the hood' },
-  { id: 'msim-wet', title: '5. Wet-cup µ and absorbent layers', group: 'Moisture: under the hood' },
-  { id: 'msim-sources', title: '6. Rain and rising damp as vapour sources', group: 'Moisture: under the hood' },
+  { id: 'msim-profile', title: '2. Slices, heat and vapour', group: 'Moisture: under the hood' },
+  { id: 'msim-saturation', title: '3. Storing water: the sorption curve', group: 'Moisture: under the hood' },
+  { id: 'msim-balance', title: '4. Capillary flow', group: 'Moisture: under the hood' },
+  { id: 'msim-wet', title: '5. Solving each step', group: 'Moisture: under the hood' },
+  { id: 'msim-sources', title: '6. Rain, ground moisture and cavities', group: 'Moisture: under the hood' },
   { id: 'msim-results', title: '7. Working out the results', group: 'Moisture: under the hood' },
   { id: 'mlimits', title: 'What the moisture model leaves out', group: 'Moisture: under the hood' },
   { id: 'glossary', title: 'Glossary', group: 'Reference' },
@@ -648,17 +648,17 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
             The heat simulation asks how warm the wall gets. The <b>Moisture over a year</b> tab asks a different question: <em>can water build up inside this wall?</em> Water in a wall rots timber, damages brick and stone when it freezes, ruins insulation and grows mould, and many problems with insulating old buildings come from getting this wrong.
           </p>
           <p>
-            You pick up to four build-ups, set a location, the room temperature, how much moisture the household produces, how exposed the wall is to rain and whether the footings are damp. The tool then runs through a typical UK year, month by month, and shows:
+            You pick up to four build-ups, set a location, the room temperature, how much moisture the household produces, how exposed the wall is to rain and whether the ground at its base is wet. The tool then simulates a typical UK year in two-hour steps, three years running, and shows:
           </p>
           <ul>
-            <li><b>Whether vapour condenses inside the wall,</b> where, and how much water is held.</li>
-            <li><b>Whether that water dries out again</b> in the summer, or builds up from one year to the next.</li>
-            <li><b>Whether the inner surface is damp enough for mould.</b></li>
-            <li><b>Which way vapour is moving</b> through each layer, month by month, with animated arrows.</li>
+            <li><b>Whether liquid water collects inside the wall,</b> in which layer, and how much, whether it comes from indoor vapour condensing, rain soaking in or damp rising from the ground.</li>
+            <li><b>Whether that water dries out again</b> in the summer, or stays from one year to the next.</li>
+            <li><b>Whether timber and fibre layers get wet enough to rot,</b> and whether the inner surface is damp enough for mould.</li>
+            <li><b>Which way moisture is moving</b> through each layer, month by month, with animated arrows.</li>
           </ul>
-          <Callout title="A screening tool, not a moisture simulation">
+          <Callout title="A screening tool, not a full hygrothermal study">
             <p>
-              It treats water purely as vapour moving by diffusion, using monthly averages. It does not track liquid water soaking through stone or brick, which matters a great deal in old buildings. Use it to compare build-ups and to spot ones worth worrying about. See <button type="button" className="inline-link" onClick={() => jump('mlimits')}>What the moisture model leaves out</button>.
+              It follows both vapour and liquid water, with each material's own ability to wick and store moisture, so a lime render and a cement render behave differently. But the weather is a typical year built from monthly averages, the material data are typical values rather than measured for a product, and cracks and air leaks are not modelled. Use it to compare build-ups and to spot ones worth worrying about. See <button type="button" className="inline-link" onClick={() => jump('mlimits')}>What the moisture model leaves out</button>.
             </p>
           </Callout>
         </section>
@@ -683,7 +683,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
             <li>Inside: 20 °C at 50% RH is about <b>1170 Pa</b>, and the household keeps adding more (cooking, breathing, washing).</li>
           </ul>
           <p>
-            The room has roughly half as much vapour again as the air outside, so vapour drifts out through the wall. In summer the difference is small. It only reverses when something raises the vapour pressure on the outside, for example sun shining on a rain-soaked wall. See <button type="button" className="inline-link" onClick={() => jump('moist-rain')}>Rain and rising damp</button>.
+            The room has roughly half as much vapour again as the air outside, so vapour drifts out through the wall. In summer the difference is small. It only reverses when something raises the vapour pressure on the outside, for example sun shining on a rain-soaked wall. See <button type="button" className="inline-link" onClick={() => jump('moist-rain')}>Rain and ground moisture</button>.
           </p>
         </section>
 
@@ -700,6 +700,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
               <tr><td>Brick, lime plaster</td><td>about 10–16</td></tr>
               <tr><td>Softwood timber</td><td>about 50</td></tr>
               <tr><td>EPS, unfaced PIR foam board</td><td>about 50–60</td></tr>
+              <tr><td>Foil-faced PIR board</td><td>effectively infinite (the foil facings)</td></tr>
               <tr><td>Hard, dense limestone</td><td>about 200 (soft limestones are far lower)</td></tr>
               <tr><td>Metal, glass, foil-faced products</td><td>effectively infinite</td></tr>
             </tbody>
@@ -709,7 +710,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
           </p>
           <Eq>sd = µ × thickness    (m)</Eq>
           <p>
-            100 mm of unfaced PIR (µ 60) is sd = 6 m: as much resistance as six metres of air. Most PIR boards sold in the UK are foil-faced, which makes them effectively vapour-tight. The tool's "PIR / PUR board" is the unfaced figure, so it lets more vapour through than a typical foil-faced board would. 80 mm of wood fibre (µ about 5) is only sd = 0.4 m. Like R-values, sd values in layers add up. The material picker shows µ where the tool has a figure. Many materials list two values, a <b>dry-cup</b> one and a <b>wet-cup</b> one, because materials such as wood fibre and lime let vapour through more easily when damp.
+            100 mm of unfaced PIR (µ 60) is sd = 6 m: as much resistance as six metres of air. Most PIR boards sold in the UK are foil-faced, which makes them effectively vapour-tight. The tool has both: "PIR / PUR board, foil-faced" for those, and "PIR / PUR board, unfaced" for bare boards, which let far more vapour through. A foil-faced board's resistance only holds if its joints are taped; gaps and unsealed edges let vapour and moist air past it. 80 mm of wood fibre (µ about 5) is only sd = 0.4 m. Like R-values, sd values in layers add up. The material picker shows µ where the tool has a figure. Many materials list two values, a <b>dry-cup</b> one and a <b>wet-cup</b> one, because materials such as wood fibre and lime let vapour through more easily when damp.
           </p>
           <p>
             Layers with no µ in the tool's data are treated as fully open (µ = 1) and flagged on the page.
@@ -743,71 +744,86 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
         </section>
 
         <section id="moist-absorb" className="learn-section">
-          <h2>Absorbent and breathable materials</h2>
+          <h2>Absorbent and wicking materials</h2>
           <p>
-            Many traditional materials, such as wood fibre, cork, wool, timber, lime, clay and stone, are <b>hygroscopic</b>: they take up moisture from damp air and release it when the air dries, without being harmed, within limits. A wall built from them is often called <b>breathable</b>. They act as a buffer, soaking up winter condensation and giving it back in summer.
+            Many traditional materials, such as wood fibre, cork, wool, timber, lime, clay, brick and stone, are <b>hygroscopic</b>: they take up moisture from damp air and give it back when the air dries. How much each holds at a given humidity is its <b>sorption curve</b>. The tool stores moisture in every layer along its own curve, so an absorbent layer buffers winter dampness instead of letting it collect as free water at a boundary.
           </p>
           <p>
-            A simple diffusion calculation treats every boundary as a bare surface where water collects, which overstates the risk for these materials. The tool corrects for that in one way:
+            Porous mineral materials also <b>wick</b>: liquid water moves through their fine pores by capillary suction, from wetter to drier, much faster than vapour can diffuse. How strongly is measured by the <b>water absorption coefficient, A</b>: the water a face soaks up from contact with water, in kg/m² per square root of time.
           </p>
-          <ul>
-            <li>For <b>organic absorbent</b> layers (wood fibre, cork, wool, hemp, cellulose, timber boards and similar), the condensed water is shared with the nearest layers, assumed to soak up to 30 mm deep. The tool reports the resulting <b>moisture content</b> as a percentage of the material's dry mass. The tool uses <b>18%</b> as the limit. That is a cautious figure: about 20% is the level usually quoted for the onset of rot in timber.</li>
-            <li>Where no absorbent layer sits next to the condensation, it is <b>free water</b> on a hard surface. The rule of thumb used is 500 g/m² as an upper limit.</li>
-            <li>Condensation on the face of an <b>air cavity</b> is a special case. That is what a drained cavity is for: the water runs down the face and out through the weep holes and trays at the base. The tool counts it, and shows it as a hollow blue dot labelled "drains", but does not add it to the water held in the wall. Water on any boundary <em>not</em> next to a cavity, such as sheathing behind it, is still held.</li>
-            <li>Mineral materials (stone, brick, lime) are not given a limit, because no single threshold fits their frost and salt risks. The tool does not treat them as absorbing the water.</li>
-          </ul>
+          <table className="learn-table">
+            <thead><tr><th>Material</th><th>A, kg/(m²·s<sup>½</sup>)</th></tr></thead>
+            <tbody>
+              <tr><td>Calcium silicate board</td><td>about 1</td></tr>
+              <tr><td>Soft and stock brick</td><td>about 0.25–0.3</td></tr>
+              <tr><td>Gypsum plaster and plasterboard</td><td>about 0.3</td></tr>
+              <tr><td>Solid brick, porous limestone</td><td>about 0.15–0.2</td></tr>
+              <tr><td>Lime render and plaster</td><td>about 0.06–0.08</td></tr>
+              <tr><td>Lime-cement render</td><td>about 0.03</td></tr>
+              <tr><td>Cement render, concrete</td><td>about 0.01–0.02</td></tr>
+              <tr><td>Granite, foam boards, mineral wool</td><td>effectively 0</td></tr>
+            </tbody>
+          </table>
           <p>
-            Dense boards absorb more per square metre than light batts. A low-density batt right on a cold face may reach a high moisture content from the same amount of water.
+            This is why a lime render behaves so differently from a cement one on an old solid wall, although their µ values are close. Water that gets into the brick behind a lime render is wicked back out to the face, where it evaporates. A cement render wicks so slowly that the water must leave as vapour, through a layer that resists it, so the brick behind it stays wetter for longer. No rule about "breathable" materials is involved: it follows from each material's A, its sorption curve and its µ.
+          </p>
+          <p>
+            For <b>organic</b> layers (wood fibre, cork, wool, hemp, cellulose, timber boards and similar) the tool also reports the peak <b>moisture content</b>, as a percentage of dry mass, averaged over the 10 mm at the layer's wetter face. It uses <b>18%</b> as the limit, a cautious figure: about 20% is usually quoted for the onset of rot in timber. Mineral materials are not given a limit, because no single threshold fits their frost and salt risks.
           </p>
         </section>
 
         <section id="moist-rain" className="learn-section">
-          <h2>Rain and rising damp</h2>
+          <h2>Rain and ground moisture</h2>
           <p>
             Old solid walls are rarely wetted only by indoor vapour. Rain soaks the outer face, and moisture can rise from the ground. You can set both on the tab.
           </p>
           <dl className="learn-dl">
             <dt>Rain exposure</dt>
             <dd>
-              Sheltered (urban, trees), moderate, exposed (hill, coast, south-west face) or severe. It sets how much of the month's rain actually lands on the wall: 5%, 15%, 30% or 50%. How wet the face gets also depends on the outer layer: open brick and clay tiles take the rain up readily, dense hard stone and concrete tiles much less, and metal or foil not at all.
+              Sheltered (urban, trees), moderate, exposed (hill, coast, south-west face) or severe. It sets how much of the month's rain actually lands on the wall: 5%, 15%, 30% or 50%. The rain falls as showers, and the outer face takes up only what its own capillarity allows. The rest runs off. Open brick soaks up most of a shower, a cement render less, granite and foam boards almost nothing.
             </dd>
-            <dt>Footings</dt>
+            <dt>Ground moisture</dt>
             <dd>
-              Dry, damp (occasional) or wet (standing damp). A damp or wet base holds the lower masonry of the wall at 85% or 97% humidity.
+              Dry ground or a working DPC, wet in winter, or wet all year: liquid water is available at the base of the wall from November to March, or all year. A damp-proof course (DPC) that works stops it reaching the wall above, which the tool treats the same as dry ground. The wet options assume there is none, or that it has failed or is bridged, for instance by render, raised ground or a path running over it. This is what is often called rising damp, a term worth using carefully: damp low on a wall is frequently condensation, rain getting in, raised ground or paths bridging the base, a leak, or salts drawing moisture from the air, so rule those out first. It is drawn up by capillary flow into the run of wicking layers from the outside, such as brick and stone, up to the first layer that doesn't wick, such as insulation. How far it rises depends on how well those layers wick and how fast the wall can dry: a vapour-tight render or internal insulation slows the drying, so the damp rises higher. The tool reports that height, and its results are for the wall 1 m above the footing.
             </dd>
           </dl>
           <p>
-            Both are modelled as <b>vapour sources</b>, not as liquid water. A wetted outer face has a high vapour pressure, and in sunshine its temperature rises, so that pressure rises further. In summer it can exceed the room's, and the arrows reverse: vapour is driven <em>inwards</em>. Damp masonry likewise pushes vapour both outwards and inwards. A vapour-open insulation lets that moisture dry into the room. A vapour-tight one does not, so the inward arrow through it is almost nothing.
+            Once in the wall, that water spreads by wicking and leaves by evaporating, either outward through the face or inward towards the room. In sunshine a wet face warms, its vapour pressure rises, and in summer it can exceed the room's, so the arrows reverse and moisture is driven <em>inwards</em>. A vapour-open insulation lets damp masonry dry into the room. A vapour-tight one does not, so the inward flow through it is almost nothing.
           </p>
           <p>
-            On the chart, a blue strip marks a rain-wetted outer face, and blue shading marks masonry held damp by rising damp.
+            On the chart, a blue strip marks rain taken up by the outer face that month, and with wet ground, a second chart below shows the wall from the side, with the moisture climbing it.
           </p>
         </section>
 
         <section id="moist-reading" className="learn-section">
           <h2>Reading the moisture charts</h2>
           <h3>The verdict</h3>
-          <p>Above each wall's chart is one of three results, followed by a mould check.</p>
+          <p>Above each wall's chart is one of these results, followed by a rot check for any timber or fibre layer, and a mould check.</p>
           <table className="learn-table">
             <thead><tr><th>Result</th><th>What it means</th></tr></thead>
             <tbody>
-              <tr><td>No interstitial condensation</td><td>Vapour reaches the inside without saturating anywhere in the wall, all year.</td></tr>
-              <tr><td>Condenses, then dries out</td><td>Water forms at a boundary in winter, with a peak amount and month, and is gone again by the month named. This is generally acceptable if the materials can tolerate that much moisture for a few months.</td></tr>
-              <tr><td>Builds up year on year</td><td>Some water is still there at the end of the fifth year, so it does not fully dry out each summer. The danger is rot, frost damage and loss of insulation.</td></tr>
+              <tr><td>Stays dry</td><td>No layer holds liquid water at any point in the year: every layer stays below the moisture it would hold at 95% humidity.</td></tr>
+              <tr><td>Gets wet, then dries out</td><td>Liquid water collects in winter, with a peak amount, month and layer, and has gone again by the month named. Rain-exposed walls often start to rewet in the autumn, which is normal. This is generally acceptable if the materials can tolerate that much moisture for a few months.</td></tr>
+              <tr><td>Stays damp all year</td><td>Some water is still there even in the driest month, but no more than the year before: the wall has settled at a damp level. Common for rain-exposed masonry. Whether it matters depends on the materials, and on frost.</td></tr>
+              <tr><td>Gets wetter year on year</td><td>Water is still there even in the driest month, and more than the year before, so it builds up. The danger is rot, frost damage and loss of insulation.</td></tr>
             </tbody>
           </table>
-          <h3>Vapour moving through each wall</h3>
+          <h3>Moisture moving through each wall</h3>
           <ul>
-            <li><b>Black line:</b> the vapour pressure actually in the wall, from the outside value on the left to the inside value on the right. Both are labelled, with temperature and humidity.</li>
+            <li><b>Black line:</b> the vapour pressure actually in the wall, from the outside value on the left to the inside value on the right, as a monthly average. Both ends are labelled with temperature and humidity.</li>
             <li><b>Blue dashed line:</b> the saturation pressure, the most the air can hold at the temperature of each point.</li>
-            <li><b>Red dot:</b> the two lines meet, so water condenses. The label shows how much is held, in g/m².</li>
-            <li><b>Hollow blue dot:</b> condensation on the face of an air cavity, which is assumed to drain away through the weep holes. It is labelled with the amount that month but is not added to the water held in the wall.</li>
-            <li><b>Arrows along the bottom:</b> the vapour flow through each layer. The dashes move in the direction vapour is travelling. A thicker, darker arrow means more.</li>
+            <li><b>Red dot:</b> liquid water held in that layer at the end of the month, in g/m².</li>
+            <li><b>Hollow blue dot:</b> condensation in an air cavity, assumed to drain away through the weep holes. It is labelled with the amount that month but is not added to the water held in the wall.</li>
+            <li><b>Arrows along the bottom:</b> the moisture flow through each layer, vapour and liquid together. The dashes move in the direction it travels. A thicker, darker arrow means more.</li>
             <li><b>Play button and slider:</b> step through the year from October. All the charts glide between months.</li>
           </ul>
+          <h3>Ground moisture up the wall</h3>
+          <p>
+            Shown below each wall's vapour chart when the ground at the base is wet. It is the wall seen from the side, from the ground up to 3 m, with the same layers across. Blue shows how full of water each layer is, on one scale for every wall, from clear when dry to solid when saturated. Each layer matches its simulated wetness at 1 m, and in the wet zone the shading follows the same taper the simulation uses, wettest at the base and drying out towards the damp front, the line labelled with its height. Where the front stays below 1 m, the wall above it shows its own wetness from rain and vapour. Dashed arrows show water wicking up from the ground while it is wet. Arrows out of the outer face and inward show where it dries out, labelled in millimetres of water a day, thicker for more. Inward drying goes into the room, or into the layer behind if that doesn't wick, such as insulation, where it is usually small. The dashed line at 1 m is the height the vapour chart and the other results are for, labelled with how saturated the wettest layer is there.
+          </p>
           <h3>Moisture held in the wall</h3>
           <p>
-            Total water held through the year, starting dry in October. A dashed line, shown only when needed, is the same curve in the fifth year. If it sits above zero by September, the wall is not drying out.
+            Total liquid water held at the end of each month, in the last simulated year. If it never comes back to zero, the wall is not drying out. Where the wall is still getting wetter, a dashed line shows year one for comparison.
           </p>
           <h3>Inner surface humidity</h3>
           <p>
@@ -815,7 +831,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
           </p>
           <h3>Comparing walls</h3>
           <p>
-            Each column has its own build-up, chosen from the same library as the Compare tab, and all share one climate and indoor setting. The yearly charts then overlay every wall in its own colour.
+            Each column has its own build-up, chosen from the same library as the Compare tab, and all share one climate and indoor setting. The yearly charts then overlay every wall in its own colour. Changing a setting reruns every wall in the background, which takes a moment ("Calculating…").
           </p>
         </section>
 
@@ -823,30 +839,33 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
         <section id="msim-overview" className="learn-section">
           <h2>The moisture simulation at a glance</h2>
           <p>
-            Again, everything is calculated in your browser. In outline, for each month of the year:
+            Again, everything is calculated in your browser. The method follows the standard approach for transient heat and moisture in building components (EN 15026, after Künzel). In outline:
           </p>
           <ol className="learn-steps">
-            <li>Take the typical outdoor temperature and humidity, and work out the room's vapour pressure from the temperature and moisture setting.</li>
-            <li>Find the temperature at every layer boundary, and so the most vapour the air there could hold.</li>
-            <li>Draw the vapour pressure line from outside to inside, with each layer's drop in proportion to its sd.</li>
-            <li>Wherever the line would pass the limit, pin it to the limit and call that boundary a condensation plane.</li>
-            <li>Work out how much water arrives at or leaves each plane that month, and update the amount held.</li>
+            <li>Build a typical year of outdoor temperature, humidity, sun and rain showers, in two-hour steps, from the monthly tables.</li>
+            <li>Cut each layer into thin slices, each with its own temperature and humidity.</li>
+            <li>At every step, work out the heat flow, and the vapour and liquid water flow, between neighbouring slices and at the two faces.</li>
+            <li>Update each slice's temperature and the water it holds, storing water along each material's sorption curve.</li>
+            <li>Shed rain the face can't take up and water condensing in a cavity, and feed in ground moisture.</li>
           </ol>
           <p>
-            This is repeated from October for twelve months, for five years in a row. The first year is what the charts step through, and the fifth tells you whether any water carries over.
+            Every layer starts at 80% humidity in October, and the year is run three times. The results come from the third year, by which time that starting guess has mostly washed out. The first year is kept to show whether a wall is still getting wetter.
           </p>
         </section>
 
         <section id="msim-climate" className="learn-section">
           <h2>1. Building the year</h2>
           <p>
-            Each month is a single steady condition, with no daily cycle. The outdoor air temperature is the same monthly mean used on the heat tab (4.5 °C in January to 17 °C in July, plus the city offset). The outdoor relative humidity is a table of typical UK values, from 89–90% in the winter months to about 74% in May and June. The outdoor vapour pressure is then:
+            The outdoor air temperature uses the same monthly means as the heat tab (4.5 °C in January to 17 °C in July, plus the city offset), and the outdoor relative humidity a table of typical UK values, from 89–90% in winter to about 74% in May and June. Both change smoothly through the year, interpolated between mid-months, rather than jumping on the first of the month. The outdoor vapour pressure is then:
           </p>
           <Eq>p<sub>out</sub> = RH<sub>out</sub> × p<sub>sat</sub>(T<sub>out</sub>)</Eq>
           <p>
             The saturation pressure uses the standard formula from ISO 13788, with a slightly different constant below freezing:
           </p>
           <Eq>p<sub>sat</sub> = 610.5 × exp( 17.269 T ÷ (237.3 + T) )    (T at or above 0 °C)</Eq>
+          <p>
+            The sun warms the outer face between 6 am and 6 pm, peaking at midday. Its 24-hour average is a typical monthly figure, from about 0.3 K in December to 5.5 K in June and July. Rain falls as a six-hour shower every 60 hours, about twelve a month, sharing out that month's rain on the wall: a typical Midlands monthly total (about 50 to 80 mm), scaled for the city from 0.8 for London to 1.4 for Cardiff, times the exposure share. Of the rain reaching the wall, 70% is taken to stay on the face and the rest to splash off, the usual default in hygrothermal tools. During a shower there is no sun and the outdoor humidity is at least 95%.
+          </p>
           <p>
             The room's vapour pressure is the outdoor pressure plus what the household adds. The moisture setting is the peak vapour excess in the room air: 2, 4 or 6 g/m³ for low, typical and high. It is strongest in the coldest weather, when windows are shut, and falls steadily to zero as the outdoor temperature rises from 0 to 20 °C:
           </p>
@@ -858,107 +877,121 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
         </section>
 
         <section id="msim-profile" className="learn-section">
-          <h2>2. Temperature and vapour pressure through the wall</h2>
+          <h2>2. Slices, heat and vapour</h2>
           <p>
-            Temperatures at layer boundaries come from the layers' thermal resistances, exactly as in the heat tab's steady-state calculation, using the monthly mean outdoor and room temperatures. Sun is not included. The outside film is 0.04 m²K/W and the inside film 0.13 (0.10 for a roof):
-          </p>
-          <Eq>T<sub>k</sub> = T<sub>out</sub> + (T<sub>in</sub> − T<sub>out</sub>) × (R<sub>se</sub> + ΣR up to boundary k) ÷ R<sub>total</sub></Eq>
-          <p>
-            Vapour flows by diffusion through each layer in proportion to the pressure difference across it and in inverse proportion to its sd:
-          </p>
-          <Eq>g = δ<sub>air</sub> × Δp ÷ sd    δ<sub>air</sub> = 2 × 10⁻¹⁰ kg/(m·s·Pa)</Eq>
-          <p>
-            In a steady state the same flow passes through every layer, so the drop in pressure across each is proportional to its sd. That is the vapour twin of temperature falling in proportion to R. Most of the drop falls across the vapour-tight layers, and open layers are nearly flat.
+            Each layer is cut into slices 2 mm thick at both of its faces, growing by 60% at a time to at most 20 mm in its middle, because the sharpest changes happen at faces and boundaries. An air cavity is a single slice with its own thermal resistance. If the build-up has a <b>ventilated gap</b> (a roof tile batten void, for instance), everything outside it is at outdoor conditions, so the analysis starts at the inner face of the gap.
           </p>
           <p>
-            If the build-up has a <b>ventilated gap</b> (a roof tile batten void, for instance), everything outside it is at outdoor conditions, so the analysis starts at the inner face of the gap.
+            <b>Heat</b> flows between slices as on the heat tab, with surface films of 0.04 m²K/W outside and 0.13 inside (0.10 for a roof). Two things differ. Water conducts heat, so a wet material conducts more, by the usual allowance of 8% per percent of moisture by mass:
+          </p>
+          <Eq>λ = λ<sub>dry</sub> × (1 + 8 × w ÷ ρ)    (w the water held, ρ the dry density, both kg/m³)</Eq>
+          <p>
+            And water condensing in a slice releases 2.5 MJ per kg, which evaporation takes back, so a drying face is cooled by its own evaporation.
+          </p>
+          <p>
+            <b>Vapour</b> flows between slices by diffusion, from high vapour pressure to low:
+          </p>
+          <Eq>g<sub>vapour</sub> = (δ<sub>air</sub> ÷ µ) × Δp ÷ Δx    δ<sub>air</sub> = 2 × 10⁻¹⁰ kg/(m·s·Pa)</Eq>
+          <p>
+            Each slice's µ moves smoothly from the material's dry-cup value at 50% humidity to its wet-cup value at 90%, because hygroscopic materials let vapour through more freely when damp. At the faces, vapour passes to the air through a surface film, worked out from the convective heat transfer by the standard Lewis relation.
           </p>
         </section>
 
         <section id="msim-saturation" className="learn-section">
-          <h2>3. Where it saturates</h2>
+          <h2>3. Storing water: the sorption curve</h2>
           <p>
-            At every layer boundary the tool works out the saturation pressure from the temperature there. The straight vapour pressure line from outside to inside is then checked against it. The air cannot hold more than saturation, so where the line would go above it, the pressure there is <b>pinned to saturation</b> and the water that would have been extra condenses.
+            Each slice holds water w (kg/m³) in balance with its relative humidity φ. The tool uses Künzel's one-parameter sorption curve, fitted to each material's moisture content at 80% humidity (w<sub>80</sub>) and its free water saturation (w<sub>f</sub>, the most it takes up by soaking):
           </p>
+          <Eq>w = w<sub>f</sub> × (b − 1) × φ ÷ (b − φ)    b chosen so that w = w<sub>80</sub> at φ = 0.8</Eq>
           <p>
-            Pinning a boundary changes the line on both sides of it, which may push another boundary over the limit. The tool therefore repeats: it pins the boundary with the largest excess, redraws, re-checks the others, and carries on until nothing is over (at most 50 passes, normally one or two). The boundaries it pins are the <b>condensation planes</b>. Condensation is only checked at the boundaries between layers, not inside a layer.
+            The curve rises gently through ordinary humidities and steeply above about 95%, where the pores start to fill with liquid. Beyond saturation a slice can hold more free water, but its vapour pressure stays at saturation, as it would against a pool of condensate. Materials with no storage data, such as foam boards, mineral wool and some products, hold almost nothing (0.01 kg/m³, little more than the air in their pores) until they are saturated, so water condensing in them collects as free water.
           </p>
         </section>
 
         <section id="msim-balance" className="learn-section">
-          <h2>4. Condensing and drying through the year</h2>
+          <h2>4. Capillary flow</h2>
           <p>
-            A condensation plane sits between two vapour flows: vapour arriving from the warm, inner side and vapour leaving towards the cold, outer side. The difference is the water left behind:
+            Liquid water moves through a wicking material from wetter to drier. Künzel's approximation gives its liquid diffusivity from the water absorption coefficient A and the free saturation:
           </p>
-          <Eq>condensation rate = δ<sub>air</sub> × [ (p<sub>in side</sub> − p<sub>sat</sub>) ÷ sd<sub>in side</sub> − (p<sub>sat</sub> − p<sub>out side</sub>) ÷ sd<sub>out side</sub> ]</Eq>
+          <Eq>D<sub>w</sub> = 3.8 × (A ÷ w<sub>f</sub>)² × 1000<sup>(w ÷ w<sub>f</sub> − 1)</sup>    m²/s</Eq>
           <p>
-            Multiply by the seconds in the month, and by 1000, to get grams per square metre. A positive result is water accumulating. A negative one means evaporation, which can only take away what is already there, so the amount held never goes below zero.
+            It rises a thousandfold from dry to saturated, so a nearly dry material barely wicks and a wet one wicks fast. This is the suction value, used while it rains. Between showers, when water redistributes rather than being drawn in, a tenth of it is used, as Künzel recommends. The flow is driven by the gradient of relative humidity:
           </p>
+          <Eq>g<sub>liquid</sub> = D<sub>w</sub> × (dw/dφ) × Δφ ÷ Δx</Eq>
           <p>
-            Any boundary that holds water from an earlier month is treated as <b>saturated</b> from the start of the next month, because wet material keeps the air in it full. That is how the water dries out again: as spring arrives the vapour pressure on either side falls below the saturation level of the damp boundary, the balance turns negative, and the stored water evaporates away.
-          </p>
-          <p>
-            The one exception is a boundary next to an <b>air cavity</b>. The water formed there is assumed to drain out through the weep holes, so the amount is recorded as "drained" each month but the amount held stays at zero. This assumes the cavity is clear and has working drainage, which is worth checking on site, especially in older walls where mortar droppings can block it.
-          </p>
-          <p>
-            The simulation starts in <b>October</b>, with everything dry, so the winter build-up and summer drying appear in order. It runs five years back to back. Under 0.5 g/m² counts as dry.
+            Driving the flow by humidity, not by water content, is what lets it cross from one material to the next: water moves from brick into a lime render whenever the brick is at a higher humidity, even though the two hold very different amounts at that humidity. A layer with no capillary data, or A of zero, passes no liquid at all, so water can only leave it as vapour.
           </p>
         </section>
 
         <section id="msim-wet" className="learn-section">
-          <h2>5. Wet-cup µ and absorbent layers</h2>
+          <h2>5. Solving each step</h2>
           <p>
-            Each layer starts with its dry-cup µ. But the pressure profile decides the humidity in each layer, and the humidity decides which µ applies. To square this, the tool re-solves the month up to four times: any layer whose average humidity is above <b>70%</b> switches to its wet-cup µ (when that is lower), and the profile is redrawn until the choices stop changing. Hygroscopic materials let vapour through more freely when damp, and this lets the model capture it.
+            Each two-hour step is solved implicitly, which stays stable however thin the slices are. Heat comes first, then moisture. The unknown for moisture is each slice's humidity. Because storage, µ and capillary flow all depend on that humidity, the tool guesses it, works out the flows, solves for the new humidities, and repeats until no slice changes by more than 0.0001 (usually two to five passes). The storage term is set up so that water is conserved exactly at every pass. If a step won't settle, typically at the start of a shower, it is split in half, and halved again if needed.
           </p>
           <p>
-            For absorbent layers, the water at the busiest boundary is divided over the organic absorbent layers either side, taking the depth of each as at most 30 mm. The capacity in grams of dry material per square metre is density × depth in millimetres, and the moisture content is:
-          </p>
-          <Eq>moisture content = water held ÷ dry material in the absorbing depth    (compared with 18%)</Eq>
-          <p>
-            If no absorbent layer is adjacent, the result is reported as free water instead.
+            As a check, the tool adds up all the water entering and leaving over the final year and compares it with the change in water held. They agree to within a few tens of grams per square metre at most, against tens or hundreds of kilograms of water moving through in a wet wall.
           </p>
         </section>
 
         <section id="msim-sources" className="learn-section">
-          <h2>6. Rain and rising damp as vapour sources</h2>
-          <p>
-            Both are added as <b>fixed pressures</b> at particular points in the wall, drawn into the profile before condensation is checked. They are supplies, not stores: they never run out and never accumulate.
-          </p>
+          <h2>6. Rain, ground moisture and cavities</h2>
           <h3>Rain</h3>
           <p>
-            The wetness of the outer face for the month, from 0 to 1, is:
+            During a shower, the rain on the wall is added to the outer slice. Capillary flow then draws it inward, as fast as the material's suction allows. Whatever the outer slice can't hold beyond its free saturation runs off at the end of the step. So a strongly wicking face takes up most of a shower, and a face with low A saturates in its outer millimetres and sheds the rest.
           </p>
-          <Eq>wetness = (monthly rain × exposure share × absorbency) ÷ 15 mm    (capped at 1)</Eq>
+          <h3>Ground moisture</h3>
           <p>
-            The monthly rain is a typical Midlands table (about 50 to 80 mm) scaled for the city, from 0.8 for London to 1.4 for Cardiff. The exposure share is 5%, 15%, 30% or 50%. The absorbency is 1 if the outer layer's µ is 60 or less, 0.3 if it is up to 1000, and 0 if it is tighter than that or is not a solid layer. The 15 mm is the monthly rain on the wall that keeps a porous face fully wet, allowing for run-off and drying between showers. The vapour pressure at the outer face then moves from the outdoor value towards saturation at a sun-warmed face:
+            Ground moisture reaches the run of layers from the outside that have capillary data, stopping at the first that doesn't (usually insulation). The model looks at the wall 1 m above the footing. It can't follow water rising from below, so while water stands at the footing (November to March for "wet in winter", all year for "wet all year"), each slice in that run is fed by capillary flow, worked out with the Kirchhoff potential, the integral of the liquid diffusivity, K(w) = ∫ D<sub>w</sub> dw. The wall is saturated at the base and dry at the damp front, height h (below). In between, evaporation draws water off evenly with height, so the upward flow falls steadily to nothing at the front and the potential tapers as:
           </p>
-          <Eq>p<sub>face</sub> = p<sub>out</sub> + wetness × ( p<sub>sat</sub>(T<sub>out</sub> + sun warming) − p<sub>out</sub> )</Eq>
+          <Eq>K(z) = K(w<sub>f</sub>) × (1 − z ÷ h)²</Eq>
           <p>
-            The sun-warming is a typical monthly daytime mean, from about 0.3 K in December to 5.5 K in June and July. It affects the pressure only, not the wall's temperatures.
+            Because the liquid diffusivity rises steeply with water content, the wall stays fairly wet most of the way up and dries out close to the front. The slice at 1 m is fed towards the value at z = 1 m:
           </p>
-          <h3>Rising damp</h3>
+          <Eq>supply = [ K(1 m) − K(w) ] ÷ (h − 1 m)²    per m³ of material</Eq>
           <p>
-            The tool finds the <b>base masonry</b>: the run of layers from the outside whose conductivity is between 0.3 and 5 W/mK, stopping at the first insulation or air layer. Every boundary inside that run, other than the room side, is pinned to the footing humidity (85% or 97%) of its own saturation pressure. It is never set below the outdoor pressure, and never above 99% of saturation, so it behaves as a damp source and not as condensation.
+            The distance h − 1 m is the gap over which the profile falls to nothing, so as the front comes down towards 1 m the supply settles at K(w<sub>f</sub>) ÷ h² rather than vanishing.
+          </p>
+          <p>
+            It only ever adds water: a slice wetter than that, from rain for instance, is not drained by the ground. It is strongest in materials that wick well.
+          </p>
+          <p>
+            How high the damp actually rises comes from sharp-front theory (Hall and Hoff). The wet zone, height h, is fed by capillary inflow at the base and dries through its faces at a rate e per square metre of wall. The tool follows it through the year:
+          </p>
+          <Eq>d(h²)/dt = S² ÷ θ² − 2 e h² ÷ (θ b)    settling at h = S × √( b ÷ (2 θ e) )</Eq>
+          <p>
+            Here S is the sorptivity of the wicking run (its A divided by the density of water), b its thickness and θ its water content at free saturation as a volume fraction. The drying rate e comes from the simulation at every step: what the wicking run would lose through its outer face and into the layers behind it if it were wet, so it depends on the weather and the build-up. When the ground at the base dries, the inflow stops and the front falls. The tool reports the highest and lowest the front reaches over the year. With "wet in winter" the front starts low each November and climbs towards the winter height; with "wet all year" it stays up all year and is lowest in summer, when walls dry fastest. A render or insulation that slows drying lowers e and raises h. The slice at 1 m only receives rising damp once the front has climbed past it.
+          </p>
+          <h3>Saturated layers</h3>
+          <p>
+            A wicking material can only hold so much water in its pores: its free saturation. Water arriving beyond that, from heavy rain, ground moisture or condensation, can't be held, so it runs down out of the layer. The tool removes it at each step and reports it as water running down inside the wall. Layers with no storage data, such as foam boards and mineral wool, keep condensation as free water instead.
+          </p>
+          <h3>Cavities</h3>
+          <p>
+            Water that would collect in an <b>air cavity</b> beyond saturation is assumed to run down and out through the weep holes. It is counted as "drained" but not held. This assumes the cavity is clear and has working drainage, which is worth checking on site, especially in older walls where mortar droppings can block it. Condensation on a wicking cavity face, such as brick, soaks into that layer instead, and is held there.
           </p>
         </section>
 
         <section id="msim-results" className="learn-section">
           <h2>7. Working out the results</h2>
-          <h3>The verdict</h3>
+          <h3>Water held and the verdict</h3>
           <p>
-            <b>None</b> if the total held never reaches 0.5 g/m². <b>Dries out</b> if it does, but is below 0.5 g/m² again at the end of year five. <b>Builds up</b> otherwise. The peak is the largest total in any month, and the boundary named is the one holding the most at that time. The "dry again by" month is the first one after the first-year peak when the total is back under 0.5 g/m².
+            "Liquid water held" in a layer is the water above what it would hold at 95% humidity, added up over its slices, at the end of each month. Hygroscopic moisture below that level is normal and is not counted. Under 5 g/m² in total counts as dry. <b>Stays dry</b> if the total never reaches that in the final year. <b>Gets wet, then dries out</b> if it does, but is dry again at some month end, the wall's driest point (often summer, before autumn rain starts again). Otherwise it <b>gets wetter year on year</b> if its driest month holds over a tenth more than the year before's (and at least 5 g/m² more; smaller rises are the wall still settling from its starting state), and <b>stays damp all year</b> if not. The peak is the largest month-end total, and the layer named is the one holding most of it then.
+          </p>
+          <h3>Rot</h3>
+          <p>
+            For each organic layer, the moisture content by mass is averaged over the 10 mm at each face, every step of the final year, and the higher peak is compared with 18%.
           </p>
           <h3>Mould</h3>
           <p>
-            The inner surface humidity is the room's vapour pressure divided by the saturation pressure at the inner surface's temperature. Months above 80% are flagged. For this check only, the inside film is taken as 0.25 m²K/W, as ISO 13788 sets for walls and roofs. That allows for the colder spots in corners and behind furniture, where mould usually starts, so the surface is a little colder than in the condensation calculation.
+            The inner surface humidity is the room's vapour pressure divided by the saturation pressure at the inner surface's temperature, from the monthly mean temperatures. Months above 80% are flagged. For this check only, the inside film is taken as 0.25 m²K/W, as ISO 13788 sets for walls and roofs. That allows for the colder spots in corners and behind furniture, where mould usually starts.
           </p>
-          <h3>Flow arrows</h3>
+          <h3>Pressure line and flow arrows</h3>
           <p>
-            For each layer, the flow is δ<sub>air</sub> × (pressure on the outer side − pressure on the inner side) ÷ sd, converted to grams per square metre per day, positive towards the inside. Arrow thickness and darkness are drawn on a logarithmic scale, because flows differ by factors of thousands, and about 100 g/m² per day is the full width. The moving dashes always run in the direction of flow.
+            The pressure chart shows monthly averages at each layer boundary. Each layer's arrow is the vapour and liquid flow together, through the middle of the layer, averaged over the month and converted to grams per square metre per day, positive towards the inside. Arrow thickness and darkness are in proportion to the flow, with 50 g/m² per day or more drawn at full width, so a layer passing a tenth as much shows a tenth the arrow. Hover over an arrow for its figure.
           </p>
           <h3>Animation</h3>
           <p>
-            When you move to another month, every number on the pressure chart is eased from the old value to the new one over about half a second. The easing is only for show: the calculation for each month is done once, up front.
+            When you move to another month, every number on the pressure chart is eased from the old value to the new one over about half a second. The easing is only for show: the whole simulation is run once, up front.
           </p>
         </section>
 
@@ -966,20 +999,18 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
           <h2>What the moisture model leaves out</h2>
           <p>Again, these are the main simplifications, so you know how far to trust the results.</p>
           <ul>
-            <li><b>Monthly averages.</b> There are no daily swings, heatwaves, cold snaps or storms. The sun-warming of a wet wall in a hot afternoon is understated.</li>
-            <li><b>No liquid water.</b> Water is a vapour source or a stored amount at a boundary. It does not soak through stone or brick by capillary action, run down a face, or redistribute itself within a layer. For stone and brick walls this is the biggest gap. Frost damage is not modelled either.</li>
-            <li><b>No storage in masonry.</b> Rain and rising damp are unlimited supplies at fixed vapour pressures. The wall does not get wetter or drier over time because of them.</li>
-            <li><b>Limited absorption.</b> Only organic materials are treated as absorbing condensate, within a fixed 30 mm. Real absorbent materials hold water much more gradually and redistribute it.</li>
-            <li><b>Two numbers per material.</b> One dry-cup and one wet-cup µ, with a single switch at 70% humidity. Real materials change smoothly. Several heritage values are mid-range picks from wide published ranges, and a few materials have no µ at all.</li>
-            <li><b>Diffusion only.</b> Moist air leaking through gaps, joints and service penetrations can carry far more water than diffusion does, and none of that is modelled.</li>
+            <li><b>Typical, not measured, weather.</b> The year is built from monthly tables, with an even pattern of showers. There are no storms, heatwaves or cold snaps, and the driving rain is a fixed share of the rainfall rather than worked out from wind.</li>
+            <li><b>Typical material data.</b> Each material's capillary and storage values are representative figures for its type from published hygrothermal data, not measured for a product. Real bricks and stones vary several-fold, so treat the comparison between build-ups as more reliable than the absolute amounts. Materials with no data are treated as not wicking or storing water, and are listed on the page.</li>
+            <li><b>No cracks or gaps.</b> A render is treated as perfect. In practice rain often gets behind a cracked cement render and can't get out, which is a large part of its bad reputation on old walls. None of that is modelled.</li>
+            <li><b>No air leakage.</b> Moist air leaking through gaps, joints and service penetrations can carry far more water than diffusion does.</li>
+            <li><b>No freezing.</b> Frost damage, and ice blocking the pores, are not modelled.</li>
+            <li><b>Ground moisture in one dimension.</b> The wall is followed at a single height, 1 m above the footing, fed towards a moisture level that tapers from saturation at the base to dry at the front. The rise height uses sharp-front theory and the brick's own wicking, ignoring mortar bed joints, which usually wick more slowly, and the ground is taken as free water, so heights lean high. Salts, which hold water and drive much of the damage, are not modelled.</li>
             <li><b>One dimension.</b> A uniform wall, with no thermal bridges, window reveals, corners or junctions with the floor.</li>
-            <li><b>Typical, not measured, climate.</b> The outdoor humidity and rain are broad UK tables, and the indoor vapour load is a simple rule that falls with outdoor temperature.</li>
-            <li><b>No latent heat.</b> Condensation and evaporation release and absorb heat, but the temperatures are taken from the heat calculation without that.</li>
             <li><b>Mould as a single line.</b> 80% surface humidity is a standard simplification. Real mould depends on the material, its temperature and how long the conditions last.</li>
           </ul>
-          <Callout title="When you need a proper moisture simulation">
+          <Callout title="When you need a full moisture study">
             <p>
-              For a real project, especially internal insulation on a solid old wall, use a transient hygrothermal tool such as WUFI. It follows moisture hour by hour, including liquid water and the storage of the materials. Use this tab to compare build-ups and to learn <em>why</em> vapour-open and vapour-tight systems behave differently.
+              For a real project, especially internal insulation on a solid old wall, have it checked with a validated hygrothermal tool such as WUFI or Delphin, using measured weather for the site and data for the actual products. Use this tab to compare build-ups and to learn <em>why</em> vapour-open, vapour-tight and wicking systems behave differently.
             </p>
           </Callout>
         </section>
@@ -1015,7 +1046,7 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
             <dt>Relative humidity (RH)</dt>
             <dd>How much water vapour the air holds, as a percentage of the most it could hold at its temperature.</dd>
             <dt>Rising damp</dt>
-            <dd>Moisture drawn up from the ground into the base of a wall by capillary action.</dd>
+            <dd>A contested name for moisture drawn up from the ground into the base of a wall by capillary action. It is often blamed for damp with other causes, such as condensation, rain getting in, raised ground bridging the base, leaks or salts. The tool calls it ground moisture, and models it only when water is actually available at the base.</dd>
             <dt>Saturation vapour pressure</dt>
             <dd>The most water vapour the air can hold at a given temperature, in pascals. It rises steeply as the air warms.</dd>
             <dt>sd (equivalent air thickness)</dt>

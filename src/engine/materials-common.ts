@@ -18,7 +18,9 @@ export const COMMON_MATERIALS: Material[] = [
   { id: 'cavity_le1', name: 'Air cavity, one low-e (foil) face', R: 0.66, rho: 1.2, cp: 1000, col: '#e3eef2', t: 50, min: 25, max: 150, step: 5, cat: 'common' },
   { id: 'cavity_le2', name: 'Air cavity, both faces low-e (foil)', R: 0.72, rho: 1.2, cp: 1000, col: '#eef3f5', t: 50, min: 25, max: 150, step: 5, cat: 'common' },
   { id: 'vgap_le1', name: 'Ventilated gap, one low-e (foil) face', R: 0.45, rho: 1.2, cp: 1000, col: '#d6ebf5', t: 40, min: 25, max: 100, step: 5, cat: 'common', vent: true },
-  { id: 'pir', name: 'PIR / PUR board', k: 0.022, rho: 30, cp: 1400, col: '#f0cf3f', t: 100, min: 20, max: 250, step: 5, cat: 'common' },
+  { id: 'pir', name: 'PIR / PUR board, unfaced', k: 0.022, rho: 30, cp: 1400, col: '#f0cf3f', t: 100, min: 20, max: 250, step: 5, cat: 'common' },
+  // Foil-faced boards (most sold in the UK): same core; the foil facings make it effectively vapour-tight (see materials-mu.ts).
+  { id: 'pir_foil', name: 'PIR / PUR board, foil-faced', k: 0.022, rho: 32, cp: 1400, col: '#e3c85a', t: 100, min: 20, max: 250, step: 5, cat: 'common' },
   { id: 'eps', name: 'EPS (expanded polystyrene)', k: 0.036, rho: 20, cp: 1450, col: '#e6e9ee', t: 100, min: 20, max: 250, step: 5, cat: 'common' },
   { id: 'mw', name: 'Mineral wool', k: 0.037, rho: 30, cp: 1030, col: '#caa86a', t: 100, min: 25, max: 300, step: 5, cat: 'common' },
   { id: 'wf', name: 'Wood fibre board', k: 0.042, rho: 160, cp: 2100, col: '#c9a77d', t: 80, min: 20, max: 200, step: 5, cat: 'common' },
