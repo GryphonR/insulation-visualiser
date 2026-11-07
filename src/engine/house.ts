@@ -194,18 +194,21 @@ export interface House {
   roomTemps?: Partial<Record<RoomType, number>>;
   /** A dashed footprint (metres) to draw within, from the new-project dialog; not a room. */
   guide?: { w: number; d: number };
-  /** Tracing underlay for the plan: a floor-plan image per storey, or satellite imagery. */
-  trace?: TraceSettings;
 }
 
 /** A floor-plan image placed under one storey's plan: top-left corner and width in plan metres. */
 export interface TraceImage { src: string; x: number; y: number; w: number; opacity: number }
+/** Tracing underlay for the plan, kept once per project (images are large): a floor-plan image per level, or satellite imagery. */
 export interface TraceSettings {
   mode: 'none' | 'image' | 'sat';
+  /** By level (storeyLevel), so a basement added in one scenario doesn't move the images. */
   images: Record<number, TraceImage>;
   /** Satellite imagery: plan (0, 0) sits at this latitude and longitude. */
   sat: { lat: number; lon: number; zoom: number; opacity: number };
 }
+
+/** A storey's level counted from the ground floor (0); a basement is −1. Only storey 0 can be a basement. */
+export const storeyLevel = (h: Pick<House, 'storeys'>, storey: number) => storey - ((h.storeys[0]?.below ?? 0) > 0 ? 1 : 0);
 
 /** Default setpoint for a room type: the user's own figure, else MCS / CIBSE Table 2-2 for the house's age band. */
 export const defaultTemp = (h: Pick<House, 'ageBand' | 'roomTemps'>, type: RoomType) =>
@@ -693,11 +696,6 @@ export function deviceM3(d: Device) { return d.opts[d.pick]?.[1] ?? 0; }
 
 /** Share `f` of the ideal (Carnot) COP between refrigerant temperatures: condensing 5 K above flow, evaporating at `Tev`. */
 const carnotCop = (flow: number, Tev: number, f: number) => (f * (flow + 5 + 273.15)) / Math.max(3, flow + 5 - Tev);
-
-/** Air source: evaporating 6 K below outside, 0.93 for defrost between −4 and 6 °C. */
-export function heatPumpCop(flow: number, Te: number, f = 0.45): number {
-  return Math.min(7, carnotCop(flow, Te - 6, f) * (Te > -4 && Te < 6 ? 0.93 : 1));
-}
 
 export type HeatSource = 'boiler' | 'condensing' | 'ashp' | 'gshp';
 export type Fuel = 'gas' | 'oil' | 'lpg';

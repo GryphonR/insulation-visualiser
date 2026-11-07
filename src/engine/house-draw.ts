@@ -230,7 +230,6 @@ function shiftStoreys(h: House, d: 1 | -1): void {
     for (const k of Object.keys(m)) delete m[k];
     Object.assign(m, out);
   }
-  if (h.trace) h.trace.images = Object.fromEntries(Object.entries(h.trace.images).map(([s, im]) => [+s + d, im]));
 }
 
 export const addStoreyAbove = (h: House): void => { h.storeys.push({ name: `Storey ${h.storeys.length + 1}`, h: 2.4, zone: 0.25 }); };

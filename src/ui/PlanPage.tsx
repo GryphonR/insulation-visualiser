@@ -5,7 +5,9 @@ import type { EditField, Sel, Tool } from './DrawCanvas';
 import { DrawMenu, Inspector, LayerTree, RoomFields, drawHint } from './DrawPanels';
 import { bandName } from '../engine/house-draw';
 import { planBounds } from './HousePlan';
-import { TraceControls, loadImagery, saveImagery, traceUnderlay } from './HouseTrace';
+import { TraceControls, loadImagery, saveImagery, traceOf, traceUnderlay } from './HouseTrace';
+import { storeyLevel } from '../engine/house';
+import type { TraceSettings } from '../engine/house';
 import type { Imagery } from './HouseTrace';
 import { fmt, mix } from './hform';
 import { useProject } from './project';
@@ -13,7 +15,9 @@ import { href } from './route';
 
 /** Board 1: the floor plan as a drawing canvas, layer by layer, with a lens and a summary of the selected room. */
 export function PlanPage({ selected }: { selected?: string }) {
-  const { house, upd, res, undo, redo, canUndo, canRedo } = useProject();
+  const { house, upd, res, undo, redo, canUndo, canRedo, project, setProject } = useProject();
+  const trace = traceOf(project);
+  const setTrace = (fn: (t: TraceSettings) => void) => setProject((p) => { const x = structuredClone(traceOf(p)); fn(x); return { ...p, trace: x }; });
   const startRoom = house.rooms.find((r) => r.id === selected) ?? house.rooms[0];
   const [storey, setStorey] = useState(startRoom?.storey ?? 0);
   /** Editing the floor / ceiling band with this number instead of the rooms of a storey. */
@@ -60,7 +64,7 @@ export function PlanPage({ selected }: { selected?: string }) {
   return (
     <div className="plan-stage">
         <DrawCanvas key={`${shown}-${band}`} house={house} storey={shown} band={band ?? undefined} tool={measure ? 'select' : tool} setTool={setTool} sel={sel} setSel={setSel} upd={upd} below={showBelow} sticky={sticky} grid={grid} snapOn={snapOn} onEdit={editSel}
-          underlay={traceUnderlay(house, storey, imagery)}
+          underlay={traceUnderlay(house, trace, storey, imagery)}
           overlay={measure ? (to, _S, from) => (
             <g>
               {measure.pts.map((p, i) => { const q = to(p); return <circle key={i} cx={q[0]} cy={q[1]} r={5} fill="#c2410c" />; })}
@@ -72,7 +76,7 @@ export function PlanPage({ selected }: { selected?: string }) {
                 if (pts.length < 2) { setMeasure({ ...measure, pts }); return; }
                 // Rescale the image about the first point so the two points are `len` apart.
                 const d = Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]);
-                if (d > 0.01) upd((h) => { const im = h.trace?.images[storey]; if (!im) return; const k = measure.len / d; im.x = pts[0][0] - (pts[0][0] - im.x) * k; im.y = pts[0][1] - (pts[0][1] - im.y) * k; im.w *= k; });
+                if (d > 0.01) setTrace((t) => { const im = t.images[storeyLevel(house, storey)]; if (!im) return; const k = measure.len / d; im.x = pts[0][0] - (pts[0][0] - im.x) * k; im.y = pts[0][1] - (pts[0][1] - im.y) * k; im.w *= k; });
                 setMeasure(null);
               }} />
             </g>
@@ -138,7 +142,7 @@ export function PlanPage({ selected }: { selected?: string }) {
           <LayerTree house={house} res={res} storey={storey} band={band} pickStorey={goStorey} pickBand={goBand} zone={sel.zone} pickZone={(id) => setSel({ ...NO_SEL, zone: id })} upd={upd} below={showBelow} setBelow={setShowBelow} />
           <details className="fp-sec">
             <summary>Tracing image</summary>
-            <TraceControls house={house} res={res} storey={storey} upd={upd} imagery={imagery} setImagery={(v) => { setImageryState(v); saveImagery(v); }} measuring={!!measure} onMeasure={(len) => setMeasure({ len, pts: [] })} />
+            <TraceControls house={house} res={res} storey={storey} trace={trace} setTrace={setTrace} imagery={imagery} setImagery={(v) => { setImageryState(v); saveImagery(v); }} measuring={!!measure} onMeasure={(len) => setMeasure({ len, pts: [] })} />
           </details>
         </aside>
       )}

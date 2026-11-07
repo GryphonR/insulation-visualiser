@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { MATERIALS, MATERIAL_CATEGORIES, MAT, deleteCustomMaterial, saveCustomMaterial } from '../engine/data';
 import type { Material } from '../engine/data';
 import { Card, Num, fmt, uid } from './hform';
 import { useProject } from './project';
+import { storedProjectsUsing } from '../engine/projects';
 import { href } from './route';
 
 /** Every property of a new custom material, entered before it joins the library. */
@@ -47,7 +48,7 @@ function MaterialModal({ onCancel, onSave }: { onCancel: () => void; onSave: (m:
 
 /** Board 2a: the material library. Built-in values are locked, so this is a reference for the layers in the build-ups. */
 export function MaterialsPage() {
-  const { house } = useProject();
+  const { house, project, active, customStackups, projectId } = useProject();
   const [q, setQ] = useState('');
   const [cat, setCat] = useState('all');
   const [sel, setSel] = useState('pir');
@@ -64,6 +65,14 @@ export function MaterialsPage() {
   const usedBy = (id: string) => house.buildups.filter((b) => b.layers.some(([m]) => m === id));
   const inUse = usedBy(s.id);
   const custom = s.cat === 'custom';
+  // A custom material can't be deleted while anything else uses it: its layers would silently drop out of those walls.
+  const others = useMemo(() => (custom ? storedProjectsUsing(s.id, projectId) : []), [custom, s.id, projectId]);
+  const has = (layers: Array<[string, number]>) => layers.some(([m]) => m === s.id);
+  const elsewhere = custom ? [
+    ...project.scenarios.filter((x) => x.id !== active.id && x.house.buildups.some((b) => has(b.layers))).map((x) => `scenario ${x.name}`),
+    ...customStackups.filter((b) => has(b.layers)).map((b) => `library build-up ${b.name}`),
+    ...others.map((n) => `project ${n}`),
+  ] : [];
   const edit = (patch: Partial<Material>) => save({ ...s, ...patch });
   return (
     <div className="plan-split">
@@ -118,10 +127,11 @@ export function MaterialsPage() {
           <p className="small">Default thickness {s.t} mm (range {s.min}–{s.max}). Vapour resistance μ {s.mu ?? 'not given'}.</p>
           <div className="chips">
             <button type="button" className="btn-primary" onClick={() => copy(s)}>Duplicate as custom</button>
-            {custom && <button type="button" className="btn-danger" disabled={inUse.length > 0} title={inUse.length ? 'Used in a build-up' : undefined} onClick={() => { deleteCustomMaterial(s.id); setSel('pir'); bump((n) => n + 1); }}>Delete</button>}
+            {custom && <button type="button" className="btn-danger" disabled={inUse.length + elsewhere.length > 0} title={inUse.length + elsewhere.length ? 'Used in a build-up' : undefined} onClick={() => { deleteCustomMaterial(s.id); setSel('pir'); bump((n) => n + 1); }}>Delete</button>}
           </div>
           <div className="eyebrow">Used in</div>
-          {inUse.length ? inUse.map((b) => <a key={b.id} className="small" href={href('buildups', b.id)}>{b.name}</a>) : <p className="small muted">Not used in any build-up yet.</p>}
+          {inUse.length ? inUse.map((b) => <a key={b.id} className="small" href={href('buildups', b.id)}>{b.name}</a>) : <p className="small muted">Not used in this scenario's build-ups.</p>}
+          {elsewhere.length > 0 && <p className="small muted">Also used in {elsewhere.join(', ')}.{custom && ' Remove it from those before deleting.'}</p>}
         </Card>
       </aside>
       {creating && <MaterialModal onCancel={() => setCreating(false)} onSave={(m) => { save(m); setSel(m.id); setCreating(false); }} />}

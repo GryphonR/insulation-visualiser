@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
+import { storeyLevel } from '../engine/house';
 import type { House, HouseResult, TraceSettings } from '../engine/house';
+import type { Project } from '../engine/house-scenarios';
 import type { Pt } from '../engine/geom';
 import { Chip } from './controls';
 import { planBounds } from './HousePlan';
@@ -57,13 +59,12 @@ export function planToWorld(p: Pt, north: number): Pt {
   return [p[0] * c - p[1] * s, p[0] * s + p[1] * c];
 }
 
-export const traceOf = (h: House): TraceSettings => h.trace ?? { mode: 'none', images: {}, sat: { lat: 0, lon: 0, zoom: ZOOM, opacity: 0.8 } };
+export const traceOf = (p: Pick<Project, 'trace'>): TraceSettings => p.trace ?? { mode: 'none', images: {}, sat: { lat: 0, lon: 0, zoom: ZOOM, opacity: 0.8 } };
 
 /** What to draw under the plan for the current tracing mode. */
-export function traceUnderlay(h: House, storey: number, imagery: Imagery): ((to: (p: Pt) => Pt, S: number) => ReactNode) | undefined {
-  const t = traceOf(h);
+export function traceUnderlay(h: House, t: TraceSettings, storey: number, imagery: Imagery): ((to: (p: Pt) => Pt, S: number) => ReactNode) | undefined {
   if (t.mode === 'image') {
-    const im = t.images[storey];
+    const im = t.images[storeyLevel(h, storey)];
     if (!im) return undefined;
     return (to, S) => { const a = to([im.x, im.y]); return <image href={im.src} x={a[0]} y={a[1]} width={im.w * S} opacity={im.opacity} preserveAspectRatio="xMinYMin" />; };
   }
@@ -88,15 +89,15 @@ export function traceUnderlay(h: House, storey: number, imagery: Imagery): ((to:
 }
 
 /** Tracing controls under the plan: a floor-plan image per storey, or satellite imagery. */
-export function TraceControls({ house, res, storey, upd, onMeasure, measuring, imagery, setImagery }: {
-  house: House; res: HouseResult; storey: number; upd: (fn: (h: House) => void) => void;
+export function TraceControls({ house, res, storey: s, trace: t, setTrace: set, onMeasure, measuring, imagery, setImagery }: {
+  house: House; res: HouseResult; storey: number; trace: TraceSettings; setTrace: (fn: (t: TraceSettings) => void) => void;
   /** This browser's satellite provider and key (not part of the project). */
   imagery: Imagery; setImagery: (v: Imagery) => void;
   /** Start picking two points on the plan that are `len` metres apart, to scale the image. */
   onMeasure: (len: number) => void; measuring: boolean;
 }) {
-  const t = traceOf(house);
-  const set = (fn: (t: TraceSettings) => void) => upd((h) => { const x = structuredClone(traceOf(h)); fn(x); h.trace = x; });
+  // Images are filed by level, so a basement added in one scenario leaves them under the right floor.
+  const storey = storeyLevel(house, s);
   const [msg, setMsg] = useState('');
   const [known, setKnown] = useState('');
 
@@ -120,7 +121,7 @@ export function TraceControls({ house, res, storey, upd, onMeasure, measuring, i
       </div>
       {t.mode === 'image' && (
         <div className="hf-row">
-          <label className="btn-secondary file-btn">{im ? 'Replace image…' : `Upload a plan for the ${house.storeys[storey]?.name.toLowerCase()}…`}
+          <label className="btn-secondary file-btn">{im ? 'Replace image…' : `Upload a plan for the ${house.storeys[s]?.name.toLowerCase()}…`}
             <input type="file" accept="image/*" hidden onChange={async (e) => {
               const f = e.target.files?.[0]; e.target.value = '';
               if (!f) return;

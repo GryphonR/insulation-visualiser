@@ -10,11 +10,10 @@ import { Chip } from './controls';
 import { useProject } from './project';
 import { href } from './route';
 import './house.css';
-import { Why, fmt } from './hform';
+import { Why, fmt, mix, uid } from './hform';
 import { WHY } from './assumptions';
 
 const sgn = (v: number, d = 0) => (Math.abs(v) < 0.5 * 10 ** -d ? '0' : `${v > 0 ? '+' : '−'}${fmt(Math.abs(v), d)}`);
-const uid = () => `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 const ROW_WHY: Record<string, string> = {
   'Heat source spare, %': WHY.capacity,
   'Heat per kWh bought (est. SCOP or efficiency)': `${WHY.seasonal} Heat pump COPs are estimates for a typical unit; see the Energy & cost page for how each is worked out and to set the performance factor.`,
@@ -28,7 +27,7 @@ const KIND_LABEL: Record<Scenario['kind'], string> = { base: 'base · the house 
 export function ScenariosPage() {
   const { project, setProject, active, results, ordered, depth } = useProject();
   const branch = () => {
-    const id = uid();
+    const id = uid('s');
     setProject((p) => ({ ...p, active: id, scenarios: [...p.scenarios, { id, name: `${active.name} + changes`, kind: 'plan', parent: active.id, house: structuredClone(active.house) }] }));
   };
   const remove = () => {
@@ -214,7 +213,6 @@ function ScenariosView({ project, active, results, ordered, setProject }: {
   );
 }
 
-const mix = (a: number[], b: number[], f: number) => `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * Math.min(1, Math.max(0, f)))).join(',')})`;
 
 function CompareView({ project, results, ordered }: { project: Project; results: Map<string, HouseResult>; ordered: Scenario[] }) {
   const [aId, setA] = useState(ordered[0]?.id ?? '');

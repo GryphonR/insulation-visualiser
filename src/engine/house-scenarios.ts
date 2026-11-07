@@ -1,13 +1,14 @@
 // Scenarios (board 5): each scenario is a full copy of the house plus its parent. Its changes are the
 // difference from the parent, so they can be listed, switched off one by one and applied step by step.
-import { FUEL_LABEL, SOURCE_LABEL, buildupU, calcHouse } from './house';
-import type { Fuel, HeatSource, House } from './house';
+import { FUEL_LABEL, SOURCE_LABEL, buildupU, calcHouse, storeyLevel } from './house';
+import type { Fuel, HeatSource, House, TraceSettings } from './house';
 import { defaultHouse, loadHouse, upgradeHouse } from './house-default';
 
 export type Seg = string | { id: string };
 export interface Change { key: string; path: Seg[]; from: unknown; to: unknown }
 export interface Scenario { id: string; name: string; kind: 'base' | 'plan' | 'whatif'; parent: string | null; house: House }
-export interface Project { v: 1; scenarios: Scenario[]; active: string }
+/** Tracing images and satellite placement are drawing aids shared by every scenario, so they live here once, not in each house. */
+export interface Project { v: 1; scenarios: Scenario[]; active: string; trace?: TraceSettings }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
@@ -25,8 +26,7 @@ export function diff(a: unknown, b: unknown, path: Seg[] = [], out: Change[] = [
       else out.push({ key: segKey(p), path: p, from: ea, to: eb });
     }
   } else if (isObj(a) && isObj(b)) {
-    // Tracing images are drawing aids, not part of the house: never a scenario change.
-    for (const k of [...new Set([...Object.keys(a), ...Object.keys(b)])]) if (!(path.length === 0 && k === 'trace')) diff(a[k], b[k], [...path, k], out);
+    for (const k of [...new Set([...Object.keys(a), ...Object.keys(b)])]) diff(a[k], b[k], [...path, k], out);
   } else out.push({ key: segKey(path), path, from: a, to: b });
   return out;
 }
@@ -128,6 +128,7 @@ export function describe(c: Change, a: House, b: House): { what: string; from: s
     }
     case 'hp': {
       // A datasheet shows as its model name, whichever part of it changed.
+      if (second === 'co2') return { what: `Carbon factor, ${c.path[2] === 'elec' ? 'electricity' : FUEL_LABEL[c.path[2] as Fuel] ?? String(c.path[2])}, kgCO₂/kWh`, from: val(c.from), to: val(c.to) };
       if (second === 'sheet') return { what: 'Heat pump datasheet', from: a.hp.sheet ? a.hp.sheet.model || 'datasheet' : '—', to: b.hp.sheet ? b.hp.sheet.model || 'datasheet' : '—' };
       const lab = (v: unknown) => SOURCE_LABEL[v as HeatSource] ?? FUEL_LABEL[v as Fuel] ?? val(v);
       return { what: HP_FIELD[String(second)] ?? `Heat source ${field || String(second)}`, from: lab(c.from), to: lab(c.to) };
@@ -183,13 +184,16 @@ export function newProject(house: House = defaultHouse()): Project {
 export function sanitizeProject(p: unknown): Project | null {
   const q = p as Project | null;
   if (!q || q.v !== 1 || !Array.isArray(q.scenarios)) return null;
-  const scenarios = q.scenarios.filter((s) => s && typeof s.id === 'string' && s.house && Array.isArray(s.house.rooms) && Array.isArray(s.house.buildups) && Array.isArray(s.house.storeys))
-    .map((s) => ({ ...s, house: upgradeHouse(s.house) }));
+  const valid = q.scenarios.filter((s) => s && typeof s.id === 'string' && s.house && Array.isArray(s.house.rooms) && Array.isArray(s.house.buildups) && Array.isArray(s.house.storeys));
+  // Older saves kept tracing in every house, keyed by storey: take the first scenario's, keyed by level.
+  const old = (valid[0]?.house as { trace?: TraceSettings } | undefined)?.trace;
+  const trace = q.trace ?? (old && { ...old, images: Object.fromEntries(Object.entries(old.images ?? {}).map(([s, im]) => [storeyLevel(valid[0].house, +s), im])) });
+  const scenarios = valid.map((s) => { const { trace: _t, ...house } = s.house as House & { trace?: unknown }; return { ...s, house: upgradeHouse(house) }; });
   // A scenario whose parent was dropped hangs off the first one instead.
   const ids = new Set(scenarios.map((s) => s.id));
   scenarios.forEach((s, i) => { if (i > 0 && (!s.parent || !ids.has(s.parent))) s.parent = scenarios[0].id; if (i === 0) s.parent = null; });
   if (!scenarios.length) return null;
-  return { v: 1, scenarios, active: scenarios.some((s) => s.id === q.active) ? q.active : scenarios[0].id };
+  return { v: 1, scenarios, active: scenarios.some((s) => s.id === q.active) ? q.active : scenarios[0].id, ...(trace ? { trace } : {}) };
 }
 
 /** True once a project (or an older single-house save) has been stored: false on a first visit, which opens the start screen. */

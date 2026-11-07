@@ -12,6 +12,8 @@ export interface Bills {
   temps: number[];
   /** Gas for cooking and hot water per month, kWh; NaN to estimate from the summer months. */
   base: number;
+  /** Seasonal efficiency of the boiler on these bills, %; unset: the model's own figure when the house is on a boiler. */
+  eff?: number;
 }
 export interface Knobs { dt: number; q: number; hf: number }
 export const NO_KNOBS: Knobs = { dt: 0, q: 1, hf: 1 };

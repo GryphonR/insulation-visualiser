@@ -4,7 +4,8 @@ import { calcHouse } from '../engine/house';
 import { syncUfh } from '../engine/house-draw';
 import type { House, HouseResult } from '../engine/house';
 import { chain, newProject } from '../engine/house-scenarios';
-import { deleteStored, hasSaved, listProjects, loadActive, newProjectId, openStored, saveProject } from '../engine/projects';
+import { deleteStored, hasSaved, listProjects, loadActive, newProjectId, openStored, projectKey, rawStored, readStored, saveProject } from '../engine/projects';
+import { download } from '../lib/util';
 import type { ProjectInfo } from '../engine/projects';
 import type { Project, Scenario } from '../engine/house-scenarios';
 import type { Stackup } from '../engine/library';
@@ -69,7 +70,13 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
   const [saveOk, setSaveOk] = useState(true);
   useEffect(() => { if (project !== skipSave.current) setSaveOk(saveProject(projectId, project)); }, [project, projectId]);
   const show = (id: string, p: Project) => { skipSave.current = p; setProjectId(id); setHist({ past: [], now: p, future: [] }); bump((n) => n + 1); };
-  const openProject = (id: string) => { if (id === projectId) return; const p = openStored(id); if (p) { setSaveOk(true); show(id, p); } };
+  const openProject = (id: string) => {
+    if (id === projectId) return;
+    const p = openStored(id);
+    if (p) { setSaveOk(true); show(id, p); return; }
+    const raw = rawStored(id);
+    if (raw && confirm('This project can\'t be opened. Download its saved data to keep a copy?')) download(`project-${id}.json`, raw, 'application/json');
+  };
   const createProject = (p: Project) => { const id = newProjectId(); setSaveOk(saveProject(id, p)); show(id, p); };
   const deleteProject = (id: string) => {
     deleteStored(id);
@@ -78,6 +85,16 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
     const p = next && openStored(next.id);
     if (next && p) show(next.id, p); else createProject(newProject());
   };
+  // Another tab saved this project: take its version, so this tab's next save doesn't wipe out those edits.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== projectKey(projectId) || !e.newValue) return;
+      const p = readStored(projectId);
+      if (p) show(projectId, p);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [projectId]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;

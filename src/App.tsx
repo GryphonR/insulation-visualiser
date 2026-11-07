@@ -26,6 +26,7 @@ import { WallPage } from './ui/WallPage';
 import { ProjectProvider, useProject } from './ui/project';
 import { go, useRoute } from './ui/route';
 import { sanitizeProject } from './engine/house-scenarios';
+import { addImportedMaterials } from './engine/data';
 import './ui/house.css';
 import './ui/shell.css';
 
@@ -92,7 +93,11 @@ function Routes({ firstVisit }: { firstVisit: boolean }) {
     case 'moisture': page = <HouseMoisture key={active.id} house={house} />; break;
     case 'report':
       page = <HouseReport house={house} scenarioName={active.name} project={project}
-        onImport={(p) => { const q = sanitizeProject(p); if (q) setProject(q); else alert('That file has no usable scenarios.'); }} />;
+        onImport={(p) => {
+          // Register the file's custom materials first, or cleaning the project drops the layers made of them.
+          addImportedMaterials((p as { materials?: unknown }).materials);
+          const q = sanitizeProject(p); if (q) setProject(q); else alert('That file has no usable scenarios.');
+        }} />;
       break;
     case 'scenarios': page = <ScenariosPage />; break;
     case 'compare': page = <CompareAB />; break;

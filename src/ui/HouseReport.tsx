@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { MONTHS } from '../engine/data';
+import { MONTHS, customMaterialsIn } from '../engine/data';
 import { FUEL_LABEL, SOURCE_LABEL, buildupU, calcHouse, effText, isHeatPump, tariff } from '../engine/house';
 import type { House } from '../engine/house';
 import { RAD_LABEL, ratedOf } from '../engine/house-heating';
@@ -49,7 +49,7 @@ export function HouseReport({ house, scenarioName, project, onImport }: { house:
           <div className="chips">
             <button type="button" className="btn-primary" onClick={() => window.print()}>Print / save PDF</button>
             <button type="button" className="btn-secondary" onClick={csv}>Room table (CSV)</button>
-            <button type="button" className="btn-secondary" onClick={() => download('house-project.json', JSON.stringify(project, null, 1), 'application/json')}>Export project (JSON)</button>
+            <button type="button" className="btn-secondary" onClick={() => download('house-project.json', JSON.stringify({ ...project, materials: customMaterialsIn(project.scenarios.flatMap((s) => s.house.buildups.flatMap((b) => b.layers))) }, null, 1), 'application/json')}>Export project (JSON)</button>
             <button type="button" className="btn-secondary" onClick={() => fileRef.current?.click()}>Import project…</button>
             <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = ''; }} />
           </div>

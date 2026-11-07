@@ -168,6 +168,14 @@ const regroup = () => {
 const validCustom = (m: Material) =>
   !!m && typeof m.id === 'string' && typeof m.name === 'string' && Number.isFinite(m.rho) && Number.isFinite(m.cp) && ((m.k ?? 0) > 0 || (m.R ?? 0) > 0) && Number.isFinite(m.t);
 
+/** Custom materials carried in an imported project file: keeps the valid ones this browser doesn't already have. */
+export function addImportedMaterials(list: unknown): void {
+  if (Array.isArray(list)) for (const m of list as Material[]) if (validCustom(m) && !MAT[m.id]) saveCustomMaterial(m);
+}
+
+/** Custom materials used by any of these build-up layers: what a project file needs to carry. */
+export const customMaterialsIn = (layers: Array<[string, number]>): Material[] => customMaterials().filter((m) => layers.some(([id]) => id === m.id));
+
 /** The materials the user added, always in the 'custom' group. */
 export const customMaterials = (): Material[] => MATERIALS.filter((m) => m.cat === 'custom');
 

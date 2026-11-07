@@ -8,10 +8,9 @@ import { Chip } from './controls';
 import { HouseUfh } from './HouseUfh';
 import { MAX_PA_M, MAX_V, PIPE_SIZES, autoPipes, sizePipes } from '../engine/house-pipes';
 import { addEmitter } from '../engine/house-draw';
-import { Why, fmt } from './hform';
+import { Why, fmt, uid } from './hform';
 import { WHY, sourceWhy } from './assumptions';
 
-const uid = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 const ZCOL = ['#c2410c', '#1f6fb5', '#1f7a4d', '#7a45b8', '#b45309', '#be185d'];
 
 export type HeatingSection = 'system' | 'emitters' | 'zones' | 'pipes';
