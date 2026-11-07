@@ -170,7 +170,18 @@ export interface House {
     method: 'model' | 'cibse'; source: 'est' | 'meas'; q50: number; factors: Factor[]; devices: Device[];
     mech: 'none' | 'dmev' | 'mvhr'; mechFlow: number; eta: number; minAch: boolean;
   };
-  hp: { capacity: number; maxFlow: number; elecP: number; gasP: number; gasSC: number; boilerEff: number };
+  /**
+   * Heat source (named hp for older saves): type, boiler fuel, output at the design temperature, max flow, prices (p/kWh,
+   * gas standing p/day and whether to count it), non-condensing boiler seasonal efficiency %, heat pump
+   * performance factor (share of the ideal Carnot COP), and carbon factors kgCO2/kWh.
+   */
+  hp: {
+    source: HeatSource; fuel: Fuel; capacity: number; maxFlow: number;
+    elecP: number; gasP: number; gasSC: number; gasStanding: boolean; oilP: number; lpgP: number; boilerEff: number; hpFactor: number;
+    co2: Record<'elec' | Fuel, number>;
+    /** A specific heat pump's datasheet COP points; used in place of hpFactor while `source` matches the heat source. */
+    sheet?: HeatPumpSheet;
+  };
   gains: Gains;
   heating: Heating;
   /** Applied bills calibration (board 4d): rooms warmer/cooler by dt, estimated q50 scaled by q, share of rooms heated hf. */
@@ -664,8 +675,10 @@ export interface HouseResult {
   q50: number; n50: number; envelope: number; heatedV: number; heatedA: number;
   peakW: number; paths: Array<{ label: string; W: number }>;
   htc: number; hlp: number; annualKWh: number;
-  months: Array<{ heat: number; Tout: number; flow: number; cop: number; elec: number }>;
-  hp: { designCop: number; scop: number; elecKWh: number; spare: number; costHP: number; costGas: number; gasKWh: number };
+  /** By month: heat, outside and flow temperature, heat per kWh bought (COP or boiler efficiency), kWh bought. */
+  months: Array<{ heat: number; Tout: number; flow: number; eff: number; bought: number }>;
+  /** Heat source: heat per kWh bought on the design day and over the year, kWh bought, £/yr (standing charge included), kgCO2/yr, spare capacity. */
+  hp: { designEff: number; seasonal: number; kwh: number; spare: number; cost: number; co2: number };
   checks: Array<{ level: 'error' | 'warn'; text: string }>;
   heat: {
     designFlow: number;
@@ -678,10 +691,78 @@ export interface HouseResult {
 
 export function deviceM3(d: Device) { return d.opts[d.pick]?.[1] ?? 0; }
 
-/** Carnot fraction 0.45 on refrigerant temperatures (condensing 5 K above flow, evaporating 6 K below outside), 0.93 for defrost between −4 and 6 °C. */
-export function heatPumpCop(flow: number, Te: number): number {
-  const Tc = flow + 5, Tev = Te - 6, c = (0.45 * (Tc + 273.15)) / Math.max(3, Tc - Tev);
-  return Math.min(7, c * (Te > -4 && Te < 6 ? 0.93 : 1));
+/** Share `f` of the ideal (Carnot) COP between refrigerant temperatures: condensing 5 K above flow, evaporating at `Tev`. */
+const carnotCop = (flow: number, Tev: number, f: number) => (f * (flow + 5 + 273.15)) / Math.max(3, flow + 5 - Tev);
+
+/** Air source: evaporating 6 K below outside, 0.93 for defrost between −4 and 6 °C. */
+export function heatPumpCop(flow: number, Te: number, f = 0.45): number {
+  return Math.min(7, carnotCop(flow, Te - 6, f) * (Te > -4 && Te < 6 ? 0.93 : 1));
+}
+
+export type HeatSource = 'boiler' | 'condensing' | 'ashp' | 'gshp';
+export type Fuel = 'gas' | 'oil' | 'lpg';
+export const SOURCE_LABEL: Record<HeatSource, string> = { boiler: 'Boiler, non-condensing', condensing: 'Condensing boiler', ashp: 'Air-to-water heat pump', gshp: 'Ground-to-water heat pump' };
+export const FUEL_LABEL: Record<Fuel, string> = { gas: 'Mains gas', oil: 'Heating oil', lpg: 'LPG' };
+export const isHeatPump = (s: HeatSource) => s === 'ashp' || s === 'gshp';
+/** Heat per kWh bought as text: COP for a heat pump, % for a boiler. */
+export const effText = (s: HeatSource, e: number) => (isHeatPump(s) ? `COP ${e.toFixed(2)}` : `${Math.round(e * 100)}%`);
+
+/** Ground loop brine: a few degrees under the ground temperature, coldest in March, warmest in September (month 0–11). */
+export const brineTemp = (Tg: number, month: number) => Tg - 5 + 3 * Math.cos((2 * Math.PI * (month - 8)) / 12);
+
+/**
+ * Condensing boiler gross efficiency from return water temperature: fully condensing at 30 °C return or below,
+ * falling to 86% at the flue gas dew point (gas 55, LPG 50, oil 47 °C) and above.
+ * shortcut: return is flow minus the design drop at every load; real part-load returns run cooler.
+ */
+const CONDENSING: Record<Fuel, { dew: number; max: number }> = { gas: { dew: 55, max: 96 }, lpg: { dew: 50, max: 94 }, oil: { dew: 47, max: 93 } };
+export function condensingEff(fuel: Fuel, ret: number): number {
+  const { dew, max } = CONDENSING[fuel];
+  return (ret <= 30 ? max : ret >= dew ? 86 : max - ((max - 86) * (ret - 30)) / (dew - 30)) / 100;
+}
+
+/** One datasheet test point: source temperature (outside air, or brine for ground source), flow temperature, COP. A7/W35 → 7, 35. */
+export interface SheetPoint { src: number; flow: number; cop: number }
+export interface HeatPumpSheet { source: 'ashp' | 'gshp'; model: string; points: SheetPoint[] }
+
+/** The model's COP at a source temperature with performance factor 1 (before the 7 cap). */
+const idealCop = (source: 'ashp' | 'gshp', flow: number, src: number) =>
+  source === 'gshp' ? carnotCop(flow, src - 4, 1) : carnotCop(flow, src - 6, 1) * (src > -4 && src < 6 ? 0.93 : 1);
+
+/** Performance factor that reproduces a datasheet point exactly. */
+export const pointFactor = (source: 'ashp' | 'gshp', p: SheetPoint) => p.cop / idealCop(source, p.flow, p.src);
+
+/**
+ * Performance factor at source temperature `src` from a datasheet: each point's own factor, averaged where points share a
+ * source temperature, straight-line between source temperatures and held level beyond the ends. Null with no usable point.
+ */
+export function sheetFactor(sheet: HeatPumpSheet, src: number): number | null {
+  const by = new Map<number, number[]>();
+  for (const p of sheet.points) if (p.cop > 0 && Number.isFinite(p.src) && Number.isFinite(p.flow) && p.flow + 5 - p.src > 3) by.set(p.src, [...(by.get(p.src) ?? []), pointFactor(sheet.source, p)]);
+  const pts = [...by].map(([t, fs]) => [t, fs.reduce((a, b) => a + b, 0) / fs.length] as const).sort((a, b) => a[0] - b[0]);
+  if (!pts.length) return null;
+  if (src <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) if (src <= pts[i][0]) return pts[i - 1][1] + ((pts[i][1] - pts[i - 1][1]) * (src - pts[i - 1][0])) / (pts[i][0] - pts[i - 1][0]);
+  return pts[pts.length - 1][1];
+}
+
+/** The datasheet in use for this heat source, if any. */
+export const activeSheet = (hp: House['hp']) => (hp.sheet && hp.sheet.source === hp.source && sheetFactor(hp.sheet, 0) != null ? hp.sheet : null);
+
+/** Heat per kWh bought at system flow `flow` and outside `Te`, in month 0–11 (ground temperature Tg for ground source). */
+export function sourceEff(h: Pick<House, 'hp' | 'heating'>, flow: number, Te: number, Tg: number, month: number): number {
+  const s = h.hp.source;
+  if (s === 'boiler') return (h.hp.boilerEff || 80) / 100;
+  if (s === 'condensing') return condensingEff(h.hp.fuel, flow - h.heating.dT);
+  const src = s === 'gshp' ? brineTemp(Tg, month) : Te, sheet = activeSheet(h.hp);
+  return Math.min(7, idealCop(s, flow, src) * ((sheet && sheetFactor(sheet, src)) ?? h.hp.hpFactor));
+}
+
+/** What the source buys: unit price p/kWh, the standing charge that goes with it £/yr, and carbon kgCO2/kWh. */
+export function tariff(hp: House['hp']): { p: number; standing: number; co2: number } {
+  if (isHeatPump(hp.source)) return { p: hp.elecP, standing: 0, co2: hp.co2.elec };
+  const p = hp.fuel === 'oil' ? hp.oilP : hp.fuel === 'lpg' ? hp.lpgP : hp.gasP;
+  return { p, standing: hp.fuel === 'gas' && hp.gasStanding ? (hp.gasSC * 365) / 100 : 0, co2: hp.co2[hp.fuel] };
 }
 
 export interface LoftSlope { az: number; tilt: number; area: number }
@@ -820,7 +901,7 @@ export function calcHouse(h: House): HouseResult {
   const annualKWh = ((htc * hdd * 24) / 1000) * ddRatio * (h.calib?.hf ?? 1);
   const needs = hr.map((x) => ({ room: x.room, need: x.totalW }));
   const flowAt = (Te: number) => systemFlow(h, needs, Tout, Te);
-  const copAt = (Te: number) => heatPumpCop(flowAt(Te), Te);
+  const effAt = (Te: number, m: number) => sourceEff(h, flowAt(Te), Te, Tg, m);
   const designFlow = flowAt(Tout);
   const emitRooms = hr.map((x) => {
     const has = h.heating.emitters.some((e) => e.room === x.room.id);
@@ -829,14 +910,15 @@ export function calcHouse(h: House): HouseResult {
   });
   const gov = emitRooms.filter((e) => e.has).reduce<(typeof emitRooms)[number] | null>((a, e) => (!a || e.req > a.req ? e : a), null);
   const months = MEAN.map((m, i) => {
-    const heat = (annualKWh * wts[i]) / wsum, cop = copAt(m);
-    return { heat, Tout: m, flow: flowAt(m), cop, elec: heat / cop };
+    const heat = (annualKWh * wts[i]) / wsum, eff = effAt(m, i);
+    return { heat, Tout: m, flow: flowAt(m), eff, bought: heat / eff };
   });
-  const elecKWh = months.reduce((t, m) => t + m.elec, 0), gasKWh = annualKWh / (h.hp.boilerEff / 100 || 1);
+  const kwh = months.reduce((t, m) => t + m.bought, 0), tf = tariff(h.hp);
   const hp = {
-    designCop: copAt(Tout), scop: elecKWh > EPS ? annualKWh / elecKWh : 0, elecKWh,
+    // The design day is in January; ground loops are coldest in March.
+    designEff: effAt(Tout, h.hp.source === 'gshp' ? 2 : 0), seasonal: kwh > EPS ? annualKWh / kwh : 0, kwh,
     spare: peakW > EPS ? (h.hp.capacity * 1000) / peakW - 1 : 0,
-    costHP: (elecKWh * h.hp.elecP) / 100, costGas: (gasKWh * h.hp.gasP) / 100 + (h.hp.gasSC * 365) / 100, gasKWh,
+    cost: (kwh * tf.p) / 100 + tf.standing, co2: kwh * tf.co2,
   };
 
   // Model checks (board 1f)
@@ -871,7 +953,7 @@ export function calcHouse(h: House): HouseResult {
   }
   if (!hddKnown) checks.push({ level: 'warn', text: `Postcode area "${area || h.climate.postcode}" not in the MCS degree-day table; using 2,200 K·day.` });
   if (v.mech === 'mvhr' && q50 > 5) checks.push({ level: 'warn', text: `MVHR with q50 ${q50.toFixed(1)}: above 5 m³/h·m² most of the heat recovery is lost to leakage.` });
-  if (hp.spare < 0) checks.push({ level: 'warn', text: `Heat pump is ${Math.round(-hp.spare * 100)}% short of the design heat loss.` });
+  if (hp.spare < 0) checks.push({ level: 'warn', text: `${SOURCE_LABEL[h.hp.source]} is ${Math.round(-hp.spare * 100)}% short of the design heat loss.` });
   for (const e of emitRooms) {
     const name = h.rooms.find((r) => r.id === e.id)?.name ?? e.id;
     if (!e.has) checks.push({ level: 'warn', text: `${name} is heated but has no emitter.` });

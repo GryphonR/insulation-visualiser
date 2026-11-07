@@ -4,7 +4,8 @@ import { calcHouse } from '../engine/house';
 import type { House } from '../engine/house';
 import { NO_KNOBS, bestFit, calibrate, demoBills, parseMeterCsv } from '../engine/house-calibrate';
 import type { Bills, Knobs } from '../engine/house-calibrate';
-import { fmt } from './hform';
+import { Why, fmt } from './hform';
+import { WHY } from './assumptions';
 
 const EMPTY: Bills = { gas: Array(12).fill(NaN), temps: Array(12).fill(NaN), base: NaN };
 
@@ -66,7 +67,7 @@ export function HouseBills({ house, setHouse }: { house: House; setHouse: (fn: (
             <label className="hf"><span className="eyebrow">Cooking & hot water per month</span>
               <span className="hf-in"><input type="number" className="thk-input" placeholder={fmt(fit.base)} value={Number.isFinite(bills.base) ? bills.base : ''} onChange={(e) => setBills({ ...bills, base: e.target.value === '' ? NaN : Number(e.target.value) })} /><span className="small muted">kWh (blank: lowest summer month)</span></span>
             </label>
-            <label className="hf"><span className="eyebrow">Boiler efficiency</span>
+            <label className="hf"><span className="hf-lab"><span className="eyebrow">Boiler efficiency</span><Why>{`The efficiency of the boiler that used the gas on these bills, used to turn gas bought into heat delivered. ${WHY.boilerEff} A condensing boiler on a 70/60 °C system typically manages 85–88%.`}</Why></span>
               <span className="hf-in"><input type="number" className="thk-input" value={eff} onChange={(e) => setHouse((h) => ({ ...h, hp: { ...h.hp, boilerEff: Number(e.target.value) || 85 } }))} /><span className="small muted">%</span></span>
             </label>
           </div>

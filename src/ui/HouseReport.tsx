@@ -1,12 +1,13 @@
 import { useMemo, useRef, useState } from 'react';
 import { MONTHS } from '../engine/data';
-import { buildupU, calcHouse } from '../engine/house';
+import { FUEL_LABEL, SOURCE_LABEL, buildupU, calcHouse, effText, isHeatPump, tariff } from '../engine/house';
 import type { House } from '../engine/house';
 import { RAD_LABEL, ratedOf } from '../engine/house-heating';
 import type { Project } from '../engine/house-scenarios';
 import { download } from '../lib/util';
 import { Chip } from './controls';
 import { fmt } from './hform';
+import { sourceWhy } from './assumptions';
 
 const SECTIONS = [['cond', 'Design conditions'], ['rooms', 'Room-by-room table'], ['hp', 'Heat pump and running'], ['fabric', 'Build-ups (U-values)'], ['assume', 'Assumptions and checks']] as const;
 type Sec = (typeof SECTIONS)[number][0];
@@ -66,7 +67,7 @@ export function HouseReport({ house, scenarioName, project, onImport }: { house:
           <div className="tile"><span className="tiles-head">Design heat loss</span><span className="tile-value"><span className="mono big">{fmt(res.peakW / 1000, 2)}</span><span className="small muted">kW</span></span></div>
           <div className="tile"><span className="tiles-head">Heat loss parameter</span><span className="tile-value"><span className="mono big">{fmt(res.hlp, 2)}</span><span className="small muted">W/m²K</span></span></div>
           <div className="tile"><span className="tiles-head">Space heating</span><span className="tile-value"><span className="mono big">{fmt(Math.round(res.annualKWh / 100) * 100)}</span><span className="small muted">kWh/yr</span></span></div>
-          <div className="tile"><span className="tiles-head">Heat pump</span><span className="tile-value"><span className="mono big">{house.hp.capacity}</span><span className="small muted">kW · SCOP {fmt(res.hp.scop, 2)}</span></span></div>
+          <div className="tile"><span className="tiles-head">{SOURCE_LABEL[house.hp.source]}</span><span className="tile-value"><span className="mono big">{house.hp.capacity}</span><span className="small muted">kW · {isHeatPump(house.hp.source) ? `SCOP ${fmt(res.hp.seasonal, 2)}` : `${fmt(res.hp.seasonal * 100)}% seasonal`}</span></span></div>
         </div>
 
         {inc.cond && <section>
@@ -96,11 +97,12 @@ export function HouseReport({ house, scenarioName, project, onImport }: { house:
         </section>}
 
         {inc.hp && <section>
-          <h2>Heat pump and running</h2>
-          <p className="small">{house.hp.capacity} kW at {res.Tout} °C ({res.hp.spare >= 0 ? `${fmt(res.hp.spare * 100)}% spare` : `${fmt(-res.hp.spare * 100)}% short`}). Flow {fmt(res.heat.designFlow, 1)} °C on the design day ({house.heating.control === 'ideal' ? 'ideal weather compensation' : house.heating.control === 'curve' ? 'weather compensation curve' : 'fixed flow'}){res.heat.gov ? `, set by ${house.rooms.find((r) => r.id === res.heat.gov!.id)?.name}` : ''}. COP {fmt(res.hp.designCop, 2)} on the design day, SCOP {fmt(res.hp.scop, 2)}.</p>
-          <p className="small">{fmt(res.hp.elecKWh)} kWh electricity a year for space heating, about £{fmt(res.hp.costHP)} at {house.hp.elecP}p/kWh, against £{fmt(res.hp.costGas)} for a {house.hp.boilerEff}% gas boiler including the gas standing charge.</p>
+          <h2>Heat source and running</h2>
+          <p className="small">{SOURCE_LABEL[house.hp.source]}{isHeatPump(house.hp.source) ? '' : ` on ${FUEL_LABEL[house.hp.fuel].toLowerCase()}`}, {house.hp.capacity} kW at {res.Tout} °C ({res.hp.spare >= 0 ? `${fmt(res.hp.spare * 100)}% spare` : `${fmt(-res.hp.spare * 100)}% short`}). Flow {fmt(res.heat.designFlow, 1)} °C on the design day ({house.heating.control === 'ideal' ? 'ideal weather compensation' : house.heating.control === 'curve' ? 'weather compensation curve' : 'fixed flow'}){res.heat.gov ? `, set by ${house.rooms.find((r) => r.id === res.heat.gov!.id)?.name}` : ''}. {effText(house.hp.source, res.hp.designEff)} on the design day, {effText(house.hp.source, res.hp.seasonal)} over the year.</p>
+          <p className="small">{fmt(res.hp.kwh)} kWh {isHeatPump(house.hp.source) ? 'electricity' : FUEL_LABEL[house.hp.fuel].toLowerCase()} a year for space heating, about £{fmt(res.hp.cost)} at {tariff(house.hp).p}p/kWh{tariff(house.hp).standing ? ' plus the gas standing charge' : ' (standing charges not included)'}, and {fmt(res.hp.co2)} kgCO₂ at {tariff(house.hp).co2} kg/kWh.</p>
+          <p className="small muted">How the efficiency is worked out: {sourceWhy(house.hp)} Space heating only; hot water, pumps and backup heaters are not included.</p>
           <table className="h-table months-t"><thead><tr><th />{MONTHS.map((m) => <th key={m} className="n">{m}</th>)}</tr></thead>
-            <tbody><tr><td>Heat kWh</td>{res.months.map((m, i) => <td key={i} className="n mono">{fmt(m.heat)}</td>)}</tr><tr><td>COP</td>{res.months.map((m, i) => <td key={i} className="n mono">{m.heat > 0 ? fmt(m.cop, 1) : '—'}</td>)}</tr></tbody>
+            <tbody><tr><td>Heat kWh</td>{res.months.map((m, i) => <td key={i} className="n mono">{fmt(m.heat)}</td>)}</tr><tr><td>{isHeatPump(house.hp.source) ? 'COP' : 'Efficiency %'}</td>{res.months.map((m, i) => <td key={i} className="n mono">{m.heat > 0 ? (isHeatPump(house.hp.source) ? fmt(m.eff, 1) : fmt(m.eff * 100)) : '—'}</td>)}</tr></tbody>
           </table>
         </section>}
 

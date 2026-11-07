@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { calcHouse, onStorey, roomPoly } from '../engine/house';
+import { FUEL_LABEL, SOURCE_LABEL, calcHouse, isHeatPump, onStorey, roomPoly } from '../engine/house';
 import { centroid } from '../engine/geom';
 import type { Pt } from '../engine/geom';
 import { planBounds } from './HousePlan';
@@ -10,10 +10,18 @@ import { Chip } from './controls';
 import { useProject } from './project';
 import { href } from './route';
 import './house.css';
-import { fmt } from './hform';
+import { Why, fmt } from './hform';
+import { WHY } from './assumptions';
 
 const sgn = (v: number, d = 0) => (Math.abs(v) < 0.5 * 10 ** -d ? '0' : `${v > 0 ? '+' : '−'}${fmt(Math.abs(v), d)}`);
 const uid = () => `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+const ROW_WHY: Record<string, string> = {
+  'Heat source spare, %': WHY.capacity,
+  'Heat per kWh bought (est. SCOP or efficiency)': `${WHY.seasonal} Heat pump COPs are estimates for a typical unit; see the Energy & cost page for how each is worked out and to set the performance factor.`,
+  'Energy bought, kWh/yr': WHY.bought,
+  'Running cost, £/yr': 'Energy bought × each scenario\'s unit price, plus the gas standing charge only where it is switched on for a gas boiler. Prices are set on the Energy & cost page.',
+  'Carbon, kgCO₂/yr': WHY.carbon,
+};
 const KIND_LABEL: Record<Scenario['kind'], string> = { base: 'base · the house today', plan: 'plan', whatif: 'what-if' };
 
 /** Board 5: the scenario tree with the bar to branch, rename and delete. Changes are made in the model, build-ups and heating pages. */
@@ -92,9 +100,11 @@ function ScenariosView({ project, active, results, ordered, setProject }: {
     ['Peak heat loss, kW', (r) => r.peakW / 1000, 2, ''],
     ['Space heating, kWh/yr', (r) => r.annualKWh, 0, '%'],
     ['Heat loss parameter, W/m²K', (r) => r.hlp, 2, ''],
-    ['Heat pump spare, %', (r) => r.hp.spare * 100, 0, ''],
-    ['SCOP', (r) => r.hp.scop, 2, ''],
-    ['Running cost, £/yr', (r) => r.hp.costHP, 0, '%'],
+    ['Heat source spare, %', (r) => r.hp.spare * 100, 0, ''],
+    ['Heat per kWh bought (est. SCOP or efficiency)', (r) => r.hp.seasonal, 2, ''],
+    ['Energy bought, kWh/yr', (r) => r.hp.kwh, 0, '%'],
+    ['Running cost, £/yr', (r) => r.hp.cost, 0, '%'],
+    ['Carbon, kgCO₂/yr', (r) => r.hp.co2, 0, '%'],
   ];
   const lo = Math.min(...fall.map((f) => f.kwh), Infinity) * 0.9, hi = Math.max(...fall.map((f) => f.kwh), 1);
   const pos = (v: number) => ((v - lo) / (hi - lo || 1)) * 100;
@@ -124,9 +134,10 @@ function ScenariosView({ project, active, results, ordered, setProject }: {
             <table className="h-table">
               <thead><tr><th />{cols.map(({ s }) => <th key={s.id} className={s.id === active.id ? 'n hl' : 'n'}>{s.name}</th>)}</tr></thead>
               <tbody>
+                <tr><td>Heat source</td>{cols.map(({ s }) => <td key={s.id} className={s.id === active.id ? 'n small hl' : 'n small'}>{SOURCE_LABEL[s.house.hp.source]}{isHeatPump(s.house.hp.source) ? '' : `, ${FUEL_LABEL[s.house.hp.fuel].toLowerCase()}`}</td>)}</tr>
                 {rowsM.map(([label, f, d, mode]) => (
                   <tr key={label}>
-                    <td>{label}</td>
+                    <td>{label}{ROW_WHY[label] && <Why>{ROW_WHY[label]}</Why>}</td>
                     {cols.map(({ s, r }) => {
                       const v = f(r), b = f(base), dv = mode === '%' ? ((v - b) / (b || 1)) * 100 : v - b;
                       return <td key={s.id} className={s.id === active.id ? 'n mono hl' : 'n mono'}>{fmt(v, d)}{s.parent && <span className="muted small"> {sgn(dv, mode === '%' ? 0 : d)}{mode}</span>}</td>;
@@ -147,24 +158,25 @@ function ScenariosView({ project, active, results, ordered, setProject }: {
             {own.length === 0 && <p className="small">No changes yet: edit this scenario in the Model view.</p>}
             <div className="h-table-wrap">
               <table className="h-table">
-                <thead><tr><th /><th>Change</th><th>From</th><th>To</th><th className="n">Peak W</th><th className="n">kWh/yr</th></tr></thead>
+                <thead><tr><th /><th>Change</th><th>From</th><th>To</th><th className="n">Peak W</th><th className="n">kWh/yr</th><th className="n">£/yr<Why>{ROW_WHY['Running cost, £/yr']}</Why></th></tr></thead>
                 <tbody>
                   {own.map((c) => {
                     const d0 = describe(c.head, parent.house, active.house), k = enabled.indexOf(c);
                     const d = c.extra ? { ...d0, what: `${d0.what} (with ${c.extra} linked change${c.extra > 1 ? 's' : ''}: windows, emitters, faces)` } : d0;
-                    const dw = k >= 0 ? fall[k + 1].peakW - fall[k].peakW : 0, dk = k >= 0 ? fall[k + 1].kwh - fall[k].kwh : 0;
+                    const dw = k >= 0 ? fall[k + 1].peakW - fall[k].peakW : 0, dk = k >= 0 ? fall[k + 1].kwh - fall[k].kwh : 0, dc = k >= 0 ? fall[k + 1].cost - fall[k].cost : 0;
                     return (
                       <tr key={c.key} className={off[c.key] ? 'off' : ''}>
                         <td><input type="checkbox" checked={!off[c.key]} aria-label={`Include ${d.what}`} onChange={() => setOff((o) => ({ ...o, [c.key]: !o[c.key] }))} /></td>
                         <td>{d.what}</td><td className="muted">{d.from}</td><td>{d.to}</td>
                         <td className={`n mono ${dw < 0 ? 'good' : ''}`}>{k >= 0 ? sgn(dw) : '—'}</td>
                         <td className={`n mono ${dk < 0 ? 'good' : ''}`}>{k >= 0 ? sgn(dk) : '—'}</td>
+                        <td className={`n mono ${dc < 0 ? 'good' : ''}`}>{k >= 0 ? sgn(dc) : '—'}</td>
                       </tr>
                     );
                   })}
                   {inherited.map(({ c, from, a, b }) => {
                     const d = describe(c, a, b);
-                    return <tr key={`${from.id}:${c.key}`} className="inh"><td /><td>{d.what}</td><td className="muted">{d.from}</td><td>{d.to}</td><td colSpan={2} className="small muted">from {from.name}</td></tr>;
+                    return <tr key={`${from.id}:${c.key}`} className="inh"><td /><td>{d.what}</td><td className="muted">{d.from}</td><td>{d.to}</td><td colSpan={3} className="small muted">from {from.name}</td></tr>;
                   })}
                 </tbody>
               </table>
@@ -281,7 +293,7 @@ function CompareView({ project, results, ordered }: { project: Project; results:
           {mode === 'split'
             ? <div className="split">{plan(A.house, rA, 'A', 34)}{plan(B.house, rB, 'B', 34)}</div>
             : plan(mode === 'A' ? A.house : B.house, mode === 'A' ? rA : rB, mode === 'diff' ? 'diff' : mode, 48)}
-          <p className="small mono">A {fmt(rA.peakW)} W · B {fmt(rB.peakW)} W · {sgn(rB.peakW - rA.peakW)} W · {sgn(rB.annualKWh - rA.annualKWh)} kWh/yr</p>
+          <p className="small mono">A {fmt(rA.peakW)} W · B {fmt(rB.peakW)} W · {sgn(rB.peakW - rA.peakW)} W · {sgn(rB.annualKWh - rA.annualKWh)} kWh/yr heat · £{sgn(rB.hp.cost - rA.hp.cost)}/yr · {sgn(rB.hp.co2 - rA.hp.co2)} kgCO₂/yr</p>
         </section>
       </div>
       <div className="house-col">

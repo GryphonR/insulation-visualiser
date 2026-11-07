@@ -1,7 +1,7 @@
 // Scenarios (board 5): each scenario is a full copy of the house plus its parent. Its changes are the
 // difference from the parent, so they can be listed, switched off one by one and applied step by step.
-import { buildupU, calcHouse } from './house';
-import type { House } from './house';
+import { FUEL_LABEL, SOURCE_LABEL, buildupU, calcHouse } from './house';
+import type { Fuel, HeatSource, House } from './house';
 import { defaultHouse, loadHouse, upgradeHouse } from './house-default';
 
 export type Seg = string | { id: string };
@@ -58,6 +58,11 @@ export function applyChanges(h: House, changes: Change[]): House {
 }
 
 const SIDE_NAME: Record<string, string> = { N: 'north', E: 'east', S: 'south', W: 'west' };
+const HP_FIELD: Record<string, string> = {
+  source: 'Heat source', fuel: 'Boiler fuel', capacity: 'Heat source output, kW', maxFlow: 'Max flow, °C', boilerEff: 'Boiler efficiency, %',
+  sheet: 'Heat pump datasheet', hpFactor: 'Heat pump performance factor', gasStanding: 'Gas standing charge counted',
+  elecP: 'Electricity, p/kWh', gasP: 'Gas, p/kWh', gasSC: 'Gas standing, p/day', oilP: 'Oil, p/kWh', lpgP: 'LPG, p/kWh',
+};
 
 /** Plain-English name for what a change touches, and its from / to values. */
 export function describe(c: Change, a: House, b: House): { what: string; from: string; to: string } {
@@ -121,6 +126,12 @@ export function describe(c: Change, a: House, b: House): { what: string; from: s
       }
       return { what: `Ventilation ${String(second)}`, from: val(c.from), to: val(c.to) };
     }
+    case 'hp': {
+      // A datasheet shows as its model name, whichever part of it changed.
+      if (second === 'sheet') return { what: 'Heat pump datasheet', from: a.hp.sheet ? a.hp.sheet.model || 'datasheet' : '—', to: b.hp.sheet ? b.hp.sheet.model || 'datasheet' : '—' };
+      const lab = (v: unknown) => SOURCE_LABEL[v as HeatSource] ?? FUEL_LABEL[v as Fuel] ?? val(v);
+      return { what: HP_FIELD[String(second)] ?? `Heat source ${field || String(second)}`, from: lab(c.from), to: lab(c.to) };
+    }
     default: return { what: c.path.map((s) => (typeof s === 'string' ? s : s.id)).join(' › '), from: val(c.from), to: val(c.to) };
   }
 }
@@ -154,10 +165,10 @@ export function groupChanges(changes: Change[]): ChangeGroup[] {
 export function steps(parent: House, changes: Array<Change | ChangeGroup>) {
   const flat = (x: Change | ChangeGroup) => ('changes' in x ? x.changes : [x]);
   const r0 = calcHouse(parent);
-  const out = [{ peakW: r0.peakW, kwh: r0.annualKWh }];
+  const out = [{ peakW: r0.peakW, kwh: r0.annualKWh, cost: r0.hp.cost }];
   for (let i = 1; i <= changes.length; i++) {
     const r = calcHouse(applyChanges(parent, changes.slice(0, i).flatMap(flat)));
-    out.push({ peakW: r.peakW, kwh: r.annualKWh });
+    out.push({ peakW: r.peakW, kwh: r.annualKWh, cost: r.hp.cost });
   }
   return out;
 }

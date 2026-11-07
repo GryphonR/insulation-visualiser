@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calcHouse } from './house';
+import { brineTemp, calcHouse, condensingEff, sheetFactor, sourceEff } from './house';
 import { defaultHouse } from './house-default';
 import { emitterOut, flowNeeded, loopLength, radRated, roomOut, systemFlow } from './house-heating';
 
@@ -33,7 +33,7 @@ describe('emitters and flow temperature', () => {
     hh.heating.emitters.find((e) => e.id === 'R9')!.rated = 3000;
     hh.heating.emitters.find((e) => e.id === 'R4')!.rated = 1500;
     const r2 = calcHouse(hh);
-    expect(r2.hp.scop).toBeGreaterThan(res.hp.scop);
+    expect(r2.hp.seasonal).toBeGreaterThan(res.hp.seasonal);
     expect(r2.heat.rooms.find((x) => x.id === 'kitchen')!.cover).toBeGreaterThan(res.heat.rooms.find((x) => x.id === 'kitchen')!.cover);
   });
 
@@ -51,5 +51,56 @@ describe('emitters and flow temperature', () => {
     expect(q).toBeCloseTo(8.92 * 9 ** 1.1, 3);
     hh.heating.zones.find((z) => z.id === 'z4')!.blend = 35;
     expect(emitterOut(e, 70, 20, hh)).toBeCloseTo(12 * (32.5 - 20) / (1 / 6 + 0.01), 3);
+  });
+});
+
+describe('heat sources', () => {
+  const h = defaultHouse();
+  const as = (source: 'boiler' | 'condensing' | 'ashp' | 'gshp', edit: (x: ReturnType<typeof defaultHouse>) => void = () => {}) => {
+    const x = structuredClone(h); x.hp.source = source; edit(x); return calcHouse(x);
+  };
+
+  it('condensing boilers gain from cool returns; non-condensing do not', () => {
+    expect(condensingEff('gas', 25)).toBeCloseTo(0.96, 3);
+    expect(condensingEff('gas', 60)).toBeCloseTo(0.86, 3);
+    expect(condensingEff('oil', 40)).toBeLessThan(condensingEff('gas', 40));
+    const hot = as('condensing', (x) => { x.heating.control = 'fixed'; x.hp.maxFlow = 75; x.heating.dT = 10; });
+    const cool = as('condensing');
+    expect(cool.hp.seasonal).toBeGreaterThan(hot.hp.seasonal);
+    expect(as('boiler').hp.seasonal).toBeCloseTo(h.hp.boilerEff / 100, 6);
+  });
+
+  it('ground source beats air source in winter, and heat pumps buy less energy than boilers', () => {
+    const air = as('ashp'), ground = as('gshp'), gas = as('condensing');
+    expect(ground.hp.designEff).toBeGreaterThan(air.hp.designEff);
+    expect(air.hp.kwh).toBeLessThan(gas.hp.kwh);
+    expect(ground.annualKWh).toBeCloseTo(air.annualKWh, 6);
+  });
+
+  it('gas standing charge only when switched on; oil never; heat pump factor scales COP', () => {
+    const gas = as('condensing'), oil = as('condensing', (x) => { x.hp.fuel = 'oil'; });
+    const gasSC = as('condensing', (x) => { x.hp.gasStanding = true; });
+    expect(gas.hp.cost).toBeCloseTo((gas.hp.kwh * h.hp.gasP) / 100, 6);
+    expect(gasSC.hp.cost).toBeCloseTo((gas.hp.kwh * h.hp.gasP) / 100 + (h.hp.gasSC * 365) / 100, 6);
+    expect(as('ashp', (x) => { x.hp.hpFactor = 0.5; }).hp.seasonal).toBeGreaterThan(as('ashp').hp.seasonal);
+    expect(oil.hp.cost).toBeCloseTo((oil.hp.kwh * h.hp.oilP) / 100, 6);
+    expect(oil.hp.co2).toBeCloseTo(oil.hp.kwh * h.hp.co2.oil, 6);
+    expect(brineTemp(10, 2)).toBeLessThan(brineTemp(10, 8));
+  });
+
+  it('datasheet points are matched exactly and interpolated by source temperature', () => {
+    const x = structuredClone(h);
+    x.hp.sheet = { source: 'ashp', model: 'Test', points: [{ src: 7, flow: 35, cop: 4.8 }, { src: -7, flow: 35, cop: 2.6 }] };
+    expect(sourceEff(x, 35, 7, 10, 0)).toBeCloseTo(4.8, 6);
+    expect(sourceEff(x, 35, -7, 10, 0)).toBeCloseTo(2.6, 6);
+    const f0 = sheetFactor(x.hp.sheet, 0)!, f7 = sheetFactor(x.hp.sheet, 7)!, fm7 = sheetFactor(x.hp.sheet, -7)!;
+    expect(f0).toBeCloseTo(fm7 + ((f7 - fm7) * 7) / 14, 6);
+    expect(sheetFactor(x.hp.sheet, 20)).toBeCloseTo(f7, 6);
+    // Higher flow from the same factor gives a lower COP; the sheet is ignored once the source no longer matches.
+    expect(sourceEff(x, 55, 7, 10, 0)).toBeLessThan(4.8);
+    x.hp.source = 'gshp';
+    expect(sourceEff(x, 35, 7, 10, 0)).not.toBeCloseTo(4.8, 2);
+    x.hp.sheet = { source: 'gshp', model: 'G', points: [{ src: 0, flow: 35, cop: 4.5 }] };
+    expect(sourceEff(x, 35, -5, 8, 2)).toBeCloseTo(4.5, 6); // brine in March = Tg − 8 = 0 °C
   });
 });

@@ -117,7 +117,7 @@ describe('hour-by-hour runs', () => {
     const dd = calcHouse(h).annualKWh;
     expect(r.heatKWh).toBeGreaterThan(dd * 0.5);
     expect(r.heatKWh).toBeLessThan(dd * 1.3);
-    console.log('year', Math.round(r.heatKWh), 'dd', Math.round(dd), 'peak', Math.round(r.peakW), 'scop', (r.heatKWh / r.elecKWh).toFixed(2), y.months.map(Math.round).join(','));
+    console.log('year', Math.round(r.heatKWh), 'dd', Math.round(dd), 'peak', Math.round(r.peakW), 'scop', (r.heatKWh / r.boughtKWh).toFixed(2), y.months.map(Math.round).join(','));
   });
 
   it('every shared face links two rooms once: an unheated room wrapped round a heated one, with an inside door, balances over its design-calc faces', () => {

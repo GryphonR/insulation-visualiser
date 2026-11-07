@@ -96,7 +96,12 @@ export function defaultHouse(): House {
         D('front', 'hall', 'Front door, letterbox', false, [['As found', 14], ['Brushed + sealed', 3]], 0),
       ],
     },
-    hp: { capacity: 6, maxFlow: 45, elecP: 26.32, gasP: 7.97, gasSC: 29.68, boilerEff: 85 },
+    // Electricity and gas: Ofgem cap 1 Oct – 31 Dec 2026. Oil and LPG: rough typical UK delivered prices per kWh.
+    // Carbon: SAP 10.2 factors, kgCO2/kWh. Reasons for each figure are shown in the UI (src/ui/assumptions.tsx).
+    hp: {
+      source: 'ashp', fuel: 'gas', capacity: 6, maxFlow: 45, elecP: 26.32, gasP: 7.97, gasSC: 29.68, gasStanding: false, oilP: 6.5, lpgP: 9.5, boilerEff: 85, hpFactor: 0.45,
+      co2: { elec: 0.136, gas: 0.21, oil: 0.298, lpg: 0.241 },
+    },
     gains: {
       people: 3, pattern: 'work', setback: 16, mass: 165, g: 0.45,
       living: hours([6, 7, 8, 16, 17, 18, 19, 20, 21, 22]),
@@ -127,7 +132,7 @@ function E(id: string, room: string, zone: string, type: RadType, len: number): 
 export function upgradeHouse(p: House): House {
   const d = defaultHouse();
   const h: House = {
-    ...d, ...p, vent: { ...d.vent, ...p.vent }, loft: { ...d.loft, ...p.loft }, climate: { ...d.climate, ...p.climate }, hp: { ...d.hp, ...p.hp },
+    ...d, ...p, vent: { ...d.vent, ...p.vent }, loft: { ...d.loft, ...p.loft }, climate: { ...d.climate, ...p.climate }, hp: { ...d.hp, ...p.hp, co2: { ...d.hp.co2, ...p.hp?.co2 } },
     gains: { ...d.gains, ...p.gains }, suspended: { ...d.suspended, ...p.suspended }, defaults: { ...d.defaults, ...p.defaults }, heating: p.heating,
   };
   h.buildups = h.buildups.map((b) => ({ ...b, layers: (b.layers ?? []).filter(([m, t]) => !!MAT[m] && Number.isFinite(t) && t > 0).map(([m, t]) => [canonId(m), t] as [string, number]) }));

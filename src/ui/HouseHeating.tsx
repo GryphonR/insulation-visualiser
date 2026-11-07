@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { MONTHS } from '../engine/data';
-import { calcHouse, roomArea } from '../engine/house';
+import { SOURCE_LABEL, calcHouse, effText, isHeatPump, roomArea } from '../engine/house';
 import type { House } from '../engine/house';
 import { COVERS, RAD_LABEL, UFH_SPACINGS, autoEmitters, emitterOut, loopLength, loopMax, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
 import type { Emitter, RadType, Zone } from '../engine/house-heating';
@@ -8,7 +8,8 @@ import { Chip } from './controls';
 import { HouseUfh } from './HouseUfh';
 import { MAX_PA_M, MAX_V, PIPE_SIZES, autoPipes, sizePipes } from '../engine/house-pipes';
 import { addEmitter } from '../engine/house-draw';
-import { fmt } from './hform';
+import { Why, fmt } from './hform';
+import { WHY, sourceWhy } from './assumptions';
 
 const uid = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 const ZCOL = ['#c2410c', '#1f6fb5', '#1f7a4d', '#7a45b8', '#b45309', '#be185d'];
@@ -64,7 +65,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
             ))}
           </div>
           <p className="small muted">{{
-            fixed: 'Always sends the max flow temperature when heating. Simple, but the least efficient for a heat pump.',
+            fixed: 'Always sends the max flow temperature when heating. Simple, but the least efficient for a heat pump or condensing boiler.',
             ideal: 'The lowest flow temperature that still keeps every room at its setpoint, hour by hour: the best a well-tuned controller could do.',
             curve: 'A straight line between two points you set, as on most controllers. The dashed line is the ideal for comparison.',
           }[c.control]}</p>
@@ -85,7 +86,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
             <path d={line(current)} className="dc-sel" />
             <circle cx={X(res.Tout)} cy={Y(designFlow)} r={4} fill="#c2410c" />
           </svg>
-          <p className="small mono">Design day {fmt(designFlow, 1)} °C flow · seasonal average {fmt(avgFlow, 1)} °C · SCOP {fmt(res.hp.scop, 2)}</p>
+          <p className="small mono">Design day {fmt(designFlow, 1)} °C flow · seasonal average {fmt(avgFlow, 1)} °C · {SOURCE_LABEL[house.hp.source]} {isHeatPump(house.hp.source) ? 'estimated ' : ''}{effText(house.hp.source, res.hp.seasonal)} seasonal<Why>{`${sourceWhy(house.hp)} ${WHY.seasonal}`}</Why></p>
           {gov && (
             <aside className={gov.req > house.hp.maxFlow ? 'callout warnbox' : 'callout'}>
               <div className="eyebrow">Room setting the flow temperature</div>
@@ -98,7 +99,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
               <thead><tr><th />{MONTHS.map((m) => <th key={m} className="n">{m}</th>)}</tr></thead>
               <tbody>
                 <tr><td>Flow °C</td>{res.months.map((m, i) => <td key={i} className="n mono">{m.heat > 0 ? fmt(m.flow) : '—'}</td>)}</tr>
-                <tr><td>COP</td>{res.months.map((m, i) => <td key={i} className="n mono">{m.heat > 0 ? fmt(m.cop, 1) : '—'}</td>)}</tr>
+                <tr><td>{isHeatPump(house.hp.source) ? 'Est. COP' : 'Efficiency %'}<Why>{sourceWhy(house.hp)}</Why></td>{res.months.map((m, i) => <td key={i} className="n mono">{m.heat > 0 ? (isHeatPump(house.hp.source) ? fmt(m.eff, 1) : fmt(m.eff * 100)) : '—'}</td>)}</tr>
               </tbody>
             </table>
           </div>

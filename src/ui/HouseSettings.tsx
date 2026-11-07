@@ -1,9 +1,10 @@
 import { COLOURS, MONTHS } from '../engine/data';
 import { MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS } from '../engine/climate-mcs';
-import { SIDES, bearingLabel, defaultTemp, deviceM3, trueBearing } from '../engine/house';
-import type { RoomType } from '../engine/house';
+import { FUEL_LABEL, SIDES, SOURCE_LABEL, activeSheet, bearingLabel, defaultTemp, deviceM3, isHeatPump, pointFactor, tariff, trueBearing } from '../engine/house';
+import type { Fuel, HeatPumpSheet, HeatSource, RoomType } from '../engine/house';
 import { Chip } from './controls';
-import { Card, Num, fmt } from './hform';
+import { Card, Num, Why, fmt } from './hform';
+import { WHY, sourceWhy } from './assumptions';
 import { useProject } from './project';
 
 const ROOM_TYPES = Object.keys(ROOM_TEMPS) as RoomType[];
@@ -199,28 +200,123 @@ export function StoreysPage() {
   );
 }
 
-/** Heat pump and running cost, by month. */
+const SOURCE_NOTE: Record<HeatSource, string> = {
+  boiler: 'An older boiler that never condenses: the same seasonal efficiency whatever the flow temperature.',
+  condensing: 'Efficiency set by the return water temperature month by month: it condenses, and gains up to ~10%, only when the return is below the flue dew point.',
+  ashp: 'COP estimated from outside air and flow temperature for a typical unit, not a specific model.',
+  gshp: 'COP estimated from the ground loop and flow temperature for a typical unit, not a specific model.',
+};
+
+/** Standard EN 14511 test points, offered in turn by "Add point". */
+const STD_POINTS: Record<'ashp' | 'gshp', Array<[number, number]>> = {
+  ashp: [[7, 35], [2, 35], [-7, 35], [7, 55], [2, 55], [-7, 55]],
+  gshp: [[0, 35], [0, 45], [0, 55], [5, 35]],
+};
+
+/** A specific heat pump's datasheet COP points, which replace the performance factor. */
+function SheetEditor() {
+  const { house, upd } = useProject();
+  const s = house.hp.source === 'gshp' ? 'gshp' : 'ashp', L = s === 'gshp' ? 'B' : 'A';
+  const sheet = house.hp.sheet?.source === s ? house.hp.sheet : null;
+  const set = (fn: (sh: HeatPumpSheet) => void) => upd((h) => {
+    const cur: HeatPumpSheet = h.hp.sheet?.source === s ? h.hp.sheet : { source: s, model: '', points: [] };
+    fn(cur); h.hp.sheet = cur;
+  });
+  const num = (v: string) => (v === '' ? NaN : Number(v));
+  const next = STD_POINTS[s].find(([a, b]) => !sheet?.points.some((p) => p.src === a && p.flow === b)) ?? STD_POINTS[s][0];
+  const active = activeSheet(house.hp);
+  return (
+    <div className="sheet">
+      <h3 className="eyebrow">Datasheet for a specific heat pump<Why>{WHY.sheet}</Why></h3>
+      {!sheet ? <p className="small muted">No datasheet: COP uses the performance factor above. Add a datasheet point to match a real unit.</p> : <>
+        <label className="hf"><span className="eyebrow">Make and model</span>
+          <input className="h-text" value={sheet.model} placeholder="e.g. 7 kW monobloc" onChange={(e) => set((sh) => { sh.model = e.target.value; })} /></label>
+        <div className="h-table-wrap">
+          <table className="h-table">
+            <thead><tr><th className="n">{s === 'gshp' ? 'Brine' : 'Outside air'} °C</th><th className="n">Flow °C</th><th className="n">COP</th><th>Test point</th><th className="n">Factor<Why>{WHY.pointFactor}</Why></th><th /></tr></thead>
+            <tbody>
+              {sheet.points.map((p, i) => {
+                const ok = p.cop > 0 && Number.isFinite(p.src) && Number.isFinite(p.flow);
+                return (
+                  <tr key={i}>
+                    <td className="n"><input type="number" className="thk-input" aria-label={`Point ${i + 1} source temperature`} value={Number.isFinite(p.src) ? p.src : ''} onChange={(e) => set((sh) => { sh.points[i].src = num(e.target.value); })} /></td>
+                    <td className="n"><input type="number" className="thk-input" aria-label={`Point ${i + 1} flow temperature`} value={Number.isFinite(p.flow) ? p.flow : ''} onChange={(e) => set((sh) => { sh.points[i].flow = num(e.target.value); })} /></td>
+                    <td className="n"><input type="number" className="thk-input" step={0.01} aria-label={`Point ${i + 1} COP`} value={Number.isFinite(p.cop) ? p.cop : ''} onChange={(e) => set((sh) => { sh.points[i].cop = num(e.target.value); })} /></td>
+                    <td className="mono small">{L}{p.src}/W{p.flow}</td>
+                    <td className="n mono">{ok ? fmt(pointFactor(s, p), 2) : '—'}</td>
+                    <td><button type="button" className="btn-secondary" aria-label={`Remove point ${L}${p.src}/W${p.flow}`} onClick={() => set((sh) => { sh.points.splice(i, 1); })}>Remove</button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </>}
+      <div className="chips">
+        <button type="button" className="btn-secondary" onClick={() => set((sh) => { sh.points.push({ src: next[0], flow: next[1], cop: NaN }); })}>Add point {L}{next[0]}/W{next[1]}</button>
+        {sheet && <button type="button" className="btn-secondary" onClick={() => upd((h) => { delete h.hp.sheet; })}>Remove datasheet</button>}
+      </div>
+      {sheet && !active && <p className="small muted">Enter a COP for at least one point to use the datasheet.</p>}
+    </div>
+  );
+}
+
+function Tile({ head, why, value, unit }: { head: string; why: string; value: string; unit: string }) {
+  return <div className="tile"><span className="tiles-head">{head}<Why>{why}</Why></span><span className="tile-value"><span className="mono big">{value}</span><span className="small muted">{unit}</span></span></div>;
+}
+
+/** Heat source and running cost, by month. */
 export function EnergyPage() {
   const { house, upd, res } = useProject();
+  const s = house.hp.source, hp = isHeatPump(s), tf = tariff(house.hp), sheet = activeSheet(house.hp);
   return (
     <div className="house">
-          <Card title="Heat pump and running cost" note="Carnot-fraction COP with weather compensation, by month. Space heating only; hot water comes later.">
-            <div className="hf-row">
-              <Num label="Output at design temp" unit="kW" value={house.hp.capacity} min={0} onChange={(v) => upd((h) => { h.hp.capacity = v; })} />
-              <Num label="Max flow" unit="°C" step={1} value={house.hp.maxFlow} onChange={(v) => upd((h) => { h.hp.maxFlow = v; })} />
-              <Num label="Electricity" unit="p/kWh" step={0.01} value={house.hp.elecP} onChange={(v) => upd((h) => { h.hp.elecP = v; })} />
-              <Num label="Gas" unit="p/kWh" step={0.01} value={house.hp.gasP} onChange={(v) => upd((h) => { h.hp.gasP = v; })} />
-              <Num label="Gas standing" unit="p/day" step={0.01} value={house.hp.gasSC} onChange={(v) => upd((h) => { h.hp.gasSC = v; })} />
-              <Num label="Boiler efficiency" unit="%" step={1} value={house.hp.boilerEff} onChange={(v) => upd((h) => { h.hp.boilerEff = v; })} />
+          <Card title="Heat source and running cost" note="Space heating only; hot water comes later. Make a scenario with a different heat source to compare them.">
+            <div className="chips" role="group" aria-label="Heat source">
+              {(Object.keys(SOURCE_LABEL) as HeatSource[]).map((k) => <Chip key={k} on={s === k} onClick={() => upd((h) => { h.hp.source = k; })}>{SOURCE_LABEL[k]}</Chip>)}
             </div>
-            <p className="small mono">COP at design {fmt(res.hp.designCop, 2)} · SCOP {fmt(res.hp.scop, 2)} · {fmt(res.hp.elecKWh)} kWh electricity · £{fmt(res.hp.costHP)}/yr vs gas £{fmt(res.hp.costGas)}/yr ({fmt(res.hp.gasKWh)} kWh)</p>
+            {!hp && <div className="chips" role="group" aria-label="Boiler fuel">
+              {(Object.keys(FUEL_LABEL) as Fuel[]).map((k) => <Chip key={k} on={house.hp.fuel === k} onClick={() => upd((h) => { h.hp.fuel = k; })}>{FUEL_LABEL[k]}</Chip>)}
+            </div>}
+            <p className="small muted">{sheet ? `COP calibrated to the ${sheet.model || 'entered'} datasheet points.` : SOURCE_NOTE[s]}<Why label="How is the efficiency worked out?">{sourceWhy(house.hp)}</Why></p>
+            <div className="hf-row">
+              <Num label="Output at design temp" unit="kW" value={house.hp.capacity} min={0} why={WHY.capacity} onChange={(v) => upd((h) => { h.hp.capacity = v; })} />
+              <Num label="Max flow" unit="°C" step={1} value={house.hp.maxFlow} onChange={(v) => upd((h) => { h.hp.maxFlow = v; })} />
+              {s === 'boiler' && <Num label="Seasonal efficiency" unit="%" step={1} value={house.hp.boilerEff} why={WHY.boilerEff} onChange={(v) => upd((h) => { h.hp.boilerEff = v; })} />}
+              {hp && !sheet && <Num label="Performance factor" unit="× ideal COP" step={0.01} min={0.2} max={0.8} value={house.hp.hpFactor} why={WHY.hpFactor} onChange={(v) => upd((h) => { h.hp.hpFactor = v; })} />}
+            </div>
+            {hp && <SheetEditor />}
+            <h3 className="eyebrow">Your prices</h3>
+            <div className="hf-row">
+              <Num label="Electricity" unit="p/kWh" step={0.01} value={house.hp.elecP} why={WHY.elecP} onChange={(v) => upd((h) => { h.hp.elecP = v; })} />
+              <Num label="Gas" unit="p/kWh" step={0.01} value={house.hp.gasP} why={WHY.gasP} onChange={(v) => upd((h) => { h.hp.gasP = v; })} />
+              <Num label="Oil" unit="p/kWh" step={0.01} value={house.hp.oilP} why={WHY.oilP} onChange={(v) => upd((h) => { h.hp.oilP = v; })} />
+              <Num label="LPG" unit="p/kWh" step={0.01} value={house.hp.lpgP} why={WHY.lpgP} onChange={(v) => upd((h) => { h.hp.lpgP = v; })} />
+            </div>
+            <div className="hf-row">
+              <label className="hf-lab small"><input type="checkbox" checked={house.hp.gasStanding} onChange={(e) => upd((h) => { h.hp.gasStanding = e.target.checked; })} /> Include the gas standing charge for gas boilers</label>
+              <Why>{WHY.standing}</Why>
+              {house.hp.gasStanding && <Num label="Gas standing" unit="p/day" step={0.01} value={house.hp.gasSC} why={WHY.gasSC} onChange={(v) => upd((h) => { h.hp.gasSC = v; })} />}
+            </div>
+            <h3 className="eyebrow">Carbon factors</h3>
+            <div className="hf-row">
+              {(['elec', 'gas', 'oil', 'lpg'] as const).map((k) => <Num key={k} label={k === 'elec' ? 'Electricity' : FUEL_LABEL[k]} unit="kgCO₂/kWh" step={0.001} value={house.hp.co2[k]} why={WHY.co2} onChange={(v) => upd((h) => { h.hp.co2[k] = v; })} />)}
+            </div>
+            <div className="tiles">
+              <Tile head={hp ? 'Estimated COP at design' : 'Efficiency at design'} why={sourceWhy(house.hp)} value={hp ? fmt(res.hp.designEff, 2) : fmt(res.hp.designEff * 100)} unit={hp ? `at ${res.Tout} °C outside` : '%'} />
+              <Tile head={hp ? 'Estimated SCOP' : 'Seasonal efficiency'} why={WHY.seasonal} value={hp ? fmt(res.hp.seasonal, 2) : fmt(res.hp.seasonal * 100)} unit={hp ? (sheet ? `from ${sheet.model || 'datasheet'}` : 'typical unit') : '%'} />
+              <Tile head="Energy bought" why={WHY.bought} value={fmt(res.hp.kwh)} unit={`kWh ${hp ? 'electricity' : FUEL_LABEL[house.hp.fuel].toLowerCase()}`} />
+              <Tile head="Running cost" why={WHY.cost(house.hp)} value={`£${fmt(res.hp.cost)}`} unit={tf.standing ? `/yr incl. £${fmt(tf.standing)} standing` : '/yr'} />
+              <Tile head="Carbon" why={WHY.carbon} value={fmt(res.hp.co2)} unit="kgCO₂/yr" />
+            </div>
             <div className="h-table-wrap">
               <table className="h-table months-t">
                 <thead><tr><th />{MONTHS.map((m) => <th key={m} className="n">{m}</th>)}</tr></thead>
                 <tbody>
                   <tr><td>Heat kWh</td>{res.months.map((m, i) => <td key={i} className="n mono">{fmt(m.heat)}</td>)}</tr>
                   <tr><td>Flow °C</td>{res.months.map((m, i) => <td key={i} className="n mono">{fmt(m.flow)}</td>)}</tr>
-                  <tr><td>COP</td>{res.months.map((m, i) => <td key={i} className="n mono">{fmt(m.cop, 1)}</td>)}</tr>
+                  <tr><td>{hp ? 'Est. COP' : 'Efficiency %'}<Why>{sourceWhy(house.hp)}</Why></td>{res.months.map((m, i) => <td key={i} className="n mono">{hp ? fmt(m.eff, 1) : fmt(m.eff * 100)}</td>)}</tr>
+                  <tr><td>Bought kWh<Why>{WHY.bought}</Why></td>{res.months.map((m, i) => <td key={i} className="n mono">{fmt(m.bought)}</td>)}</tr>
                 </tbody>
               </table>
             </div>

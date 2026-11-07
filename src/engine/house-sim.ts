@@ -3,7 +3,7 @@
 import { COLOURS, DAYS, DOY, MEAN, ORIENTS, SWING } from './data';
 import { solarAt, solarFromData } from './solar';
 import type { Tmy } from './weather-tmy';
-import { calcHouse, heatPumpCop } from './house';
+import { calcHouse, sourceEff } from './house';
 import type { Face, House, HouseResult, RoomType } from './house';
 import type { Orient } from './data';
 import { roomOut, roomSchedule, systemFlow } from './house-heating';
@@ -80,7 +80,8 @@ export interface SimResult {
   /** Hourly arrays: outside air, total heat delivered (W), and per-room air temperature and heat (W). */
   out: Float32Array; heat: Float32Array; T: Float32Array[]; P: Float32Array[];
   loftT: Float32Array | null;
-  peakW: number; heatKWh: number; elecKWh: number;
+  /** Peak hour W; heat delivered and energy bought (electricity or boiler fuel), kWh. */
+  peakW: number; heatKWh: number; boughtKWh: number;
   comfort: Array<{ id: string; cold: number; warm: number; min: number; max: number; below16: number | null }>;
 }
 
@@ -221,11 +222,11 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
     }
   }
 
-  let peakW = 0, heatKWh = 0, elecKWh = 0;
+  let peakW = 0, heatKWh = 0, boughtKWh = 0;
   for (let k = 0; k < hours; k++) {
     peakW = Math.max(peakW, heat[k]);
     heatKWh += heat[k] / 1000;
-    elecKWh += heat[k] / 1000 / heatPumpCop(flowAt(out[k]), out[k]);
+    if (heat[k] > 0) boughtKWh += heat[k] / 1000 / sourceEff(h, flowAt(out[k]), out[k], base.Tg, MONTH_OF_DAY[(wx.doy(k) - 1) % 365]);
   }
   const comfort = rooms.map((r, i) => {
     let cold = 0, warm = 0, min = Infinity, max = -Infinity, below16: number | null = null;
@@ -240,7 +241,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
   });
   return {
     id, hours, rooms: rooms.map((r) => ({ id: r.room.id, name: r.room.name, heated: r.room.heated, setpoint: r.room.setpoint })),
-    out, heat, T: Th, P: Ph, loftT, peakW, heatKWh, elecKWh, comfort,
+    out, heat, T: Th, P: Ph, loftT, peakW, heatKWh, boughtKWh, comfort,
   };
 }
 

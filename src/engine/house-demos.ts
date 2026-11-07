@@ -29,18 +29,19 @@ function size(h: House) {
   h.hp.capacity = HP_SIZES.find((k) => k * 1000 >= res.peakW * 1.05) ?? HP_SIZES[HP_SIZES.length - 1];
 }
 
-/** As found on a gas boiler: fixed 70 °C flow, 10 K drop, radiators sized for that. */
+/** As found on a 24 kW condensing gas combi: fixed 70 °C flow, 10 K drop, radiators sized for that. */
 function onGas(h: House) {
-  h.hp = { ...h.hp, maxFlow: 70, boilerEff: 84 };
+  h.hp = { ...h.hp, source: 'condensing', fuel: 'gas', maxFlow: 70, boilerEff: 84 };
   h.heating = { ...h.heating, control: 'fixed', dT: 10 };
   size(h);
+  h.hp.capacity = 24;
 }
 
 /** A copy of the base with the upgrades applied, then radiators resized for a heat pump at `flow` °C on weather compensation. */
 function upgrade(base: House, name: string, flow: number, edit: (h: House) => void): Scenario {
   const h = structuredClone(base);
   edit(h);
-  h.hp = { ...h.hp, maxFlow: flow };
+  h.hp = { ...h.hp, source: 'ashp', maxFlow: flow };
   h.heating = { ...h.heating, control: 'ideal', dT: 5 };
   size(h);
   // Upsize only: a radiator already big enough stays as it is.

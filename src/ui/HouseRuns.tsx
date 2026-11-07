@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { DAYS, MONTHS, MONTHS_FULL } from '../engine/data';
-import { calcHouse } from '../engine/house';
+import { FUEL_LABEL, SOURCE_LABEL, calcHouse, isHeatPump, tariff } from '../engine/house';
 import type { House } from '../engine/house';
 import { MCS_STATIONS } from '../engine/climate-mcs';
 import { loadTmy } from '../engine/weather-tmy';
@@ -10,7 +10,8 @@ import { CASES, hourGains, simulate, yearTotals } from '../engine/house-sim';
 import type { CaseId } from '../engine/house-sim';
 import { useYearSim } from './useYearSim';
 import { Chip } from './controls';
-import { fmt } from './hform';
+import { Why, fmt } from './hform';
+import { sourceWhy } from './assumptions';
 
 const MASS: Array<[number, string]> = [[80, 'Light (timber frame, 80 kJ/m²K)'], [165, 'Medium (masonry, 165)'], [260, 'Heavy (solid, 260)']];
 
@@ -115,9 +116,9 @@ export function HouseRuns({ house, setHouse, project, ordered }: { house: House;
             <div className="tile"><span className="tiles-head">Heat delivered</span><span className="tile-value"><span className="mono big">{fmt(sim.heatKWh, caseId === 'year' ? 0 : 1)}</span><span className="small muted">kWh</span></span>
               {cmp && <span className="small muted">{cmpHouse && ordered.find((s) => s.id === cmpId)?.name}: {fmt(cmp.heatKWh)}</span>}</div>
             <div className="tile"><span className="tiles-head">Peak hour</span><span className="tile-value"><span className="mono big">{fmt(sim.peakW / 1000, 2)}</span><span className="small muted">kW</span></span>
-              <span className="small muted">{sim.peakW >= house.hp.capacity * 1000 - 1 ? 'heat pump flat out' : `of ${house.hp.capacity} kW`}</span></div>
-            {sim.heatKWh > 0 && <div className="tile"><span className="tiles-head">Heat pump</span><span className="tile-value"><span className="mono big">{fmt(sim.heatKWh / sim.elecKWh, 2)}</span><span className="small muted">COP</span></span>
-              <span className="small muted">{fmt(sim.elecKWh, caseId === 'year' ? 0 : 1)} kWh electricity · £{fmt((sim.elecKWh * house.hp.elecP) / 100, caseId === 'year' ? 0 : 2)}</span></div>}
+              <span className="small muted">{sim.peakW >= house.hp.capacity * 1000 - 1 ? 'heat source flat out' : `of ${house.hp.capacity} kW`}</span></div>
+            {sim.heatKWh > 0 && <div className="tile"><span className="tiles-head">{SOURCE_LABEL[house.hp.source]}<Why>{`Heat delivered ÷ energy bought over this run, hour by hour at each hour's outside and flow temperature. ${sourceWhy(house.hp)} Cost is energy bought × unit price; standing charges are left out.`}</Why></span><span className="tile-value"><span className="mono big">{isHeatPump(house.hp.source) ? fmt(sim.heatKWh / sim.boughtKWh, 2) : fmt((sim.heatKWh / sim.boughtKWh) * 100)}</span><span className="small muted">{isHeatPump(house.hp.source) ? 'COP' : '% efficiency'}</span></span>
+              <span className="small muted">{fmt(sim.boughtKWh, caseId === 'year' ? 0 : 1)} kWh {isHeatPump(house.hp.source) ? 'electricity' : FUEL_LABEL[house.hp.fuel].toLowerCase()} · £{fmt((sim.boughtKWh * tariff(house.hp).p) / 100, caseId === 'year' ? 0 : 2)}</span></div>}
           </div>
 
           {caseId !== 'year' && <>

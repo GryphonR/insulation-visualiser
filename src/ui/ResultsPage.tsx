@@ -98,7 +98,7 @@ export function ResultsPage() {
           <Card title="More results">
             <div className="stack-10">
               <a className="btn-secondary as-btn" href={href('year')}>Test conditions &amp; typical year ›</a>
-              <a className="btn-secondary as-btn" href={href('energy')}>Energy, cost &amp; heat pump ›</a>
+              <a className="btn-secondary as-btn" href={href('energy')}>Energy, cost &amp; heat source ›</a>
               <a className="btn-secondary as-btn" href={href('bills')}>Check against bills ›</a>
               <a className="btn-secondary as-btn" href={href('moisture')}>Moisture &amp; mould ›</a>
               <a className="btn-secondary as-btn" href={href('report')}>Report &amp; export ›</a>
