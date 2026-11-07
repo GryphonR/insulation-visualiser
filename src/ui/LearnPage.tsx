@@ -1,55 +1,96 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { go, href } from './route';
 
 interface Section {
   id: string;
   title: string;
   group: string;
+  track: string;
 }
 
+interface Track { name: string; blurb: string; }
+
+const TRACKS: Track[] = [
+  { name: 'Using the site', blurb: 'How to drive each tool and read what it shows you.' },
+  { name: 'Concepts', blurb: 'Why walls behave as they do: heat, mass, sun and moisture, with no tool in sight.' },
+  { name: 'How the models work', blurb: 'The maths behind the results, step by step, and what each model leaves out.' },
+  { name: 'Reference', blurb: 'Every term used on the site, in one list.' },
+];
+
+const s = (track: string, group: string, list: Array<[string, string]>): Section[] =>
+  list.map(([id, title]) => ({ id, title, group, track }));
+
 const SECTIONS: Section[] = [
-  { id: 'planning', title: 'Planning your insulation', group: 'Overview' },
-  { id: 'what', title: 'What this tool does', group: 'Overview' },
-  { id: 'how-to-use', title: 'Using it in four steps', group: 'Overview' },
-  { id: 'heat', title: 'Heat and temperature', group: 'The ideas' },
-  { id: 'conduction', title: 'Conduction and R-values', group: 'The ideas' },
-  { id: 'u-value', title: 'The U-value', group: 'The ideas' },
-  { id: 'mass', title: 'Thermal mass', group: 'The ideas' },
-  { id: 'dynamic', title: 'Decrement factor and delay', group: 'The ideas' },
-  { id: 'sun', title: 'Sun, and sol-air temperature', group: 'The ideas' },
-  { id: 'inner-face', title: 'The inner face and comfort', group: 'The ideas' },
-  { id: 'rooms', title: 'Heating modes', group: 'The ideas' },
-  { id: 'outputs', title: 'Reading the results', group: 'The ideas' },
-  { id: 'sim-overview', title: 'The simulation at a glance', group: 'Under the hood' },
-  { id: 'sim-weather', title: '1. Building the day', group: 'Under the hood' },
-  { id: 'sim-solar', title: '2. Sun on the surface', group: 'Under the hood' },
-  { id: 'sim-solair', title: '3. Sol-air temperature', group: 'Under the hood' },
-  { id: 'sim-slices', title: '4. Slicing the wall', group: 'Under the hood' },
-  { id: 'sim-balance', title: '5. Heat balance in each slice', group: 'Under the hood' },
-  { id: 'sim-stepping', title: '6. Stepping through time', group: 'Under the hood' },
-  { id: 'sim-room', title: '7. The room', group: 'Under the hood' },
-  { id: 'sim-metrics', title: '8. Working out the results', group: 'Under the hood' },
-  { id: 'limits', title: 'What it leaves out', group: 'Under the hood' },
-  { id: 'moist-what', title: 'What the moisture tab does', group: 'Moisture: the ideas' },
-  { id: 'moist-vapour', title: 'Vapour, humidity and vapour pressure', group: 'Moisture: the ideas' },
-  { id: 'moist-mu', title: 'Vapour resistance: µ and sd', group: 'Moisture: the ideas' },
-  { id: 'moist-condensation', title: 'Condensation: surface and interstitial', group: 'Moisture: the ideas' },
-  { id: 'moist-absorb', title: 'Absorbent and wicking materials', group: 'Moisture: the ideas' },
-  { id: 'moist-rain', title: 'Rain and ground moisture', group: 'Moisture: the ideas' },
-  { id: 'moist-reading', title: 'Reading the moisture charts', group: 'Moisture: the ideas' },
-  { id: 'msim-overview', title: 'The moisture simulation at a glance', group: 'Moisture: under the hood' },
-  { id: 'msim-climate', title: '1. Building the year', group: 'Moisture: under the hood' },
-  { id: 'msim-profile', title: '2. Slices, heat and vapour', group: 'Moisture: under the hood' },
-  { id: 'msim-saturation', title: '3. Storing water: the sorption curve', group: 'Moisture: under the hood' },
-  { id: 'msim-balance', title: '4. Capillary flow', group: 'Moisture: under the hood' },
-  { id: 'msim-wet', title: '5. Solving each step', group: 'Moisture: under the hood' },
-  { id: 'msim-sources', title: '6. Rain, ground moisture and cavities', group: 'Moisture: under the hood' },
-  { id: 'msim-results', title: '7. Working out the results', group: 'Moisture: under the hood' },
-  { id: 'mlimits', title: 'What the moisture model leaves out', group: 'Moisture: under the hood' },
-  { id: 'glossary', title: 'Glossary', group: 'Reference' },
+  { id: 'start', title: 'Start here', group: 'Start here', track: 'Start here' },
+  ...s('Using the site', 'House planner', [
+    ['plan-overview', 'The planner at a glance'],
+    ['plan-start', 'Starting a project'],
+    ['plan-buildups', '1. Build-ups'],
+    ['plan-model', '2. Drawing the house'],
+    ['plan-heating', '3. Heating'],
+    ['plan-results', '4. Results'],
+    ['plan-scenarios', 'Scenarios and comparing'],
+  ]),
+  ...s('Using the site', 'Wall simulator', [
+    ['what', 'What the simulator does'],
+    ['how-to-use', 'Using it in four steps'],
+    ['rooms', 'Heating modes'],
+    ['outputs', 'Reading the results'],
+  ]),
+  ...s('Using the site', 'Moisture page', [
+    ['moist-what', 'What the moisture tab does'],
+    ['moist-reading', 'Reading the moisture charts'],
+  ]),
+  ...s('Concepts', 'Heat', [
+    ['planning', 'Why the U-value is not the whole story'],
+    ['heat', 'Heat and temperature'],
+    ['conduction', 'Conduction and R-values'],
+    ['u-value', 'The U-value'],
+    ['mass', 'Thermal mass'],
+    ['dynamic', 'Decrement factor and delay'],
+    ['sun', 'Sun, and sol-air temperature'],
+    ['inner-face', 'The inner face and comfort'],
+  ]),
+  ...s('Concepts', 'Moisture', [
+    ['moist-vapour', 'Vapour, humidity and vapour pressure'],
+    ['moist-mu', 'Vapour resistance: µ and sd'],
+    ['moist-condensation', 'Condensation: surface and interstitial'],
+    ['moist-absorb', 'Absorbent and wicking materials'],
+    ['moist-rain', 'Rain and ground moisture'],
+  ]),
+  ...s('How the models work', 'Wall heat model', [
+    ['sim-overview', 'The simulation at a glance'],
+    ['sim-weather', '1. Building the day'],
+    ['sim-solar', '2. Sun on the surface'],
+    ['sim-solair', '3. Sol-air temperature'],
+    ['sim-slices', '4. Slicing the wall'],
+    ['sim-balance', '5. Heat balance in each slice'],
+    ['sim-stepping', '6. Stepping through time'],
+    ['sim-room', '7. The room'],
+    ['sim-metrics', '8. Working out the results'],
+    ['limits', 'What it leaves out'],
+  ]),
+  ...s('How the models work', 'Moisture model', [
+    ['msim-overview', 'The moisture simulation at a glance'],
+    ['msim-climate', '1. Building the year'],
+    ['msim-profile', '2. Slices, heat and vapour'],
+    ['msim-saturation', '3. Storing water: the sorption curve'],
+    ['msim-balance', '4. Capillary flow'],
+    ['msim-wet', '5. Solving each step'],
+    ['msim-sources', '6. Rain, ground moisture and cavities'],
+    ['msim-results', '7. Working out the results'],
+    ['mlimits', 'What the moisture model leaves out'],
+  ]),
+  ...s('Reference', 'Reference', [['glossary', 'Glossary']]),
 ];
 
 function Eq({ children }: { children: ReactNode }) {
   return <div className="eq mono">{children}</div>;
+}
+
+/** A link to another page of the site, e.g. to="energy" or to="learn/mass". */
+function Go({ to, children }: { to: string; children: ReactNode }) {
+  return <a className="inline-link" href={href(...to.split('/'))}>{children}</a>;
 }
 
 function Callout({ title, children }: { title: string; children: ReactNode }) {
@@ -138,51 +179,52 @@ function PressureFigure() {
   );
 }
 
-export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) {
-  const [active, setActive] = useState(SECTIONS[0].id);
-  const [closed, setClosed] = useState<Set<string>>(new Set());
+export function LearnPage({ section, onOpenSimulator }: { section?: string; onOpenSimulator: () => void }) {
+  // Each section has its own URL (#/learn/<id>); an unknown or missing id shows the landing page.
+  const active = SECTIONS.some((x) => x.id === section) ? section! : 'start';
+  const activeGroup = SECTIONS.find((x) => x.id === active)!.group;
+  const [open, setOpen] = useState<Set<string>>(() => new Set([activeGroup]));
   const bodyRef = useRef<HTMLElement>(null);
 
   // Sections are authored inline below; show only the active page.
   useEffect(() => {
     bodyRef.current?.querySelectorAll<HTMLElement>('.learn-section').forEach((el) => { el.hidden = el.id !== active; });
-    bodyRef.current?.scrollIntoView({ block: 'start' });
-  }, [active]);
+    setOpen((o) => (o.has(activeGroup) ? o : new Set(o).add(activeGroup)));
+  }, [active, activeGroup]);
 
-  const jump = (id: string) => {
-    setActive(id);
-    const g = SECTIONS.find((s) => s.id === id)?.group;
-    if (g) setClosed((c) => { const n = new Set(c); n.delete(g); return n; });
-  };
-  const toggle = (name: string) => setClosed((c) => { const n = new Set(c); if (!n.delete(name)) n.add(name); return n; });
+  const jump = (id: string) => go('learn', id);
+  const toggle = (name: string) => setOpen((o) => { const n = new Set(o); if (!n.delete(name)) n.add(name); return n; });
 
-  const groups = SECTIONS.reduce<Array<{ name: string; items: Section[] }>>((acc, s) => {
+  const groups = SECTIONS.slice(1).reduce<Array<{ name: string; track: string; items: Section[] }>>((acc, x) => {
     const last = acc[acc.length - 1];
-    if (last && last.name === s.group) last.items.push(s);
-    else acc.push({ name: s.group, items: [s] });
+    if (last && last.name === x.group) last.items.push(x);
+    else acc.push({ name: x.group, track: x.track, items: [x] });
     return acc;
   }, []);
 
-  const idx = SECTIONS.findIndex((s) => s.id === active);
+  const idx = SECTIONS.findIndex((x) => x.id === active);
   const prev = SECTIONS[idx - 1];
   const next = SECTIONS[idx + 1];
+  const here = SECTIONS[idx];
 
   return (
     <div className="learn">
       <nav aria-label="Learn contents" className="learn-toc card">
-        {groups.map((g) => {
-          const open = !closed.has(g.name);
+        <a href={href('learn')} className={`toc-link${active === 'start' ? ' active' : ''}`} aria-current={active === 'start' ? 'page' : undefined}>Start here</a>
+        {groups.map((g, i) => {
+          const isOpen = open.has(g.name) || g.items.length === 1;
           return (
             <div key={g.name} className="learn-toc-group">
-              <button type="button" className="toc-head" aria-expanded={open} onClick={() => toggle(g.name)}>
-                <span className="toc-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
+              {groups[i - 1]?.track !== g.track && <div className="learn-toc-track">{g.track}</div>}
+              {g.items.length > 1 && <button type="button" className="toc-head" aria-expanded={isOpen} onClick={() => toggle(g.name)}>
+                <span className="toc-caret" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
                 {g.name}
-              </button>
-              {open && (
+              </button>}
+              {isOpen && (
                 <ul>
-                  {g.items.map((s) => (
-                    <li key={s.id}>
-                      <button type="button" className={`toc-link${s.id === active ? ' active' : ''}`} aria-current={s.id === active ? 'page' : undefined} onClick={() => jump(s.id)}>{s.title}</button>
+                  {g.items.map((x) => (
+                    <li key={x.id}>
+                      <a href={href('learn', x.id)} className={`toc-link${x.id === active ? ' active' : ''}`} aria-current={x.id === active ? 'page' : undefined}>{x.title}</a>
                     </li>
                   ))}
                 </ul>
@@ -193,9 +235,36 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
       </nav>
 
       <article className="learn-body card" ref={bodyRef}>
-        {/* ------------------------------------------------------------ OVERVIEW */}
-        <section id="planning" className="learn-section">
-          <h2>Planning your insulation</h2>
+        {here.track !== here.group && <div className="eyebrow">{here.track} · {here.group}</div>}
+
+        {/* ------------------------------------------------------------ START HERE */}
+        <section id="start" className="learn-section">
+          <h2>Learn</h2>
+          <p>
+            These pages explain how heat and moisture move through walls, how to use each tool on this site, and how the models behind the results work. Pick a track, or start with the idea most guides skip: <a className="inline-link" href={href('learn', 'planning')}>why the U-value is not the whole story</a>.
+          </p>
+          <div className="learn-tracks">
+            {TRACKS.map((t) => {
+              const items = SECTIONS.filter((x) => x.track === t.name);
+              const gs = [...new Set(items.map((x) => x.group))];
+              return (
+                <div key={t.name} className="learn-track">
+                  <h3><a className="inline-link" href={href('learn', items[0].id)}>{t.name}</a></h3>
+                  <p className="small muted">{t.blurb}</p>
+                  {gs.length > 1 && (
+                    <ul className="small">
+                      {gs.map((g) => <li key={g}><a className="inline-link" href={href('learn', items.find((x) => x.group === g)!.id)}>{g}</a></li>)}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <p><button type="button" className="btn-primary" onClick={onOpenSimulator}>Open the planner</button></p>
+        </section>
+
+                <section id="planning" className="learn-section">
+          <h2>Why the U-value is not the whole story</h2>
           <p>
             The usual starting point is the <b>U-value</b>: the heat that leaks through each square metre of wall for every degree of difference between inside and outside. A lower U-value means less heat lost in winter, so lower heating bills. It is the right first number to look at, and it is what building regulations ask for.
           </p>
@@ -212,10 +281,169 @@ export function LearnPage({ onOpenSimulator }: { onOpenSimulator: () => void }) 
           </p>
         </section>
 
-        <section id="what" className="learn-section">
-          <h2>What this tool does</h2>
+        {/* ------------------------------------------------------------ HOUSE PLANNER */}
+        <section id="plan-overview" className="learn-section">
+          <h2>The planner at a glance</h2>
           <p>
-            Most advice about insulation boils a wall down to a single number, the <b>U-value</b>: how much heat leaks through each square metre for every degree of temperature difference between inside and outside. That number is useful, but it describes a wall on a day when nothing changes. Real days do change. The sun comes up, the air warms and cools, and the heat takes time to travel through the materials.
+            The planner works out how much heat a whole house loses, room by room, what heating it needs, and what that costs to run. You describe the house once, then try changes on copies of it and compare.
+          </p>
+          <p>The tabs across the top follow the order you work in:</p>
+          <ol className="learn-steps">
+            <li><b>Build-ups:</b> the walls, floors, roofs, windows and doors the house is made of. See <Go to="learn/plan-buildups">Build-ups</Go>.</li>
+            <li><b>Model:</b> draw the rooms on a floor plan, then set the site, storeys, ventilation, floors and openings. See <Go to="learn/plan-model">Drawing the house</Go>.</li>
+            <li><b>Heating:</b> the flow temperature, a radiator or underfloor loop for each room, and the pipework. See <Go to="learn/plan-heating">Heating</Go>.</li>
+            <li><b>Results:</b> heat loss, the year hour by hour, running cost, a check against your bills, mould risk, and a printable report. See <Go to="learn/plan-results">Results</Go>.</li>
+          </ol>
+          <p>The bar above the tabs shows three things that apply everywhere:</p>
+          <ul>
+            <li><b>Project:</b> the house you are working on. Click it to switch or start another.</li>
+            <li><b>Scenario:</b> which version of the house you are editing, for example "As built" or "With loft insulation". See <Go to="learn/plan-scenarios">Scenarios</Go>.</li>
+            <li><b>Conditions:</b> the outside design temperature every heat loss figure is worked out for. Click it to run other weather.</li>
+          </ul>
+          <p>A number on the Heating tab counts the heated rooms whose heater can't yet cover their heat loss.</p>
+          <Callout title="Saved in this browser">
+            <p>
+              Projects are saved in this browser only, as you go. Use <Go to="report">Report &amp; export</Go> to save a project file, to move it to another computer or keep a backup. Undo and redo are at the top right.
+            </p>
+          </Callout>
+        </section>
+
+        <section id="plan-start" className="learn-section">
+          <h2>Starting a project</h2>
+          <p>A new project asks for four things:</p>
+          <ul>
+            <li><b>Postcode:</b> picks the nearest weather station and the ground temperature for your region.</li>
+            <li><b>House type and age:</b> sets the build-ups, glazing and airtightness to start from, typical of houses that age. You can change all of them later.</li>
+            <li><b>Width and depth (optional):</b> draws a dashed outline of that size on the plan, to draw the rooms inside.</li>
+            <li><b>Name:</b> for your own use.</li>
+          </ul>
+          <p>
+            The rooms are always drawn by you. If you'd rather see a finished example first, open one of the demo houses. Each comes with its build-ups, rooms, heating and some upgrade scenarios already made.
+          </p>
+          <p>
+            Your projects are listed under <Go to="projects">Project</Go> at the top left, with when each was last saved.
+          </p>
+        </section>
+
+        <section id="plan-buildups" className="learn-section">
+          <h2>1. Build-ups</h2>
+          <p>
+            A build-up is one kind of wall, floor, roof, window or door: its layers from outside to inside, and so its U-value. The <Go to="buildups">Project</Go> page lists the build-ups this house uses. Only these can be picked when you set a wall or floor on the plan.
+          </p>
+          <ul>
+            <li><b>Adding one:</b> pick a preset from the <Go to="library">build-up library</Go> or make your own from layers.</li>
+            <li><b>Editing one:</b> changes every face that uses it. To try a change on one wall only, duplicate the build-up first and give that wall the copy.</li>
+            <li><b>Materials:</b> the <Go to="materials">Materials</Go> page lists every material with its conductivity (λ), heat capacity and vapour resistance (µ). You can add your own, or fix a resistance for air gaps and foils.</li>
+            <li><b>Ground floors:</b> mark them as a solid slab or suspended timber. Their U-value depends on the whole floor, so it's set on the Floors page.</li>
+            <li><b>Windows and doors:</b> these have a fixed U-value, plus a g-value for how much sun comes through glass.</li>
+          </ul>
+          <p>
+            Each build-up shows its U-value, decrement factor and delay. <b>Simulate</b> opens it in the wall simulator to watch a day of heat flow through it. See <Go to="learn/what">What the simulator does</Go>.
+          </p>
+        </section>
+
+        <section id="plan-model" className="learn-section">
+          <h2>2. Drawing the house</h2>
+          <h3>The floor plan</h3>
+          <p>
+            Draw each storey's rooms with the tools on the left of the <Go to="plan">Floor plan</Go>: a rectangle, a room of any shape, splitting a room in two, and moving corners. Windows, doors, radiators and underfloor loops are placed on the plan the same way. Rooms that share a wall join up, so a wall between two rooms counts as inside, not outside.
+          </p>
+          <ul>
+            <li><b>Storeys:</b> switch storey above the plan. The floor and ceiling bands between storeys hold what's under each room, for example a loft or a suspended floor.</li>
+            <li><b>North:</b> turn the plan so walls, windows and roof slopes face the right way. This matters for sun in the year runs.</li>
+            <li><b>Tracing image:</b> upload a floor plan or show a satellite view and draw over it.</li>
+            <li><b>Colour rooms by:</b> heat loss per m², temperature, or whether the heating covers each room.</li>
+          </ul>
+          <p>
+            Click a room and choose <b>Open room</b> for its own page. <b>Faces</b> lists every wall, window, floor and ceiling with its build-up and heat loss, and simulates the room over the design day. <b>Room &amp; outline</b> sets its type, whether it's heated, its temperature and its shape. <b>Windows &amp; doors</b> lists its openings.
+          </p>
+          <h3>The other Model pages</h3>
+          <ul>
+            <li><Go to="site">Site &amp; climate</Go>: the weather station and its design temperature (the coldest 0.4% of hours, the MCS default), ground temperature, party walls and room temperatures.</li>
+            <li><Go to="storeys">Storeys &amp; loft</Go>: ceiling heights, depth below ground, roofs and loft ventilation. A roof drawn over the top storey gives the rooms under it sloping ceilings and knee walls.</li>
+            <li><Go to="vent">Ventilation</Go>: either a whole-house air leakage figure (estimated, or measured with a blower door test) or standard air change rates for each room type. Also chimneys, fans and heat recovery.</li>
+            <li><Go to="floor">Floors</Go>: the ground floor build-up, foundation edge insulation and the heat lost where the floor meets the walls.</li>
+            <li><Go to="openings">Windows &amp; doors</Go>: every opening in the house in one list.</li>
+            <li><Go to="spaces">Unheated spaces</Go>: garages, porches and lofts. Each settles at a temperature between the heated rooms and outside, which sets how much heat the rooms lose into it.</li>
+            <li><Go to="checks">Checks &amp; history</Go>: problems found in the model, such as rooms that overlap, and how the storeys stack.</li>
+          </ul>
+        </section>
+
+        <section id="plan-heating" className="learn-section">
+          <h2>3. Heating</h2>
+          <p>
+            Each heated room needs a radiator or underfloor loop that gives out at least its heat loss, at the water temperature the system runs at. The lower that temperature, the bigger the heater each room needs, and the more efficient a heat pump or condensing boiler runs.
+          </p>
+          <ul>
+            <li>
+              <Go to="heating">System &amp; flow</Go>: the flow temperature at the design outside temperature, and the drop from flow to return. With weather compensation, the flow falls as the weather warms, down to the value you set at 15 °C outside. The room that needs the hottest water to keep up sets the flow for the whole system.
+            </li>
+            <li>
+              <Go to="emitters">Emitters</Go>: each room's need against its heaters' output at that flow temperature. A room shown short won't reach its setpoint on the coldest day. <b>Add radiators to rooms without one</b> sizes a radiator for each empty room. Radiator outputs are typical catalogue figures. Underfloor output depends on pipe spacing and floor covering, and is limited by a 29 °C floor surface.
+            </li>
+            <li><Go to="zones">Zones &amp; UFH</Go>: group rooms into radiator zones and underfloor manifolds, with their own heating hours if needed.</li>
+            <li>
+              <Go to="pipes">Pipework</Go>: the pipes from the heat source to each heater. It shows the water flow in each run, whether the pump can push it round, and whether a heat pump gets the minimum flow it needs. <b>Lay out typical pipework</b> gives a starting point.
+            </li>
+          </ul>
+          <p>
+            The heat source itself (boiler or heat pump), its efficiency and your energy prices are set under Results, on <Go to="energy">Energy &amp; cost</Go>.
+          </p>
+        </section>
+
+        <section id="plan-results" className="learn-section">
+          <h2>4. Results</h2>
+          <h3>Design day</h3>
+          <p>
+            <Go to="results">Design day</Go> is the heat loss in steady conditions at the design outside temperature: for each face, U-value × area × temperature difference, plus ventilation. The total is what the heating has to deliver on the coldest day, and the figure a heat pump is sized from. It breaks the total down by room and into fabric and ventilation, and shows where the heat goes.
+          </p>
+          <h3>Typical year and test conditions</h3>
+          <p>
+            <Go to="year">Typical year &amp; test conditions</Go> runs the house hour by hour, with sun, heat stored in the walls, people and the heating schedule:
+          </p>
+          <ul>
+            <li><b>Winter design day:</b> the peak, with the heating schedule and setback, on a cold overcast day.</li>
+            <li><b>Typical year:</b> energy by month and day, and hours each room is too cold or too warm. Use smooth monthly weather, or a real year of hourly weather for your station.</li>
+            <li><b>Summer peak day:</b> overheating in bedrooms and lofts, on a clear hot day with no heating.</li>
+            <li><b>Cold snap:</b> five days with the heating off, to see how long rooms hold their heat.</li>
+          </ul>
+          <p>
+            "Too cold" counts hours when the heating is meant to be on and a room is more than 1 K under its setpoint. "Too warm" counts hours above 25 °C, or 26 °C in bedrooms. <Go to="gains">Occupancy &amp; gains</Go> sets the heating times and the heat from people, cooking and appliances. Why heavy walls change these results is in <Go to="learn/mass">Thermal mass</Go>.
+          </p>
+          <h3>Energy and cost</h3>
+          <p>
+            <Go to="energy">Energy &amp; cost</Go> turns the heat needed into energy bought, cost and carbon. Choose the heat source: an old boiler, a condensing boiler, or an air or ground source heat pump. Condensing boilers are more efficient with cooler return water. Heat pump efficiency (COP) is worked out from the flow and outside temperatures, and you can match it to a real unit by entering points from its datasheet. The <b>?</b> buttons explain where each default comes from. Prices start at the current Ofgem price cap, so put in your own tariff.
+          </p>
+          <h3>Checking against bills</h3>
+          <p>
+            <Go to="bills">Check against bills</Go> compares the model with what the house actually used. Import smart meter readings as CSV or type in monthly gas use, then <b>Match the model to the bills</b> to scale it. A fit is good when the monthly error (CV(RMSE)) is under 15% and the yearly total is within 5%, as ASHRAE Guideline 14 recommends. The energy signature plots heating power against outside temperature, which gives the house's real heat loss per degree. It needs at least three heating months.
+          </p>
+          <h3>Moisture and the report</h3>
+          <p>
+            <Go to="moisture">Moisture &amp; mould</Go> shows each room's mould risk from its humidity and coldest surface, with what to do about it, and checks for moisture building up inside each build-up. See <Go to="learn/moist-condensation">Condensation</Go>. <Go to="report">Report &amp; export</Go> prints a heat loss report, exports a room table as CSV, and saves or opens a project file.
+          </p>
+        </section>
+
+        <section id="plan-scenarios" className="learn-section">
+          <h2>Scenarios and comparing</h2>
+          <p>
+            A scenario is one version of the house. The first is the house as it is. Make a new one from it to try a change, such as loft insulation, new windows or a heat pump. Each new scenario starts as a copy of the one it came from. Pick which one you're editing from <b>Scenario</b> at the top, then edit it on any page.
+          </p>
+          <ul>
+            <li>
+              <Go to="scenarios">Scenarios</Go> lists every change a scenario makes and what each one saves, step by step. Switch a change off to see the scenario without it. The tree shows how scenarios build on each other, so you can try several routes from the same starting point.
+            </li>
+            <li><Go to="compare">Compare A vs B</Go> puts two scenarios on the floor plan and colours each room by how much its heat loss changed.</li>
+          </ul>
+          <p>
+            The year runs can also show another scenario alongside, as outlined bars, using <b>Compare with</b>.
+          </p>
+        </section>
+
+        <section id="what" className="learn-section">
+          <h2>What the simulator does</h2>
+          <p>
+            Most advice boils a wall down to its <a className="inline-link" href={href('learn', 'u-value')}>U-value</a>, which describes a wall on a day when nothing changes. Real days do change. The sun comes up, the air warms and cools, and the heat takes time to travel through the materials.
           </p>
           <p>
             This simulator takes a wall or roof, made of layers you choose, and plays out a whole 24-hour day on it. You can watch the heat move through each layer over the day, and see how heavy materials such as brick or concrete soak up heat and give it back later, while light materials such as timber and mineral wool respond quickly.

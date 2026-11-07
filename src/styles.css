@@ -305,3 +305,9 @@ p { margin: 0; }
 @media (prefers-reduced-motion: reduce) { .flux-flow { animation: none; } }
 /* Keep the settings header one height whether or not the reset button is showing. */
 .panel > .section-head.env-head:first-child { min-height: 62px; align-items: center; }
+.learn-toc-track { font-size: 13px; font-weight: 700; color: var(--ink); padding-top: 6px; border-top: 1px solid var(--line); }
+.learn-tracks { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.learn-track { border: 1px solid var(--line); padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.learn-track h3 { margin: 0; }
+.learn-section .learn-track p, .learn-section .learn-track li { font-size: 14px; line-height: 1.5; }
+.learn-toc a.toc-link { display: block; text-decoration: none; }
