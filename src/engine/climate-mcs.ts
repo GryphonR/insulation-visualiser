@@ -97,8 +97,10 @@ export function climateFromPostcode(pc: string): { station: number; region: numb
   const ciArea = /^(JE|GY)/.test(postcodeArea(pc));
   const p: [number, number] | null = ciArea ? [MCS_STATIONS[MCS_STATIONS.length - 1][2], MCS_STATIONS[MCS_STATIONS.length - 1][3]] : postcodeLatLon(pc);
   if (!p) return null;
+  // MCS measures from the centre of the postcode area ("CV"), not the district, for both the station and the region.
+  const c = (ciArea ? null : postcodeLatLon(postcodeArea(pc))) ?? p;
   const near = <T extends unknown[]>(list: T[], lat: (x: T) => number, lon: (x: T) => number) =>
-    list.reduce((best, x, i) => { const d = distanceKm(p, [lat(x), lon(x)]); return d < best.d ? { i, d } : best; }, { i: 0, d: Infinity });
+    list.reduce((best, x, i) => { const d = distanceKm(c, [lat(x), lon(x)]); return d < best.d ? { i, d } : best; }, { i: 0, d: Infinity });
   // Channel Islands use their own standard data (JE, GY).
   const ci = /^(JE|GY)/.test(postcodeArea(pc));
   const st = ci ? { i: MCS_STATIONS.length - 1, d: 0 } : near(MCS_STATIONS.slice(0, -1), (s) => s[2], (s) => s[3]);

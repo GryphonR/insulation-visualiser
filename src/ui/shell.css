@@ -51,6 +51,22 @@ a.btn-primary { color: var(--paper); }
 .face.on { outline: 3px solid var(--accent); outline-offset: 2px; }
 .face.dashed { border-style: dashed; }
 .face .xs { font-size: 11px; color: #3d4b58; }
+/* A wall split between outside and neighbouring rooms: the box itself is divided into its parts, in plan order and sized by
+   length, with a band per storey. The wall's name and watts sit on top; each part's name at its far end. */
+.face-parts { position: absolute; inset: 0; z-index: 0; display: flex; flex-direction: column; }
+.face-parts.v { flex-direction: row; }
+.face > :not(.face-parts) { position: relative; z-index: 1; }
+/* Over a divided wall the name and watts get a light backing, so the dividing lines don't run through them. */
+.face:has(> .face-parts) > :not(.face-parts) { background: rgba(255, 254, 251, 0.9); padding: 0 3px; margin-left: -3px; }
+.fp-band { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; }
+.face-parts.v .fp-band { flex-direction: column; }
+.face-parts .fp-band + .fp-band { border-top: 1.5px solid var(--ink); }
+.face-parts.v .fp-band + .fp-band { border-top: 0; border-left: 1.5px solid var(--ink); }
+.fp-band > span { min-width: 0; min-height: 0; overflow: hidden; display: flex; align-items: flex-end; justify-content: center; padding: 3px; font-size: 11px; white-space: nowrap; color: #3d4b58; }
+.face-parts.h .fp-band > span + span { border-left: 1px solid var(--ink); }
+.face-parts.v .fp-band > span + span { border-top: 1px solid var(--ink); }
+/* Names of what's beyond read across, at the bottom of each part. */
+.face-parts.v .fp-band > span { align-items: flex-end; justify-content: center; white-space: normal; text-align: center; line-height: 1.15; }
 .layer-strip { display: flex; height: 28px; border: 1.5px solid var(--ink); }
 .layer-strip span { border-right: 1px solid var(--ink); min-width: 6px; }
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); background: var(--card); border: var(--bw) solid var(--ink); }

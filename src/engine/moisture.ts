@@ -12,6 +12,7 @@
 // measured hourly weather. Treat it as a screening tool, not a substitute for WUFI on a real project.
 import { clamp } from '../lib/util';
 import { DAYS, LOCATIONS, MAT, MEAN } from './data';
+import type { Location } from './data';
 import type { LayerInput } from './simulate';
 
 /** Typical UK monthly mean outdoor relative humidity, %. */
@@ -124,7 +125,9 @@ export function psat(T: number): number {
 
 export interface MoistureInput {
   layers: LayerInput[];
+  /** A city from LOCATIONS, or 'house' for the project's own site (then `site` holds it). */
   loc: string;
+  site?: Location;
   /** Indoor air temperature, °C. */
   tin: number;
   /** Indoor vapour excess, g/m³ (see LOADS). */
@@ -302,7 +305,7 @@ function interp(arr: number[], m: number, f: number): number {
 }
 
 export function runMoisture(inp: MoistureInput): MoistureResult | null {
-  const loc = LOCATIONS.find((l) => l.id === inp.loc) ?? LOCATIONS[1];
+  const loc = (inp.loc === 'house' ? inp.site : LOCATIONS.find((l) => l.id === inp.loc)) ?? LOCATIONS[1];
   // Everything outside a ventilated gap is at outdoor conditions, so analyse only what's inside it.
   const ventAt = inp.layers.reduce((a, l, i) => (MAT[l.mat]?.vent ? i : a), -1);
   const used = inp.layers.slice(ventAt + 1).filter((l) => MAT[l.mat] && l.t > 0);

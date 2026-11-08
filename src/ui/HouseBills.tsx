@@ -4,8 +4,9 @@ import { calcHouse, isHeatPump } from '../engine/house';
 import type { House } from '../engine/house';
 import { NO_KNOBS, bestFit, calibrate, demoBills, parseMeterCsv } from '../engine/house-calibrate';
 import type { Bills, Knobs } from '../engine/house-calibrate';
-import { Why, fmt } from './hform';
+import { Why, fmt, NumInput } from './hform';
 import { WHY } from './assumptions';
+import { useProject } from './project';
 
 const EMPTY: Bills = { gas: Array(12).fill(NaN), temps: Array(12).fill(NaN), base: NaN };
 
@@ -13,6 +14,7 @@ const EMPTY: Bills = { gas: Array(12).fill(NaN), temps: Array(12).fill(NaN), bas
 export function HouseBills({ house, setHouse }: { house: House; setHouse: (fn: (h: House) => House) => void }) {
   // Fit against the uncalibrated model so applying twice doesn't compound.
   const res = useMemo(() => calcHouse({ ...house, calib: undefined }), [house]);
+  const { res: shown } = useProject();
   const bills = house.bills ?? EMPTY;
   // The same boiler as the model when the house is on one; a heat pump house's bills came from its old boiler.
   const modelEff = isHeatPump(house.hp.source) ? house.hp.boilerEff : Math.round(res.hp.seasonal * 100);
@@ -69,8 +71,8 @@ export function HouseBills({ house, setHouse }: { house: House; setHouse: (fn: (
             <label className="hf"><span className="eyebrow">Cooking & hot water per month</span>
               <span className="hf-in"><input type="number" className="thk-input" placeholder={fmt(fit.base)} value={Number.isFinite(bills.base) ? bills.base : ''} onChange={(e) => setBills({ ...bills, base: e.target.value === '' ? NaN : Number(e.target.value) })} /><span className="small muted">kWh (blank: lowest summer month)</span></span>
             </label>
-            <label className="hf"><span className="hf-lab"><span className="eyebrow">Boiler efficiency</span><Why>{`The efficiency of the boiler that used the gas on these bills, used to turn gas bought into heat delivered. When the house is modelled on a boiler this starts as that boiler's seasonal efficiency from the Energy & cost page; type a figure to override it for the bills only. ${WHY.boilerEff} A condensing boiler on a 70/60 °C system typically manages 85–88%.`}</Why></span>
-              <span className="hf-in"><input type="number" className="thk-input" value={eff} onChange={(e) => { const v = Number(e.target.value); setBills({ ...bills, eff: v > 0 ? v : undefined }); }} /><span className="small muted">%{bills.eff === undefined ? ' (from the model)' : ''}</span></span>
+            <label className="hf"><span className="hf-lab"><span className="eyebrow">Boiler efficiency</span><Why>{`The efficiency of the boiler that used the gas on these bills, used to turn gas bought into heat delivered. When the house is modelled on a boiler this starts as that boiler's seasonal efficiency from Heating › System & flow; type a figure to override it for the bills only. ${WHY.boilerEff} A condensing boiler on a 70/60 °C system typically manages 85–88%.`}</Why></span>
+              <span className="hf-in"><NumInput className="thk-input" value={eff} onChange={(e) => { const v = Number(e.target.value); setBills({ ...bills, eff: v > 0 ? v : undefined }); }} /><span className="small muted">%{bills.eff === undefined ? ' (from the model)' : ''}</span></span>
             </label>
           </div>
           <div className="months-bars bills-bars" role="img" aria-label="Measured and modelled gas by month">
@@ -113,7 +115,7 @@ export function HouseBills({ house, setHouse }: { house: House; setHouse: (fn: (
             {house.calib && <button type="button" className="btn-link" onClick={() => setHouse((h) => ({ ...h, calib: undefined }))}>Remove calibration</button>}
           </div>
           <p className="small">{fit.n < 6 ? 'Enter at least six months to check the fit.'
-            : applied ? `This scenario is calibrated: space heating ${fmt(calcHouse(house).annualKWh)} kWh in a typical year.`
+            : applied ? `This scenario is calibrated: space heating ${fmt(shown.annualKWh)} kWh in a typical year.`
             : fit.good ? 'Within the usual limits for a calibrated model. Apply it to make this scenario match the bills.'
             : `Not matched yet: the model is ${fit.nmbe > 0 ? 'over' : 'under'} the bills by ${fmt(Math.abs(fit.nmbe))}% over the year. Try Best fit, then check the values make sense for this household.`}</p>
         </section>

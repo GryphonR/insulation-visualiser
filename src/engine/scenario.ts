@@ -5,6 +5,8 @@ import type { Location, Orient, Weather } from './data';
 import { simulate } from './simulate';
 import { solarAt } from './solar';
 import { bearingLabel } from './geom';
+import { groundFloorU, layersR, suspendedFloorU } from './house';
+import type { Buildup } from './house';
 import type { LayerInput, SimParams, SimResult } from './simulate';
 
 export type HeatMode = 'fixed' | 'schedule' | 'free';
@@ -12,12 +14,20 @@ export type HeatMode = 'fixed' | 'schedule' | 'free';
 /** Everything the user can choose. */
 export interface Scenario {
   layers: LayerInput[];
+  /** A city from LOCATIONS, or 'house' for the project's own site (then `site` holds it). */
   loc: string;
+  site?: Location;
   month: number;
   weather: string;
   orient: string;
   /** Roofs: pitch in degrees (0 = flat). */
   pitch?: number;
+  /** Floors: what lies under them (unset: the ground). Ceilings always have a room above. */
+  under?: 'ground' | 'void' | 'room';
+  /** Floors over a room and ceilings: that room's temperature, °C (unset: 18). */
+  otherT?: number;
+  /** Ground floors: the floor's U-value as the house works it out (BS EN ISO 13370, its size and edge); unset, a typical house. */
+  floorU?: number;
   /** True bearing the face (or a pitched roof's slope) looks out on, degrees from north; unset, the orientation's own. */
   az?: number;
   colour: string;
@@ -53,6 +63,28 @@ export const ROOM_HEIGHT = 2.5;
 const AIR_CP = 1.2 * 1005; // J/m³K
 const VENT_FACTOR = 0.33; // W per (m³/h·K)
 const GLAZING_U = 1.4; // W/m²K
+const UK_MEAN = MEAN.reduce((a, b) => a + b, 0) / 12;
+/** What a floor or ceiling has on its far side, as the readouts and charts call it. */
+export const OTHER_LABEL: Record<NonNullable<SimParams['other']>['what'], string> = { ground: 'Ground below', void: 'Void below', above: 'Room above', below: 'Room below' };
+/** BS EN ISO 13370 characteristic floor dimension B′ for a typical house (floor area ÷ half its exposed perimeter), m. */
+const TYPICAL_B = 5;
+
+/**
+ * What the far side of a floor or ceiling sees. A room above or below: held at its own temperature, through its own
+ * surface film (BS EN ISO 6946: 0.10 for heat rising through a ceiling, 0.17 falling through a floor). The ground under a
+ * slab (or the void of a suspended floor): steady for the month, through a resistance that gives the BS EN ISO 13370 U-value.
+ */
+function otherSide(sc: Scenario, loc: Location, tmean: number, ceiling: boolean): NonNullable<SimParams['other']> {
+  // shortcut: heat is taken to flow from this room to the other one (up through a ceiling, down through a floor), whichever is warmer.
+  if (ceiling) return { T: sc.otherT ?? 18, R: 0.1, Rsi: 0.1, what: 'above' };
+  if (sc.under === 'room') return { T: sc.otherT ?? 18, R: 0.17, Rsi: 0.17, what: 'below' };
+  const b = { id: '', name: '', kind: 'floor', layers: sc.layers.map((l) => [l.mat, l.t]) } as unknown as Buildup, susp = sc.under === 'void';
+  // Typical suspended-floor void: 1500 mm² of airbrick per metre of wall, 0.3 m deep (as a new house starts).
+  const U = sc.floorU ?? (susp ? suspendedFloorU(b, TYPICAL_B, 1500, 0.3) : groundFloorU(b, TYPICAL_B));
+  // shortcut: ground under the slab at the region's mean ± 3 K, warmest in September (as the ground loop uses); a void halfway to the outdoor air.
+  const ground = UK_MEAN + loc.dT + 3 * Math.cos((2 * Math.PI * (sc.month - 8)) / 12);
+  return { T: susp ? (ground + tmean) / 2 : ground, R: Math.max(0.04, 1 / U - 0.17 - layersR(b)), Rsi: 0.17, what: susp ? 'void' : 'ground' };
+}
 
 export function inPeriod(h: number, on: number, off: number): boolean {
   if (on === off) return false;
@@ -71,7 +103,7 @@ export interface ScenarioContext {
 }
 
 export function buildParams(sc: Scenario): ScenarioContext {
-  const loc = LOCATIONS.find((l) => l.id === sc.loc) ?? LOCATIONS[1];
+  const loc = (sc.loc === 'house' ? sc.site : LOCATIONS.find((l) => l.id === sc.loc)) ?? LOCATIONS[1];
   const weather = WEATHER.find((w) => w.id === sc.weather) ?? WEATHER[1];
   const base = ORIENTS.find((o) => o.id === sc.orient) ?? ORIENTS[0];
   const pitch = Math.min(90, Math.max(0, sc.pitch ?? 0)), az = sc.az ?? base.az;
@@ -79,6 +111,7 @@ export function buildParams(sc: Scenario): ScenarioContext {
     ? { ...base, tilt: pitch, az, name: pitch > 0 ? `Roof, ${Math.round(pitch)}° pitch facing ${bearingLabel(az)}` : 'Flat roof', label: pitch > 0 ? `${Math.round(pitch)}° roof` : 'Flat roof' }
     : sc.az != null ? { ...base, az, name: `Wall facing ${bearingLabel(az)}`, label: bearingLabel(az) } : base;
   const colour = COLOURS.find((c) => c.id === sc.colour) ?? COLOURS[1];
+  const tmean = MEAN[sc.month] + loc.dT + weather.dM;
   const params: SimParams = {
     layers: sc.layers,
     orient,
@@ -86,9 +119,10 @@ export function buildParams(sc: Scenario): ScenarioContext {
     doy: DOY[sc.month],
     c: weather.c,
     alpha: colour.a,
-    tmean: MEAN[sc.month] + loc.dT + weather.dM,
+    tmean,
     swing: SWING[sc.month] * weather.sk,
     tinF: (h) => (sc.heat === 'schedule' ? (heatingOn(sc, h) ? sc.comfort : sc.setback) : sc.tin),
+    ...(base.id === 'floor' || base.id === 'ceiling' ? { other: otherSide(sc, loc, tmean, base.id === 'ceiling') } : {}),
   };
   if (sc.heat === 'free') {
     const g = GLAZING.find((x) => x.id === sc.glaz) ?? GLAZING[1];

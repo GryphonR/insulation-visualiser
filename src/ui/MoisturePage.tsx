@@ -9,6 +9,8 @@ import { ChipGroup, Eyebrow, Field, Slider } from './controls';
 import { StackupModal } from './StackupModal';
 import type { StackupDraft } from './StackupModal';
 import { useMoisture } from './useMoisture';
+import { projectDay } from './projectSim';
+import { useProject } from './project';
 
 const W = 600;
 const PL = 52;
@@ -379,8 +381,12 @@ interface Props {
 export function MoisturePage({ library, setCustomStackups, slots, setSlots, onChangeBuildup }: Props) {
   const single = slots.length === 1;
   const [modal, setModal] = useState<null | { draft?: StackupDraft; slot: number }>(null);
-  const [loc, setLoc] = useState('bir');
-  const [tin, setTin] = useState(20);
+  // Start from the house: its own site and the main room's temperature (generic settings without a house to take them from).
+  const { res: houseRes } = useProject();
+  const house = useMemo(() => projectDay(houseRes)?.patch, [houseRes]);
+  const site = house?.site;
+  const [loc, setLoc] = useState(site ? 'house' : 'bir');
+  const [tin, setTin] = useState(house?.tin ?? 20);
   const [load, setLoad] = useState('typ');
   const [exposure, setExposure] = useState('moderate');
   const [footing, setFooting] = useState('dry');
@@ -400,11 +406,11 @@ export function MoisturePage({ library, setCustomStackups, slots, setSlots, onCh
       slots.map((id): MoistureInput | null => {
         const s = library.find((x) => x.id === id);
         return s ? {
-          layers: layersFromTuples(s.layers), loc, tin, dv, roof: s.orient === 'roof',
+          layers: layersFromTuples(s.layers), loc, site: loc === 'house' ? site : undefined, tin, dv, roof: s.orient === 'roof',
           catch: EXPOSURES.find((e) => e.id === exposure)?.catch, footing: FOOTINGS.find((f) => f.id === footing)?.months,
         } : null;
       }),
-    [slots, library, loc, tin, dv, exposure, footing],
+    [slots, library, loc, site, tin, dv, exposure, footing],
   );
   const { results, busy } = useMoisture(inputs);
   // res is undefined until the first run finishes, and null when everything is outside a ventilated gap.
@@ -441,9 +447,13 @@ export function MoisturePage({ library, setCustomStackups, slots, setSlots, onCh
     <div className="compare-page">
       <section className="card panel">
         <h2>Set the year</h2>
+        {site && house && (loc === 'house' && tin === house.tin
+          ? <p className="small muted">Set from your house: {houseRes.station} weather, room at {house.tin} °C. Change anything below to try a what-if.</p>
+          : <p className="small muted">What if: changed from your house ({houseRes.station} weather, room at {house.tin} °C). <button type="button" className="btn-link inline" onClick={() => { setLoc('house'); setTin(house.tin ?? 20); }}>Back to your house</button></p>)}
         <div className="grid-2">
           <Field label="Location">
             <select className="select" value={loc} onChange={(e) => setLoc(e.target.value)}>
+              {site && <option value="house">{site.name}</option>}
               {LOCATIONS.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
           </Field>

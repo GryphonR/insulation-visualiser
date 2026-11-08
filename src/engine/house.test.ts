@@ -93,11 +93,25 @@ describe('whole-house model', () => {
     expect(st('JE2 3AB')![0]).toMatch(/St Helier/);
     expect(st('M')![0]).toBe('Manchester');
     expect(climateFromPostcode('ZZ9 9ZZ')).toBeNull();
+    // MCS measures from the centre of the postcode area: CV36 is nearer Brize Norton, but the CV area is nearest Coleshill.
+    expect(st('CV36 4AA')![0]).toBe('Birmingham');
     const hh = defaultHouse();
     hh.climate.postcode = 'PL4 8AA';
+    expect(calcHouse(hh).Tout).toBe(-0.2); // 99%, the MIS 3005-D default
+    hh.climate.pct = '99.6';
     expect(calcHouse(hh).Tout).toBe(-1.5);
     hh.climate.auto = false;
     expect(calcHouse(hh).Tout).toBe(-4.5);
+  });
+
+  it('your own design temperature replaces the MCS figure, and the loss follows it', () => {
+    const hh = defaultHouse(), mcs = calcHouse(hh);
+    hh.climate.designT = -6;
+    const own = calcHouse(hh);
+    expect([own.Tout, own.ToutMcs]).toEqual([-6, mcs.Tout]);
+    expect(own.peakW).toBeGreaterThan(mcs.peakW);
+    delete hh.climate.designT;
+    expect(calcHouse(hh).Tout).toBe(mcs.Tout);
   });
 
   it('ground floor U falls with a larger floor', () => {

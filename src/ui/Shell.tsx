@@ -6,16 +6,16 @@ import { fmt } from './hform';
 
 export const SECTIONS = [
   { n: 1, id: 'buildups', label: 'Build-ups', to: 'buildups', routes: ['buildups', 'library', 'materials', 'compare-buildups', 'wall'] },
-  { n: 2, id: 'model', label: 'Model', to: 'plan', routes: ['plan', 'room', 'site', 'storeys', 'vent', 'floor', 'openings', 'spaces', 'checks'] },
+  { n: 2, id: 'model', label: 'Model', to: 'plan', routes: ['plan', 'view3d', 'room', 'site', 'storeys', 'vent', 'floor', 'openings', 'spaces', 'checks'] },
   { n: 3, id: 'heating', label: 'Heating', to: 'heating', routes: ['heating', 'emitters', 'zones', 'pipes'] },
   { n: 4, id: 'results', label: 'Results', to: 'results', routes: ['results', 'energy', 'bills', 'moisture', 'report', 'gains'] },
 ] as const;
 
 const SUBNAV: Record<string, Array<[string, string]>> = {
-  model: [['plan', 'Floor plan'], ['site', 'Site & climate'], ['storeys', 'Storeys & loft'], ['vent', 'Ventilation'], ['floor', 'Floors'], ['openings', 'Windows & doors'], ['spaces', 'Unheated spaces'], ['checks', 'Checks & history']],
+  model: [['plan', 'Floor plan'], ['view3d', '3D view'], ['site', 'Site & climate'], ['storeys', 'Storeys & loft'], ['vent', 'Ventilation'], ['floor', 'Floors'], ['openings', 'Windows & doors'], ['spaces', 'Unheated spaces'], ['checks', 'Checks & history']],
   heating: [['heating', 'System & flow'], ['emitters', 'Emitters'], ['zones', 'Zones & UFH'], ['pipes', 'Pipework']],
   buildups: [['buildups', 'Project'], ['materials', 'Materials'], ['library', 'Build-ups'], ['wall', 'Simulate']],
-  results: [['results', 'Design day'], ['year', 'Typical year & test conditions'], ['gains', 'Occupancy & gains'], ['energy', 'Energy & cost'], ['bills', 'Check against bills'], ['moisture', 'Moisture & mould'], ['report', 'Report & export']],
+  results: [['results', 'Design day'], ['year', 'Test the house'], ['gains', 'Occupancy & heating times'], ['energy', 'Energy & cost'], ['bills', 'Check against bills'], ['moisture', 'Moisture & mould'], ['report', 'Report & export']],
   scenarios: [['scenarios', 'Scenarios'], ['compare', 'Compare A vs B']],
 };
 
@@ -64,7 +64,7 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
         </label>
         <div className="ctx">
           <span className="eb">Conditions</span>
-          <a className="ctx-v" href={href('conditions')}>Design day {fmt(res.Tout, 1)} °C ▾</a>
+          <a className="ctx-v" href={href('site')} title="The design outside temperature, from the postcode: change it on Site & climate">Design day {fmt(res.Tout, 1)} °C ▾</a>
         </div>
         <nav className="wf" aria-label="Workflow">
           {SECTIONS.map((s) => (

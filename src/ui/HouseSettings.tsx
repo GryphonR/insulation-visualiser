@@ -1,11 +1,13 @@
 import { COLOURS, MONTHS } from '../engine/data';
-import { MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS } from '../engine/climate-mcs';
-import { FUEL_LABEL, SIDES, SOURCE_LABEL, activeSheet, bearingLabel, defaultTemp, deviceM3, isHeatPump, pointFactor, tariff, trueBearing } from '../engine/house';
+import { MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS, postcodeArea } from '../engine/climate-mcs';
+import { FUEL_LABEL, SIDES, SOURCE_FLOW, SOURCE_LABEL, activeSheet, setSource, bearingLabel, defaultTemp, deviceM3, isHeatPump, pointFactor, roofStorey, tariff, trueBearing } from '../engine/house';
 import type { Fuel, HeatPumpSheet, HeatSource, RoomType } from '../engine/house';
 import { Chip } from './controls';
-import { Card, Num, Why, fmt } from './hform';
+import { Card, Num, Why, fmt, NumInput } from './hform';
 import { WHY, sourceWhy } from './assumptions';
 import { useProject } from './project';
+import { href } from './route';
+import { RoofSectionFields, newRoof } from './HouseRoof';
 
 const ROOM_TYPES = Object.keys(ROOM_TEMPS) as RoomType[];
 
@@ -26,7 +28,7 @@ export function SitePage() {
             </div>
             {house.climate.auto !== false && (
               <p className="small">{res.climate.fromPostcode
-                ? `Nearest station ${res.station} (${MCS_STATIONS[res.climate.station][1]}), ${fmt(res.climate.km)} km away; ground temperature from ${res.region}.`
+                ? `Nearest station ${res.station} (${MCS_STATIONS[res.climate.station][1]}), ${fmt(res.climate.km)} km from the centre of the ${postcodeArea(house.climate.postcode)} postcode area, as MCS measures it; ground temperature from ${res.region}.`
                 : `Postcode "${house.climate.postcode}" isn't in the bundled table, so the station and region below are used.`}</p>
             )}
             <div className="hf-row">
@@ -37,7 +39,7 @@ export function SitePage() {
               </label>
               <label className="hf"><span className="eyebrow">Percentile</span>
                 <select className="select" value={house.climate.pct} onChange={(e) => upd((h) => { h.climate.pct = e.target.value as '99.6' | '99'; })}>
-                  <option value="99.6">99.6% (default)</option><option value="99">99%</option>
+                  <option value="99">99%: colder only ~88 h a year (MIS 3005-D, default)</option><option value="99.6">99.6%: colder only ~35 h a year (stricter)</option>
                 </select>
               </label>
               <Num label="Altitude" unit="m" step={10} value={house.climate.altitude} onChange={(v) => upd((h) => { h.climate.altitude = v; })} />
@@ -48,7 +50,13 @@ export function SitePage() {
               </label>
               <Num label="Neighbour (party walls)" unit="°C" step={0.5} value={house.neighbourT} onChange={(v) => upd((h) => { h.neighbourT = v; })} />
             </div>
-            <p className="small muted mono">Design outside {res.Tout} °C · ground {res.Tg} °C · {fmt(res.hdd)} degree days{res.hddKnown ? '' : ' (default)'}</p>
+            <div className="hf-row">
+              <label className="small"><input type="checkbox" checked={Number.isFinite(house.climate.designT)}
+                onChange={(e) => upd((h) => { if (e.target.checked) h.climate.designT = res.ToutMcs; else delete h.climate.designT; })} /> Use my own design temperature</label>
+              {Number.isFinite(house.climate.designT) && <Num label="Design outside" unit="°C" step={0.1} value={house.climate.designT!} onChange={(v) => upd((h) => { h.climate.designT = v; })} />}
+            </div>
+            {Number.isFinite(house.climate.designT) && <p className="small">Your own figure is used for the heat loss, emitter and heat source sizing and the coldest-day test, in place of the MCS {res.ToutMcs} °C. Untick to go back to MCS.</p>}
+            <p className="small muted mono">Design outside {res.Tout} °C{Number.isFinite(house.climate.designT) ? ' (your own)' : ''} · ground {res.Tg} °C · {fmt(res.hdd)} degree days{res.hddKnown ? '' : ' (default)'}</p>
           </Card>
       </div>
       <div className="house-col">
@@ -67,7 +75,7 @@ export function SitePage() {
                 return (
                   <label key={t} className="small temp">
                     <span>{t}</span>
-                    <input type="number" className="thk-input" step={0.5} value={defaultTemp(house, t)} aria-label={`${t} default temperature`}
+                    <NumInput className="thk-input" step={0.5} value={defaultTemp(house, t)} aria-label={`${t} default temperature`}
                       onChange={(e) => upd((h) => { h.roomTemps = { ...h.roomTemps, [t]: Number(e.target.value) }; })} />
                     {own != null ? <button type="button" className="btn-link inline" onClick={() => upd((h) => { const r = { ...h.roomTemps }; delete r[t]; h.roomTemps = r; })}>reset</button> : <span className="muted">MCS</span>}
                   </label>
@@ -144,9 +152,9 @@ export function StoreysPage() {
                   {house.storeys.map((s, i) => (
                     <tr key={i}>
                       <td><input className="h-text" value={s.name} aria-label="Storey name" onChange={(e) => upd((h) => { h.storeys[i].name = e.target.value; })} /></td>
-                      <td className="n"><input type="number" className="thk-input" step={0.05} value={s.h} aria-label="Ceiling height" onChange={(e) => upd((h) => { h.storeys[i].h = Math.max(1, Number(e.target.value) || 1); })} /></td>
-                      <td className="n">{i < house.storeys.length - 1 ? <input type="number" className="thk-input" step={0.05} value={s.zone} aria-label="Floor zone" onChange={(e) => upd((h) => { h.storeys[i].zone = Math.max(0, Number(e.target.value) || 0); })} /> : '—'}</td>
-                      <td className="n">{i === 0 ? <input type="number" className="thk-input" step={0.1} min={0} value={s.below ?? 0} aria-label="Depth below ground" onChange={(e) => upd((h) => { h.storeys[0].below = Math.max(0, Number(e.target.value) || 0); })} /> : '—'}</td>
+                      <td className="n"><NumInput className="thk-input" step={0.05} value={s.h} aria-label="Ceiling height" onChange={(e) => upd((h) => { h.storeys[i].h = Math.max(1, Number(e.target.value) || 1); })} /></td>
+                      <td className="n">{i < house.storeys.length - 1 ? <NumInput className="thk-input" step={0.05} value={s.zone} aria-label="Floor zone" onChange={(e) => upd((h) => { h.storeys[i].zone = Math.max(0, Number(e.target.value) || 0); })} /> : '—'}</td>
+                      <td className="n">{i === 0 ? <NumInput className="thk-input" step={0.1} min={0} value={s.below ?? 0} aria-label="Depth below ground" onChange={(e) => upd((h) => { h.storeys[0].below = Math.max(0, Number(e.target.value) || 0); })} /> : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -168,32 +176,23 @@ export function StoreysPage() {
           </Card>
       </div>
       <div className="house-col">
-          <Card title="Loft" note={res.loft ? `Settles at ${fmt(res.loft.T, 1)} °C on the design day.` : 'No loft: top-storey ceilings are flat roofs.'}>
+          <Card title="Roofs and loft" note={res.loft ? `The loft settles at ${fmt(res.loft.T, 1)} °C on the design day.` : house.roofs.length ? 'No loft: the roofs sit right on the ceilings under them.' : 'No roof: top-storey ceilings are flat roofs.'}
+            right={<a className="btn-link" href={href('plan')}>Draw on the plan ›</a>}>
+            {house.roofs.map((s) => (
+              <details key={s.id} className="fp-sec">
+                <summary><b>{s.name}</b> <span className="small muted">{s.form === 'custom' ? 'edge by edge' : s.form}{s.form === 'flat' ? '' : `, ${s.pitch}°`} · on the {house.storeys[roofStorey(house, s)]?.name.toLowerCase()}</span></summary>
+                <RoofSectionFields house={house} id={s.id} upd={upd} />
+              </details>
+            ))}
+            <button type="button" className="btn-secondary" onClick={() => upd((h) => { h.roofs.push(newRoof(h)); })}>Add a roof that follows the top storey</button>
             <div className="hf-row">
-              <label className="small"><input type="checkbox" checked={house.loft.present} onChange={(e) => upd((h) => { h.loft.present = e.target.checked; })} /> Loft over the top storey</label>
-              <Num label="Ventilation" unit="ach" value={house.loft.ach} min={0} onChange={(v) => upd((h) => { h.loft.ach = v; })} />
-              <Num label="Mean height" unit="m" value={house.loft.height} min={0.1} onChange={(v) => upd((h) => { h.loft.height = v; })} />
-              <Num label="Roof pitch" unit="°" step={1} min={0} max={70} value={house.loft.pitch} onChange={(v) => upd((h) => { h.loft.pitch = v; })} />
+              <Num label="Loft ventilation" unit="ach" value={house.loft.ach} min={0} onChange={(v) => upd((h) => { h.loft.ach = v; })} />
             </div>
-            {house.loft.present && <div className="stack-10">
-              <div className="chips" role="group" aria-label="Roof form">
-                {([['gable', 'Gable'], ['hip', 'Hipped'], ['mono', 'Monopitch']] as const).map(([k, l]) => <Chip key={k} on={(house.loft.form ?? 'gable') === k} onClick={() => upd((h) => { h.loft.form = k; })}>{l}</Chip>)}
-              </div>
-              {house.loft.form === 'mono' ? (
-                <div className="chips" role="group" aria-label="Slope faces">
-                  {SIDES.map((s, i) => <Chip key={s} on={(house.loft.facing ?? 'S') === s} onClick={() => upd((h) => { h.loft.facing = s; })}>{`Faces ${bearingLabel(trueBearing(house, i * 90))}`}</Chip>)}
-                </div>
-              ) : (
-                <div className="chips" role="group" aria-label="Ridge runs">
-                  {([[undefined, 'Ridge along the longer side'], ['x', 'Ridge left–right on the plan'], ['y', 'Ridge up–down on the plan']] as const).map(([k, l]) => <Chip key={l} on={house.loft.ridge === k} onClick={() => upd((h) => { if (k) h.loft.ridge = k; else delete h.loft.ridge; })}>{l}</Chip>)}
-                </div>
-              )}
-              <div className="chips" role="group" aria-label="Roof colour">
-                {COLOURS.map((c) => <Chip key={c.id} on={(house.roofColour ?? 'mid') === c.id} onClick={() => upd((h) => { h.roofColour = c.id; })}>{c.label}</Chip>)}
-              </div>
-              {res.loft && <p className="small mono">{res.loft.slopes.map((s) => `${bearingLabel(s.az)} ${fmt(s.area, 1)} m²`).join(' · ')}</p>}
-              <p className="small muted">Sun on each slope warms the loft in the hour-by-hour runs; the design day is overcast, so heat loss doesn't change. The colour applies to every roof, slopes and flat roofs included.</p>
-            </div>}
+            <div className="chips" role="group" aria-label="Roof colour">
+              {COLOURS.map((c) => <Chip key={c.id} on={(house.roofColour ?? 'mid') === c.id} onClick={() => upd((h) => { h.roofColour = c.id; })}>{c.label}</Chip>)}
+            </div>
+            {res.loft && <p className="small mono">Loft {fmt(res.loft.area, 1)} m² · {fmt(res.loft.V, 1)} m³ · roof {res.loft.slopes.map((s) => `${bearingLabel(s.az)} ${fmt(s.area, 1)} m²`).join(' · ')}</p>}
+            <p className="small muted">Rooms under a roof take their sloping ceilings, knee walls and dormers from it. Sun on each slope warms the loft in the hour-by-hour runs; the design day is overcast, so heat loss doesn't change. The colour applies to every roof, slopes and flat roofs included.</p>
           </Card>
       </div>
     </div>
@@ -261,6 +260,34 @@ function SheetEditor() {
   );
 }
 
+/** The heat source, its output and how its efficiency is worked out. Choosing one sets its typical flow temperatures. */
+export function HeatSourceCard() {
+  const { house, upd } = useProject();
+  const s = house.hp.source, hp = isHeatPump(s), sheet = activeSheet(house.hp), typ = SOURCE_FLOW[s];
+  const typical = house.hp.maxFlow === typ.maxFlow && house.heating.dT === typ.dT;
+  return (
+    <Card title="Heat source" note="Choosing a source sets its typical max flow temperature and flow − return drop. Radiators and underfloor loops are checked at that flow, so their output matches the source.">
+      <div className="chips" role="group" aria-label="Heat source">
+        {(Object.keys(SOURCE_LABEL) as HeatSource[]).map((k) => <Chip key={k} on={s === k} onClick={() => upd((h) => setSource(h, k))}>{SOURCE_LABEL[k]}</Chip>)}
+      </div>
+      {!hp && <div className="chips" role="group" aria-label="Boiler fuel">
+        {(Object.keys(FUEL_LABEL) as Fuel[]).map((k) => <Chip key={k} on={house.hp.fuel === k} onClick={() => upd((h) => { h.hp.fuel = k; })}>{FUEL_LABEL[k]}</Chip>)}
+      </div>}
+      <p className="small muted">{sheet ? `COP calibrated to the ${sheet.model || 'entered'} datasheet points.` : SOURCE_NOTE[s]}<Why label="How is the efficiency worked out?">{sourceWhy(house.hp)}</Why></p>
+      <div className="hf-row">
+        <Num label="Output at design temp" unit="kW" value={house.hp.capacity} min={0} why={WHY.capacity} onChange={(v) => upd((h) => { h.hp.capacity = v; })} />
+        {s === 'boiler' && <Num label="Seasonal efficiency" unit="%" step={1} value={house.hp.boilerEff} why={WHY.boilerEff} onChange={(v) => upd((h) => { h.hp.boilerEff = v; })} />}
+        {hp && !sheet && <Num label="Performance factor" unit="× ideal COP" step={0.01} min={0.2} max={0.8} value={house.hp.hpFactor} why={WHY.hpFactor} onChange={(v) => upd((h) => { h.hp.hpFactor = v; })} />}
+      </div>
+      <p className={typical ? 'small muted' : 'small'}>{typical
+        ? `Flow ${typ.maxFlow} °C, flow − return ${typ.dT} K: typical for this source. Change them under Flow temperature.`
+        : <>Your flow is {house.hp.maxFlow} °C, flow − return {house.heating.dT} K; typical for this source is {typ.maxFlow} °C and {typ.dT} K.{' '}
+          <button type="button" className="btn-link inline" onClick={() => upd((h) => { h.hp.maxFlow = typ.maxFlow; h.heating.dT = typ.dT; })}>Use typical</button></>}</p>
+      {hp && <SheetEditor />}
+    </Card>
+  );
+}
+
 function Tile({ head, why, value, unit }: { head: string; why: string; value: string; unit: string }) {
   return <div className="tile"><span className="tiles-head">{head}<Why>{why}</Why></span><span className="tile-value"><span className="mono big">{value}</span><span className="small muted">{unit}</span></span></div>;
 }
@@ -271,21 +298,9 @@ export function EnergyPage() {
   const s = house.hp.source, hp = isHeatPump(s), tf = tariff(house.hp), sheet = activeSheet(house.hp);
   return (
     <div className="house">
-          <Card title="Heat source and running cost" note="Space heating only; hot water comes later. Make a scenario with a different heat source to compare them.">
-            <div className="chips" role="group" aria-label="Heat source">
-              {(Object.keys(SOURCE_LABEL) as HeatSource[]).map((k) => <Chip key={k} on={s === k} onClick={() => upd((h) => { h.hp.source = k; })}>{SOURCE_LABEL[k]}</Chip>)}
-            </div>
-            {!hp && <div className="chips" role="group" aria-label="Boiler fuel">
-              {(Object.keys(FUEL_LABEL) as Fuel[]).map((k) => <Chip key={k} on={house.hp.fuel === k} onClick={() => upd((h) => { h.hp.fuel = k; })}>{FUEL_LABEL[k]}</Chip>)}
-            </div>}
-            <p className="small muted">{sheet ? `COP calibrated to the ${sheet.model || 'entered'} datasheet points.` : SOURCE_NOTE[s]}<Why label="How is the efficiency worked out?">{sourceWhy(house.hp)}</Why></p>
-            <div className="hf-row">
-              <Num label="Output at design temp" unit="kW" value={house.hp.capacity} min={0} why={WHY.capacity} onChange={(v) => upd((h) => { h.hp.capacity = v; })} />
-              <Num label="Max flow" unit="°C" step={1} value={house.hp.maxFlow} onChange={(v) => upd((h) => { h.hp.maxFlow = v; })} />
-              {s === 'boiler' && <Num label="Seasonal efficiency" unit="%" step={1} value={house.hp.boilerEff} why={WHY.boilerEff} onChange={(v) => upd((h) => { h.hp.boilerEff = v; })} />}
-              {hp && !sheet && <Num label="Performance factor" unit="× ideal COP" step={0.01} min={0.2} max={0.8} value={house.hp.hpFactor} why={WHY.hpFactor} onChange={(v) => upd((h) => { h.hp.hpFactor = v; })} />}
-            </div>
-            {hp && <SheetEditor />}
+          <Card title="Running cost" note={`Space heating only; hot water comes later. ${res.annualFrom === 'year' ? 'From the typical-year run, hour by hour.' : 'Estimate while the typical year runs…'} To compare heat sources, make a scenario with a different one.`}>
+            <p className="small">{SOURCE_LABEL[s]}{hp ? '' : ` on ${FUEL_LABEL[house.hp.fuel].toLowerCase()}`}, {house.hp.capacity} kW, max flow {house.hp.maxFlow} °C.{' '}
+              <a href={href('heating')}>Change the heat source in Heating ›</a></p>
             <h3 className="eyebrow">Your prices</h3>
             <div className="hf-row">
               <Num label="Electricity" unit="p/kWh" step={0.01} value={house.hp.elecP} why={WHY.elecP} onChange={(v) => upd((h) => { h.hp.elecP = v; })} />

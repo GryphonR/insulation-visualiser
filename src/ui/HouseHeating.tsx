@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { MONTHS } from '../engine/data';
-import { SOURCE_LABEL, calcHouse, effText, isHeatPump, roomArea } from '../engine/house';
+import { SOURCE_LABEL, effText, isHeatPump, roomArea } from '../engine/house';
 import type { House } from '../engine/house';
 import { COVERS, RAD_LABEL, UFH_SPACINGS, autoEmitters, emitterOut, loopLength, loopMax, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
 import type { Emitter, RadType, Zone } from '../engine/house-heating';
@@ -8,8 +8,11 @@ import { Chip } from './controls';
 import { HouseUfh } from './HouseUfh';
 import { MAX_PA_M, MAX_V, PIPE_SIZES, autoPipes, sizePipes } from '../engine/house-pipes';
 import { addEmitter } from '../engine/house-draw';
-import { Why, fmt, uid } from './hform';
+import { Why, fmt, uid, NumInput } from './hform';
 import { WHY, sourceWhy } from './assumptions';
+import { useProject } from './project';
+import { href } from './route';
+import { HeatSourceCard } from './HouseSettings';
 
 const ZCOL = ['#c2410c', '#1f6fb5', '#1f7a4d', '#7a45b8', '#b45309', '#be185d'];
 
@@ -18,7 +21,7 @@ export type HeatingSection = 'system' | 'emitters' | 'zones' | 'pipes';
 export function HouseHeating({ house, setHouse, section }: { house: House; setHouse: (fn: (h: House) => House) => void; section?: HeatingSection }) {
   const show = (x: HeatingSection) => !section || section === x;
   const upd = (fn: (h: House) => void) => setHouse((prev) => { const n = structuredClone(prev); fn(n); return n; });
-  const res = useMemo(() => calcHouse(house), [house]);
+  const { res } = useProject();
   const c = house.heating;
   const needs = res.rooms.filter((r) => r.room.heated).map((r) => ({ room: r.room, need: r.totalW }));
   const designFlow = res.heat.designFlow;
@@ -26,9 +29,9 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
   const setE = (id: string, patch: Partial<Emitter>) => upd((h) => { const e = h.heating.emitters.find((x) => x.id === id); if (e) Object.assign(e, patch); });
   const setZ = (id: string, patch: Partial<Zone>) => upd((h) => { const z = h.heating.zones.find((x) => x.id === id); if (z) Object.assign(z, patch); });
 
-  // Flow curve chart: outside −10..20 °C, flow 20..60 °C.
-  const W = 520, H = 220, L = 36, B = 24;
-  const X = (t: number) => L + ((t + 10) / 30) * (W - L - 8), Y = (f: number) => 8 + (1 - (f - 20) / 40) * (H - B - 8);
+  // Flow curve chart: outside −10..20 °C, flow 20 °C up to 60 °C, or past the max flow for a boiler.
+  const W = 520, H = 220, L = 36, B = 24, top = Math.max(60, Math.ceil((house.hp.maxFlow + 1) / 10) * 10);
+  const X = (t: number) => L + ((t + 10) / 30) * (W - L - 8), Y = (f: number) => 8 + (1 - (f - 20) / (top - 20)) * (H - B - 8);
   const line = (fn: (t: number) => number) => Array.from({ length: 52 }, (_, i) => -10 + i * 0.5).filter((t) => t <= 15.5).map((t, i) => `${i ? 'L' : 'M'}${X(t).toFixed(1)} ${Y(fn(t)).toFixed(1)}`).join(' ');
   const ideal = (t: number) => systemFlow({ ...house, heating: { ...c, control: 'ideal' } }, needs, res.Tout, t);
   const current = (t: number) => systemFlow(house, needs, res.Tout, t);
@@ -55,6 +58,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
   return (
     <div className="house-grid">
       <div className="house-col">
+        {show('system') && <HeatSourceCard />}
         {show('system') && (
         <section className="card panel">
           <h2>Flow temperature</h2>
@@ -69,15 +73,15 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
             curve: 'A straight line between two points you set, as on most controllers. The dashed line is the ideal for comparison.',
           }[c.control]}</p>
           <div className="hf-row">
-            <label className="hf"><span className="eyebrow">Max flow</span><span className="hf-in"><input type="number" className="thk-input" value={house.hp.maxFlow} step={1} onChange={(e) => upd((h) => { h.hp.maxFlow = Number(e.target.value); })} /><span className="small muted">°C</span></span></label>
-            <label className="hf"><span className="eyebrow">Flow − return</span><span className="hf-in"><input type="number" className="thk-input" value={c.dT} min={2} max={15} step={1} onChange={(e) => upd((h) => { h.heating.dT = Math.max(1, Number(e.target.value)); })} /><span className="small muted">K</span></span></label>
+            <label className="hf"><span className="eyebrow">Max flow</span><span className="hf-in"><NumInput className="thk-input" value={house.hp.maxFlow} step={1} onChange={(e) => upd((h) => { h.hp.maxFlow = Number(e.target.value); })} /><span className="small muted">°C</span></span></label>
+            <label className="hf"><span className="eyebrow">Flow − return</span><span className="hf-in"><NumInput className="thk-input" value={c.dT} min={2} max={15} step={1} onChange={(e) => upd((h) => { h.heating.dT = Math.max(1, Number(e.target.value)); })} /><span className="small muted">K</span></span></label>
             {c.control === 'curve' && <>
-              <label className="hf"><span className="eyebrow">Flow at {res.Tout} °C</span><span className="hf-in"><input type="number" className="thk-input" value={c.curveDesign} step={1} onChange={(e) => upd((h) => { h.heating.curveDesign = Number(e.target.value); })} /><span className="small muted">°C</span></span></label>
-              <label className="hf"><span className="eyebrow">Flow at 15 °C</span><span className="hf-in"><input type="number" className="thk-input" value={c.curve15} step={1} onChange={(e) => upd((h) => { h.heating.curve15 = Number(e.target.value); })} /><span className="small muted">°C</span></span></label>
+              <label className="hf"><span className="eyebrow">Flow at {res.Tout} °C</span><span className="hf-in"><NumInput className="thk-input" value={c.curveDesign} step={1} onChange={(e) => upd((h) => { h.heating.curveDesign = Number(e.target.value); })} /><span className="small muted">°C</span></span></label>
+              <label className="hf"><span className="eyebrow">Flow at 15 °C</span><span className="hf-in"><NumInput className="thk-input" value={c.curve15} step={1} onChange={(e) => upd((h) => { h.heating.curve15 = Number(e.target.value); })} /><span className="small muted">°C</span></span></label>
             </>}
           </div>
           <svg className="day-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Flow temperature against outside temperature">
-            {[20, 30, 40, 50, 60].map((f) => <g key={f}><line x1={L} x2={W - 8} y1={Y(f)} y2={Y(f)} className="dc-grid" /><text x={L - 4} y={Y(f) + 4} textAnchor="end" className="dc-ax">{f}</text></g>)}
+            {Array.from({ length: (top - 20) / 10 + 1 }, (_, i) => 20 + i * 10).map((f) => <g key={f}><line x1={L} x2={W - 8} y1={Y(f)} y2={Y(f)} className="dc-grid" /><text x={L - 4} y={Y(f) + 4} textAnchor="end" className="dc-ax">{f}</text></g>)}
             {[-10, -5, 0, 5, 10, 15, 20].map((t) => <text key={t} x={X(t)} y={H - 6} textAnchor="middle" className="dc-ax">{t} °C</text>)}
             <rect x={X(15.5)} y={8} width={X(20) - X(15.5)} height={H - B - 8} fill="#eceff1" />
             <line x1={L} x2={W - 8} y1={Y(house.hp.maxFlow)} y2={Y(house.hp.maxFlow)} stroke="#9a3412" strokeDasharray="2 3" />
@@ -137,12 +141,12 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                           </select>
                         </td>
                         <td className="h-size">
-                          {e.kind === 'radiator' && <><input type="number" className="thk-input" aria-label="Length mm" value={e.len} step={100} min={300} onChange={(ev) => setE(e.id, { len: Number(ev.target.value) })} /> × <input type="number" className="thk-input" aria-label="Height mm" value={e.height} step={50} min={300} onChange={(ev) => setE(e.id, { height: Number(ev.target.value) })} /> mm</>}
-                          {e.kind === 'towel' && <><input type="number" className="thk-input" aria-label="Rated output W" value={e.rated} step={50} onChange={(ev) => setE(e.id, { rated: Number(ev.target.value) })} /> W at ΔT50</>}
+                          {e.kind === 'radiator' && <><NumInput className="thk-input" aria-label="Length mm" value={e.len} step={100} min={300} onChange={(ev) => setE(e.id, { len: Number(ev.target.value) })} /> × <NumInput className="thk-input" aria-label="Height mm" value={e.height} step={50} min={300} onChange={(ev) => setE(e.id, { height: Number(ev.target.value) })} /> mm</>}
+                          {e.kind === 'towel' && <><NumInput className="thk-input" aria-label="Rated output W" value={e.rated} step={50} onChange={(ev) => setE(e.id, { rated: Number(ev.target.value) })} /> W at ΔT50</>}
                           {e.kind === 'ufh' && <>
                             {e.fromZone
                               ? <span title="This room's part of the UFH zone drawn on the plan">{fmt(e.area, 1)} m² from {house.zones?.find((x) => x.id === e.fromZone)?.name ?? 'a UFH zone'} ·{' '}</span>
-                              : <><input type="number" className="thk-input" aria-label="Loop area m²" value={e.area} step={0.5} onChange={(ev) => setE(e.id, { area: Number(ev.target.value) })} /> m² ·{' '}</>}
+                              : <><NumInput className="thk-input" aria-label="Loop area m²" value={e.area} step={0.5} onChange={(ev) => setE(e.id, { area: Number(ev.target.value) })} /> m² ·{' '}</>}
                             {e.fromZone
                               ? <span title="Set on the UFH zone, in the floor plan's side panel">{e.spacing} mm spacing, {e.pipe ?? 16} mm pipe ·{' '}</span>
                               : <><select className="h-sel" aria-label="Pipe spacing" value={e.spacing} onChange={(ev) => setE(e.id, { spacing: Number(ev.target.value) })}>{UFH_SPACINGS.map((s) => <option key={s} value={s}>{s} mm</option>)}</select>{' '}</>}
@@ -211,7 +215,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                     </select>
                   </label>
                 )}
-                <label className="small"><input type="checkbox" checked={hrs === null} onChange={(e) => setZ(z.id, { hours: e.target.checked ? null : [...house.gains.living] })} /> Follow the occupancy schedule</label>
+                <label className="small"><input type="checkbox" checked={hrs === null} onChange={(e) => setZ(z.id, { hours: e.target.checked ? null : [...house.gains.living] })} /> Follow the <a href={href('gains')}>occupancy schedule</a></label>
                 {hrs && (
                   <div className="sched-cells">
                     {hrs.map((on, h) => <button key={h} type="button" className={on ? 'sc on' : 'sc'} style={on ? { background: z.color } : undefined} aria-pressed={!!on} aria-label={`${z.name} ${h}:00`}
@@ -250,7 +254,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                           <option value="">Heat pump</option>{(c.pipes ?? []).filter((x) => x.id !== p.id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
                         </select></td>
                         <td><select className="h-sel" value={p.size} aria-label="Pipe size" onChange={(e) => setP({ size: e.target.value })}>{Object.keys(PIPE_SIZES).map((k) => <option key={k}>{k}</option>)}</select></td>
-                        <td className="n"><input type="number" className="thk-input" step={0.5} min={0} value={p.length} aria-label="Length m" onChange={(e) => setP({ length: Math.max(0, Number(e.target.value) || 0) })} /></td>
+                        <td className="n"><NumInput className="thk-input" step={0.5} min={0} value={p.length} aria-label="Length m" onChange={(e) => setP({ length: Math.max(0, Number(e.target.value) || 0) })} /></td>
                         <td><select className="h-sel" value={p.emitter ?? ''} aria-label="Emitter at the end" onChange={(e) => setP({ emitter: e.target.value || undefined })}>
                           <option value="">— (branch)</option>{c.emitters.map((e) => <option key={e.id} value={e.id}>{roomName(e.room)} {e.kind === 'ufh' ? 'UFH' : e.kind === 'towel' ? 'towel rail' : e.id}</option>)}
                         </select></td>
@@ -266,7 +270,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
               </table>
             </div>
             <div className="hf-row">
-              <label className="hf"><span className="eyebrow">Pump head available</span><span className="hf-in"><input type="number" className="thk-input" step={1} value={c.pumpHead ?? 40} onChange={(e) => upd((h) => { h.heating.pumpHead = Number(e.target.value) || 0; })} /><span className="small muted">kPa at the design flow</span></span></label>
+              <label className="hf"><span className="eyebrow">Pump head available</span><span className="hf-in"><NumInput className="thk-input" step={1} value={c.pumpHead ?? 40} onChange={(e) => upd((h) => { h.heating.pumpHead = Number(e.target.value) || 0; })} /><span className="small muted">kPa at the design flow</span></span></label>
             </div>
             <p className={pipesRes.headOk ? 'small' : 'small warn'}>Index circuit (highlighted): {fmt(pipesRes.indexDp / 1000, 1)} kPa through {pipesRes.indexPath.length} runs, flow and return, with {Math.round((1.3 - 1) * 100)}% for fittings and 5 kPa for the emitter and valves.{' '}
               {pipesRes.headOk ? `Within the pump's ${fmt(pipesRes.head / 1000)} kPa.` : `More than the pump's ${fmt(pipesRes.head / 1000)} kPa: upsize the highlighted runs.`}</p>
@@ -275,11 +279,11 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
         </section>
         )}
 
-        {show('system') && (
+        {show('system') && isHeatPump(house.hp.source) && (
         <section className="card panel">
           <h2>Heat pump flow by hour</h2>
           <div className="hf-row">
-            <label className="hf"><span className="eyebrow">Heat pump minimum flow</span><span className="hf-in"><input type="number" className="thk-input" step={0.5} value={c.minFlow} onChange={(e) => upd((h) => { h.heating.minFlow = Number(e.target.value); })} /><span className="small muted">l/min</span></span></label>
+            <label className="hf"><span className="eyebrow">Heat pump minimum flow</span><span className="hf-in"><NumInput className="thk-input" step={0.5} value={c.minFlow} onChange={(e) => upd((h) => { h.heating.minFlow = Number(e.target.value); })} /><span className="small muted">l/min</span></span></label>
           </div>
           <div className="flow-bars" role="img" aria-label="Design flow rate by hour">
             {hourly.map((f, hr) => (

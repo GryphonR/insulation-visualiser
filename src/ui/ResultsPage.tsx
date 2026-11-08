@@ -24,7 +24,7 @@ export function ResultsPage() {
   const d = (a: number, b: number | undefined, dp: number, unit = '') => (b == null || Math.abs(a - b) < 0.5 * 10 ** -dp ? '' : `${a > b ? '+' : '−'}${fmt(Math.abs(a - b), dp)}${unit} vs ${active.name}`);
   const kpis: Array<[string, string, string, string, string]> = [
     ['Peak heat loss', fmt(res.peakW / 1000, 2), 'kW', `Heated rooms at ${res.Tout} °C`, cmp ? d(cmp.peakW / 1000, res.peakW / 1000, 2, ' kW') : ''],
-    ['Space heating', fmt(Math.round(res.annualKWh / 10) * 10), 'kWh/yr', `${fmt(res.hdd)} degree days`, cmp ? d(cmp.annualKWh, res.annualKWh, 0, ' kWh') : ''],
+    ['Space heating', fmt(Math.round(res.annualKWh / 10) * 10), 'kWh/yr', res.annualFrom === 'year' ? 'Simulated typical year' : 'Estimate while the year runs…', cmp ? d(cmp.annualKWh, res.annualKWh, 0, ' kWh') : ''],
     ['Heat loss parameter', fmt(res.hlp, 2), 'W/m²K', 'Per m² of floor area', cmp ? d(cmp.hlp, res.hlp, 2) : ''],
     ['Coldest heated room', coldest ? fmt(coldest.T, 1) : '—', '°C', coldest ? `${coldest.room.name}, setpoint ${coldest.room.setpoint}` : '', ''],
     ['Emitters meeting loss', `${withEm - short} / ${withEm}`, '', short ? `${short} short at ${house.hp.maxFlow} °C flow` : 'All rooms covered', ''],
@@ -97,8 +97,8 @@ export function ResultsPage() {
           </Card>
           <Card title="More results">
             <div className="stack-10">
-              <a className="btn-secondary as-btn" href={href('year')}>Test conditions &amp; typical year ›</a>
-              <a className="btn-secondary as-btn" href={href('energy')}>Energy, cost &amp; heat source ›</a>
+              <a className="btn-secondary as-btn" href={href('year')}>Test the house: coldest day, year, heatwave, cold snap ›</a>
+              <a className="btn-secondary as-btn" href={href('energy')}>Energy &amp; running cost ›</a>
               <a className="btn-secondary as-btn" href={href('bills')}>Check against bills ›</a>
               <a className="btn-secondary as-btn" href={href('moisture')}>Moisture &amp; mould ›</a>
               <a className="btn-secondary as-btn" href={href('report')}>Report &amp; export ›</a>

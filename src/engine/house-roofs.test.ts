@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { calcHouse, groundFloorU, loftSlopes } from './house';
+import { calcHouse, groundFloorU } from './house';
 import type { Buildup, House } from './house';
 import { defaultHouse } from './house-default';
-import { simulate } from './house-sim';
 import { solarAt } from './solar';
 import { ORIENTS } from './data';
 
@@ -56,29 +55,5 @@ describe('floor edge', () => {
       .filter((f) => f.kind === 'wall' && f.to.k === 'out' && f.key.startsWith('w:') && f.key.endsWith(':0')).reduce((t, f) => t + (f.len ?? 0), 0);
     expect(P).toBeGreaterThan(5);
     expect(UA(b) - UA(a)).toBeCloseTo(0.32 * P, 6);
-  });
-});
-
-describe('pitched loft roof', () => {
-  const h = { loft: { present: true, ach: 4, height: 1.5, pitch: 40 }, north: 0 } as Pick<House, 'loft' | 'north'>;
-  const k = 1 / Math.cos((40 * Math.PI) / 180);
-  it('gable: two halves across the longer side, total unchanged', () => {
-    const s = loftSlopes(h, { w: 10, d: 6 }, 60);
-    expect(s.map((x) => x.az)).toEqual([0, 180]);
-    expect(s.reduce((t, x) => t + x.area, 0)).toBeCloseTo(60 * k, 6);
-  });
-  it('hip over a square is four equal slopes; turned plan turns them', () => {
-    const s = loftSlopes({ ...h, loft: { ...h.loft, form: 'hip' }, north: 30 }, { w: 8, d: 8 }, 64);
-    expect(s).toHaveLength(4);
-    s.forEach((x) => expect(x.area).toBeCloseTo(16 * k, 6));
-    expect(s.map((x) => x.az).sort((p, q) => p - q)).toEqual([30, 120, 210, 300]);
-  });
-  it('monopitch: one slope facing its side', () => {
-    expect(loftSlopes({ ...h, loft: { ...h.loft, form: 'mono', facing: 'E' } }, { w: 8, d: 6 }, 48).map((x) => x.az)).toEqual([90]);
-  });
-  it('a south monopitch warms the summer loft more than a north one, a dark roof more than a light one', () => {
-    const peak = (fn: (x: House) => void) => { const x = defaultHouse(); x.loft.form = 'mono'; fn(x); return Math.max(...simulate(x, 'summer').loftT!); };
-    expect(peak((x) => { x.loft.facing = 'S'; })).toBeGreaterThan(peak((x) => { x.loft.facing = 'N'; }));
-    expect(peak((x) => { x.roofColour = 'dark'; })).toBeGreaterThan(peak((x) => { x.roofColour = 'light'; }));
   });
 });

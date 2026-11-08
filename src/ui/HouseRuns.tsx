@@ -6,14 +6,30 @@ import { MCS_STATIONS } from '../engine/climate-mcs';
 import { loadTmy } from '../engine/weather-tmy';
 import type { Tmy } from '../engine/weather-tmy';
 import type { Project, Scenario } from '../engine/house-scenarios';
-import { CASES, hourGains, simulate, yearTotals } from '../engine/house-sim';
+import { CASES, hourGains, simulate, verdict, yearTotals } from '../engine/house-sim';
 import type { CaseId } from '../engine/house-sim';
+import { roomSchedule, scheduleSource } from '../engine/house-heating';
 import { useYearSim } from './useYearSim';
+import { href } from './route';
 import { Chip } from './controls';
-import { Why, fmt } from './hform';
-import { sourceWhy } from './assumptions';
+import { Why, fmt, NumInput } from './hform';
+import { WHY, sourceWhy } from './assumptions';
 
 const MASS: Array<[number, string]> = [[80, 'Light (timber frame, 80 kJ/m²K)'], [165, 'Medium (masonry, 165)'], [260, 'Heavy (solid, 260)']];
+const PATTERN: Record<House['gains']['pattern'], string> = { work: 'Out at work', home: 'Home all day', shift: 'Shift work' };
+
+/** The test conditions' view of the occupancy card: what the runs assume, edited in one place. */
+function UseSummary({ house }: { house: House }) {
+  const g = house.gains, unheated = house.rooms.filter((r) => r.heated && ['none', 'off'].includes(scheduleSource(house, r).kind));
+  return (
+    <section className="card panel">
+      <h2>How the house is used</h2>
+      <p className="small">{g.people} {g.people === 1 ? 'person' : 'people'}, {PATTERN[g.pattern].toLowerCase()}. Heating off: rooms held at {g.setback} °C. Heat stored: {MASS.find(([v]) => v === g.mass)?.[1] ?? `${g.mass} kJ/m²K`}. Windows let in {Math.round(g.g * 100)}% of the sun.</p>
+      {unheated.length > 0 && <p className="small bad">Not heated in these runs: {unheated.map((r) => r.name).join(', ')}.</p>}
+      <a className="btn-secondary as-btn" href={href('gains')}>Occupancy, heating times and gains ›</a>
+    </section>
+  );
+}
 
 /** Hourly lines over one or more days, with the heat delivered as a shaded area. */
 function DayChart({ out, rooms, heat, hours, start = 0 }: {
@@ -41,10 +57,12 @@ function DayChart({ out, rooms, heat, hours, start = 0 }: {
   );
 }
 
-export function HouseRuns({ house, setHouse, project, ordered }: { house: House; setHouse: (fn: (h: House) => House) => void; project: Project; ordered: Scenario[] }) {
+export function HouseRuns({ house, setHouse, project, ordered, initialCase, initialRoom }: {
+  house: House; setHouse: (fn: (h: House) => House) => void; project: Project; ordered: Scenario[]; initialCase?: string; initialRoom?: string;
+}) {
   const upd = (fn: (h: House) => void) => setHouse((prev) => { const n = structuredClone(prev); fn(n); return n; });
-  const [caseId, setCase] = useState<CaseId>('design');
-  const [roomId, setRoom] = useState('living');
+  const [caseId, setCase] = useState<CaseId>(CASES.find((c) => c.id === initialCase)?.id ?? 'design');
+  const [roomId, setRoom] = useState(initialRoom ?? 'living');
   const [day, setDay] = useState(14);
   const [cmpId, setCmp] = useState('');
   const base = useMemo(() => calcHouse(house), [house]);
@@ -59,33 +77,33 @@ export function HouseRuns({ house, setHouse, project, ordered }: { house: House;
   const yearTmy = useTmy && tmy?.station === base.climate.station ? tmy : undefined;
   // One-day cases are quick; the year runs in a worker so editing doesn't freeze the page.
   const quick = useMemo(() => (caseId === 'year' ? null : simulate(house, caseId, base)), [house, caseId, base]);
-  const yearRun = useYearSim(caseId === 'year' ? house : undefined, yearTmy);
+  const yearRun = useYearSim(caseId === 'year' ? house : undefined);
   const cmpHouse = project.scenarios.find((s) => s.id === cmpId)?.house;
-  const cmp = useYearSim(caseId === 'year' ? cmpHouse : undefined, yearTmy).result;
+  const cmp = useYearSim(caseId === 'year' ? cmpHouse : undefined).result;
   const sim = quick ?? yearRun.result;
   const caseInfo = CASES.find((c) => c.id === caseId)!;
 
   const left = (
     <div className="house-col">
       <section className="card panel">
-        <h2>Test conditions</h2>
+        <h2>Questions to test</h2>
         <div className="cases">
           {CASES.map((c) => (
             <button key={c.id} type="button" className={c.id === caseId ? 'node on' : 'node'} onClick={() => setCase(c.id)}>
-              <span><b>{c.name}</b><br /><span className="small muted">{c.use}</span></span>
+              <span><b>{c.q}</b><br /><span className="small muted">{c.name}: {c.use}</span></span>
             </button>
           ))}
         </div>
       </section>
 
-      <GainsCard house={house} upd={upd} />
+      <UseSummary house={house} />
     </div>
   );
   if (!sim) {
     return (
       <div className="house-grid">
         {left}
-        <div className="house-col"><section className="card panel"><h2>{caseInfo.name}</h2><p className="muted" role="status">Running the year, hour by hour…</p></section></div>
+        <div className="house-col"><section className="card panel"><h2>{caseInfo.q}</h2><p className="muted" role="status">Running the year, hour by hour…</p></section></div>
       </div>
     );
   }
@@ -95,6 +113,9 @@ export function HouseRuns({ house, setHouse, project, ordered }: { house: House;
   const year = caseId === 'year' ? yearTotals(sim) : null;
   const cyear = cmp ? yearTotals(cmp) : null;
   const lines = sim.rooms.map((r, i) => ({ name: r.name, T: sim.T[i], on: i === ri }));
+  // A year's cost carries the gas standing charge, as on the Energy page; a short run's is the energy alone.
+  const tf = tariff(house.hp), cost = (sim.boughtKWh * tf.p) / 100 + (caseId === 'year' ? tf.standing : 0);
+  const v = verdict(house, sim, cost);
 
   return (
     <div className="house-grid">
@@ -102,7 +123,7 @@ export function HouseRuns({ house, setHouse, project, ordered }: { house: House;
       <div className="house-col">
         <section className="card panel">
           <div className="section-head">
-            <div><h2>{caseInfo.name}</h2><p className="muted small">{caseInfo.use}{caseId === 'year' && yearRun.busy && <span role="status"> Updating…</span>}</p></div>
+            <div><h2>{caseInfo.q}</h2><p className="muted small">{caseInfo.name}: {caseInfo.use}{caseId === 'year' && yearRun.busy && <span role="status"> Updating…</span>}</p></div>
             {caseId === 'year' && (
               <label className="hf"><span className="eyebrow">Compare with</span>
                 <select className="select" value={cmpId} onChange={(e) => setCmp(e.target.value)}>
@@ -112,13 +133,14 @@ export function HouseRuns({ house, setHouse, project, ordered }: { house: House;
               </label>
             )}
           </div>
+          <p role="status" className={v.ok ? 'callout' : 'callout warnbox'}><b>{v.text}</b></p>
           <div className="tiles">
             <div className="tile"><span className="tiles-head">Heat delivered</span><span className="tile-value"><span className="mono big">{fmt(sim.heatKWh, caseId === 'year' ? 0 : 1)}</span><span className="small muted">kWh</span></span>
               {cmp && <span className="small muted">{cmpHouse && ordered.find((s) => s.id === cmpId)?.name}: {fmt(cmp.heatKWh)}</span>}</div>
             <div className="tile"><span className="tiles-head">Peak hour</span><span className="tile-value"><span className="mono big">{fmt(sim.peakW / 1000, 2)}</span><span className="small muted">kW</span></span>
               <span className="small muted">{sim.peakW >= house.hp.capacity * 1000 - 1 ? 'heat source flat out' : `of ${house.hp.capacity} kW`}</span></div>
             {sim.heatKWh > 0 && <div className="tile"><span className="tiles-head">{SOURCE_LABEL[house.hp.source]}<Why>{`Heat delivered ÷ energy bought over this run, hour by hour at each hour's outside and flow temperature. ${sourceWhy(house.hp)} Cost is energy bought × unit price; standing charges are left out.`}</Why></span><span className="tile-value"><span className="mono big">{isHeatPump(house.hp.source) ? fmt(sim.heatKWh / sim.boughtKWh, 2) : fmt((sim.heatKWh / sim.boughtKWh) * 100)}</span><span className="small muted">{isHeatPump(house.hp.source) ? 'COP' : '% efficiency'}</span></span>
-              <span className="small muted">{fmt(sim.boughtKWh, caseId === 'year' ? 0 : 1)} kWh {isHeatPump(house.hp.source) ? 'electricity' : FUEL_LABEL[house.hp.fuel].toLowerCase()} · £{fmt((sim.boughtKWh * tariff(house.hp).p) / 100, caseId === 'year' ? 0 : 2)}</span></div>}
+              <span className="small muted">{fmt(sim.boughtKWh, caseId === 'year' ? 0 : 1)} kWh {isHeatPump(house.hp.source) ? 'electricity' : FUEL_LABEL[house.hp.fuel].toLowerCase()} · £{fmt(cost, caseId === 'year' ? 0 : 2)}</span></div>}
           </div>
 
           {caseId !== 'year' && <>
@@ -204,23 +226,30 @@ export function HouseRuns({ house, setHouse, project, ordered }: { house: House;
 export function GainsCard({ house, upd }: { house: House; upd: (fn: (h: House) => void) => void }) {
   const g = house.gains;
   const gainsDay = Array.from({ length: 24 }, (_, h) => hourGains(g, h, false).reduce((a, b) => a + b, 0));
+  // What actually drives each heated room in the simulations: an occupancy row, its zone's own hours, or nothing.
+  const rooms = house.rooms.filter((r) => r.heated).map((room) => ({ room, s: scheduleSource(house, room), hrs: roomSchedule(house, room) ?? Array(24).fill(0) }));
+  const following = (k: 'living' | 'bedrooms') => rooms.filter((x) => x.s.kind === k).length;
+  const why = ({ s }: (typeof rooms)[number]) => s.kind === 'none' ? <a className="bad" href={href('emitters')}>No emitter: never heated</a>
+    : s.kind === 'off' ? <a className="bad" href={href('zones')}>Zone “{s.zone!.name}” is switched off</a>
+    : s.kind === 'zone' ? <a href={href('zones')}>Own hours of zone “{s.zone!.name}”</a>
+    : <span className="muted">{s.kind === 'living' ? 'Living areas row' : 'Bedrooms & bath row'}</span>;
   return (
   <section className="card panel">
     <h2>Occupancy, heating times and gains</h2>
     <div className="hf-row">
       <label className="hf"><span className="eyebrow">People</span>
-        <input type="number" className="thk-input" min={0} max={10} value={g.people} onChange={(e) => upd((h) => { h.gains.people = Math.max(0, Number(e.target.value) || 0); })} />
+        <NumInput className="thk-input" min={0} max={10} value={g.people} onChange={(e) => upd((h) => { h.gains.people = Math.max(0, Number(e.target.value) || 0); })} />
       </label>
       <div className="hf"><span className="eyebrow">Pattern</span>
         <div className="chips">
-          {([['work', 'Out at work'], ['home', 'Home all day'], ['shift', 'Shift work']] as const).map(([k, l]) => <Chip key={k} on={g.pattern === k} onClick={() => upd((h) => { h.gains.pattern = k; })}>{l}</Chip>)}
+          {(Object.entries(PATTERN) as Array<[House['gains']['pattern'], string]>).map(([k, l]) => <Chip key={k} on={g.pattern === k} onClick={() => upd((h) => { h.gains.pattern = k; })}>{l}</Chip>)}
         </div>
       </div>
     </div>
-    <div className="sched">
+    <div className="hsched">
       {(['living', 'bedrooms'] as const).map((k) => (
         <div key={k} className="sched-row">
-          <span className="small">{k === 'living' ? 'Living areas' : 'Bedrooms & bath'}</span>
+          <span className="small">{k === 'living' ? 'Living areas' : 'Bedrooms & bath'}<br /><span className="xs muted">{following(k) ? `${following(k)} room${following(k) > 1 ? 's' : ''}` : 'no rooms follow this'}</span></span>
           <div className="sched-cells">
             {g[k].map((on, h) => (
               <button key={h} type="button" className={on ? 'sc on' : 'sc'} aria-pressed={!!on} aria-label={`${k} ${h}:00 ${on ? 'heating on' : 'setback'}`}
@@ -231,16 +260,27 @@ export function GainsCard({ house, upd }: { house: House; upd: (fn: (h: House) =
       ))}
       <div className="sched-row"><span /><div className="sched-cells sched-ax">{Array.from({ length: 24 }, (_, h) => <span key={h}>{h % 3 === 0 ? String(h).padStart(2, '0') : ''}</span>)}</div></div>
     </div>
-    <p className="small muted">Orange hours heat to each room's setpoint; the rest hold the setback. Click an hour to switch it.</p>
+    <p className="small muted">Orange hours heat to each room's setpoint; the rest hold the heating-off temperature set below. Click an hour to switch it. A zone with its own hours (Heating › Zones) overrides these rows for its rooms.</p>
+    <h3 className="eyebrow">What each heated room follows</h3>
+    <div className="hsched">
+      {rooms.map((x) => (
+        <div key={x.room.id} className="sched-row">
+          <span className="small">{x.room.name}<br /><span className="xs">{why(x)}</span></span>
+          <div className="sched-cells" role="img" aria-label={`${x.room.name}: heating on ${x.hrs.filter(Boolean).length} hours a day`}>
+            {x.hrs.map((on, h) => <span key={h} className={on ? 'sc on' : 'sc'} style={{ cursor: 'default', ...(on && x.s.kind === 'zone' ? { background: x.s.zone!.color } : {}) }} />)}
+          </div>
+        </div>
+      ))}
+    </div>
     <div className="hf-row">
-      <label className="hf"><span className="eyebrow">Setback</span>
-        <span className="hf-in"><input type="number" className="thk-input" step={0.5} value={g.setback} onChange={(e) => upd((h) => { h.gains.setback = Number(e.target.value); })} /><span className="small muted">°C</span></span>
+      <label className="hf"><span className="hf-lab"><span className="eyebrow">Heating off: rooms held at</span><Why label="What is this?">{WHY.setback}</Why></span>
+        <span className="hf-in"><NumInput className="thk-input" step={0.5} value={g.setback} onChange={(e) => upd((h) => { h.gains.setback = Number(e.target.value); })} /><span className="small muted">°C</span></span>
       </label>
-      <label className="hf"><span className="eyebrow">Thermal mass</span>
+      <label className="hf"><span className="hf-lab"><span className="eyebrow">Heat stored in the house</span><Why label="What is this?">{WHY.mass}</Why></span>
         <select className="select" value={g.mass} onChange={(e) => upd((h) => { h.gains.mass = Number(e.target.value); })}>{MASS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
       </label>
-      <label className="hf"><span className="eyebrow">Glazing g (with frame, curtains)</span>
-        <input type="number" className="thk-input" step={0.05} min={0} max={0.9} value={g.g} onChange={(e) => upd((h) => { h.gains.g = Number(e.target.value); })} />
+      <label className="hf"><span className="hf-lab"><span className="eyebrow">Sun let in by windows (g-value)</span><Why label="What is this?">{WHY.gValue}</Why></span>
+        <NumInput className="thk-input" step={0.05} min={0} max={0.9} value={g.g} onChange={(e) => upd((h) => { h.gains.g = Number(e.target.value); })} />
       </label>
     </div>
     <p className="small mono">Gains on a weekday: {fmt(gainsDay.reduce((a, b) => a + b, 0) / 1000, 1)} kWh, peak {fmt(Math.max(...gainsDay))} W (people, appliances, lighting, cooking).</p>

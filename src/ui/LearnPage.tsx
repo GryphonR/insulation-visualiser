@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { go, href } from './route';
+import { defaultHouse } from '../engine/house-default';
+import type { FloorEdge } from '../engine/house';
+import { EdgeSketch } from './EdgeSketch';
+
+/** The example house the floor-edge pages draw: no edge insulation and no upstand, so the heat path shows. */
+const EXAMPLE = defaultHouse();
+const EXAMPLE_EDGE: FloorEdge = { edge: 'none', D: 0.6, R: 1.5, upstand: 'none', psi: 0.32 };
 
 interface Section {
   id: string;
@@ -50,6 +57,7 @@ const SECTIONS: Section[] = [
     ['dynamic', 'Decrement factor and delay'],
     ['sun', 'Sun, and sol-air temperature'],
     ['inner-face', 'The inner face and comfort'],
+    ['floor-edge', 'Floor edges and junctions'],
   ]),
   ...s('Concepts', 'Moisture', [
     ['moist-vapour', 'Vapour, humidity and vapour pressure'],
@@ -69,6 +77,10 @@ const SECTIONS: Section[] = [
     ['sim-room', '7. The room'],
     ['sim-metrics', '8. Working out the results'],
     ['limits', 'What it leaves out'],
+  ]),
+  ...s('How the models work', 'Floor edge model', [
+    ['edge-model', 'The ground floor and its edge'],
+    ['junction-model', 'How the junction Ψ is worked out'],
   ]),
   ...s('How the models work', 'Moisture model', [
     ['msim-overview', 'The moisture simulation at a glance'],
@@ -387,7 +399,7 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
             </li>
           </ul>
           <p>
-            The heat source itself (boiler or heat pump), its efficiency and your energy prices are set under Results, on <Go to="energy">Energy &amp; cost</Go>.
+            The heat source itself (boiler or heat pump), its output and its efficiency are chosen at the top of <Go to="heating">System &amp; flow</Go>. Choosing one sets its typical max flow temperature and flow − return drop (80 °C and 11 K for an old boiler, 70 °C and 20 K for a condensing boiler, 45 °C and 5 K for a heat pump), so the radiators are checked at the flow that source really runs at. Your energy prices are under Results, on <Go to="energy">Energy &amp; cost</Go>.
           </p>
         </section>
 
@@ -397,9 +409,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             <Go to="results">Design day</Go> is the heat loss in steady conditions at the design outside temperature: for each face, U-value × area × temperature difference, plus ventilation. The total is what the heating has to deliver on the coldest day, and the figure a heat pump is sized from. It breaks the total down by room and into fabric and ventilation, and shows where the heat goes.
           </p>
-          <h3>Typical year and test conditions</h3>
+          <h3>Test the house</h3>
           <p>
-            <Go to="year">Typical year &amp; test conditions</Go> runs the house hour by hour, with sun, heat stored in the walls, people and the heating schedule:
+            <Go to="year">Test the house</Go> runs the house hour by hour, with sun, heat stored in the walls, people and the heating schedule:
           </p>
           <ul>
             <li><b>Winter design day:</b> the peak, with the heating schedule and setback, on a cold overcast day.</li>
@@ -412,7 +424,7 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           </p>
           <h3>Energy and cost</h3>
           <p>
-            <Go to="energy">Energy &amp; cost</Go> turns the heat needed into energy bought, cost and carbon. Choose the heat source: an old boiler, a condensing boiler, or an air or ground source heat pump. Condensing boilers are more efficient with cooler return water. Heat pump efficiency (COP) is worked out from the flow and outside temperatures, and you can match it to a real unit by entering points from its datasheet. The <b>?</b> buttons explain where each default comes from. Prices start at the current Ofgem price cap, so put in your own tariff.
+            <Go to="energy">Energy &amp; cost</Go> turns the heat needed into energy bought, cost and carbon for the heat source chosen under Heating: an old boiler, a condensing boiler, or an air or ground source heat pump. Condensing boilers are more efficient with cooler return water. Heat pump efficiency (COP) is worked out from the flow and outside temperatures, and you can match it to a real unit by entering points from its datasheet. The <b>?</b> buttons explain where each default comes from. Prices start at the current Ofgem price cap, so put in your own tariff.
           </p>
           <h3>Checking against bills</h3>
           <p>
@@ -608,15 +620,15 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <h2>Heating modes</h2>
           <p>The room on the inside can behave in three ways in this tool.</p>
           <dl className="learn-dl">
-            <dt>Fixed temperature</dt>
+            <dt>Held at one temperature</dt>
             <dd>
               The room air is held at one temperature all day, as if by a perfect thermostat. No real heating system holds a room that steadily, so treat this as a controlled experiment, not a prediction. Because the room never moves, any change you see comes from the wall alone. That makes it the cleanest way to compare walls.
             </dd>
-            <dt>Time schedule</dt>
+            <dt>Heating on a timer</dt>
             <dd>
               The room alternates between a <em>comfort</em> temperature when the heating is on and a <em>setback</em> temperature when it is off, with up to two on-periods a day (for instance morning and evening). It is still idealised, because the room jumps to its target instantly, but it shows how a wall's mass interacts with a heating pattern.
             </dd>
-            <dt>Free-floating room</dt>
+            <dt>No heating: room drifts (free-floating)</dt>
             <dd>
               No heating or cooling. The room air is free to rise and fall, driven by the wall, any windows, ventilation, and the heat from people and appliances. A heavy wall can stop the room from overheating in a heatwave, or fail to, depending on ventilation and glazing. This is the most realistic of the three for showing passive behaviour such as summer overheating.
             </dd>
@@ -891,6 +903,63 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           </Callout>
         </section>
 
+        {/* ------------------------------------------------------------ FLOOR EDGES (concept) */}
+        <section id="floor-edge" className="learn-section">
+          <h2>Floor edges and junctions</h2>
+          <p>
+            A floor on the ground doesn't lose heat evenly. Heat leaving the middle of the floor has to travel down and out
+            through metres of soil before it reaches the outside air, so very little goes that way. Near the edge the path is
+            short: down a little, sideways under the wall, and up to the ground outside. Most of a ground floor's heat loss
+            leaves through a band a metre or two wide round its perimeter.
+          </p>
+          <p>
+            That is why a small floor loses more per square metre than a big one: more of it is close to an edge. BS EN ISO 13370,
+            the standard the planner uses for ground floors, captures this with the floor's <em>characteristic dimension</em> B′,
+            its area divided by half its exposed perimeter. The smaller B′, the higher the U-value for the same build-up.
+          </p>
+          <EdgeSketch house={EXAMPLE} fe={EXAMPLE_EDGE} psi={0.32} />
+          <p className="small muted">The foot of an outside wall in the example house: the wall on its foundation, the floor build-up beside it, the ground, and (dashed) heat slipping round the edge of the floor insulation into the wall.</p>
+
+          <h3>Edge insulation</h3>
+          <p>
+            Because the edge matters so much, insulating just the edge helps. <b>Horizontal</b> edge insulation is a band laid flat
+            at the slab edge, running out from the wall (outside, under the ground) or in from it (under the slab). <b>Vertical</b>
+            edge insulation runs down the face of the foundation, outside or inside. Either way it makes the heat's path to the
+            outside longer. A vertical strip is worth about a horizontal one twice as wide, because heat has to go down and back
+            up round it: 0.5 m down does about as much as 1 m out. It helps most on small or poorly insulated floors.
+          </p>
+
+          <h3>The floor-to-wall junction</h3>
+          <p>
+            Where the floor meets the wall there is a second leak. The floor's insulation stops at the wall, and the wall's
+            insulation stops at the floor, so heat can slip round both: from the warm screed into the inner leaf of the wall,
+            down into the foundation and out. This is a <em>thermal bridge</em>, and it is counted separately from the U-values
+            as a <b>linear thermal transmittance, Ψ</b> (psi): the extra heat lost per metre of wall for each degree of
+            temperature difference, in W/mK.
+          </p>
+          <Eq>Junction heat loss = Ψ × length of outside wall × (inside − outside temperature)    (W)</Eq>
+          <p>
+            It adds up. A house with 30 m of outside wall and Ψ = 0.32 W/mK (SAP&apos;s figure for an unchecked detail) loses about
+            10 W per degree through that junction alone: on a cold day, as much as a couple of square metres of window. In a
+            well-insulated house junctions can be a fifth or more of the whole floor&apos;s loss.
+          </p>
+          <ul>
+            <li><b>A perimeter upstand</b>, a strip of insulation standing on edge between the floor screed and the wall, breaks the path and roughly halves Ψ in a typical cavity-wall house.</li>
+            <li><b>The foundation</b> matters too. Dense concrete or stone under the wall conducts heat round the floor insulation; an aircrete block or a deeper, insulated foundation slows it.</li>
+            <li><b>Old houses</b> often have shallow brick or stone footings, or none at all, with the wall standing almost on the ground. That gives heat a short, conductive route out, and changes Ψ a lot.</li>
+          </ul>
+          <Callout title="Cold corners and mould">
+            <p>
+              A thermal bridge also makes the inside surface colder where it is, at the bottom of the wall and the edge of the
+              floor. In a damp house that is where condensation and mould tend to start. The planner counts the heat loss; it
+              doesn&apos;t yet report the surface temperature at the junction.
+            </p>
+          </Callout>
+          <p>
+            Set all of this on the <Go to="floor">Floors</Go> page. <Go to="learn/junction-model">How the junction Ψ is worked out</Go> explains the calculation.
+          </p>
+        </section>
+
         <section id="moist-vapour" className="learn-section">
           <h2>Vapour, humidity and vapour pressure</h2>
           <p>
@@ -1061,6 +1130,91 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Each column has its own build-up, chosen from the same library as the Compare tab, and all share one climate and indoor setting. The yearly charts then overlay every wall in its own colour. Changing a setting reruns every wall in the background, which takes a moment ("Calculating…").
           </p>
+        </section>
+
+        {/* ------------------------------------------------------------ FLOOR EDGE MODEL */}
+        <section id="edge-model" className="learn-section">
+          <h2>The ground floor and its edge</h2>
+          <p>
+            Each ground-floor room&apos;s floor U-value comes from BS EN ISO 13370. For a slab on the ground it depends on the floor
+            build-up&apos;s resistance R<sub>f</sub>, the soil&apos;s conductivity λ (2.0 W/mK for clay or silt, the standard&apos;s default), the wall
+            thickness w (taken as 0.3 m) and the house&apos;s characteristic dimension B′:
+          </p>
+          <Eq>B′ = floor area ÷ (½ × exposed perimeter)        d<sub>t</sub> = w + λ (R<sub>si</sub> + R<sub>f</sub> + R<sub>se</sub>)</Eq>
+          <Eq>U = 2λ ÷ (πB′ + d<sub>t</sub>) × ln(πB′ ÷ d<sub>t</sub> + 1)    when d<sub>t</sub> &lt; B′,  else  U = λ ÷ (0.457 B′ + d<sub>t</sub>)</Eq>
+          <p>
+            Foundation edge insulation of width (or depth) D and resistance R′ lowers that by a further term from the same standard,
+            with a vertical strip counted as 2D. Suspended timber floors use the standard&apos;s suspended-floor method instead: the
+            deck in series with the ground under the void, the void&apos;s walls and its airbrick ventilation.
+          </p>
+          <p>
+            The floor-to-wall junction is then added on top: Ψ × each room&apos;s outside wall length on the ground floor, shared over its
+            floor area. Ψ is SAP&apos;s default (0.32 W/mK), its approved-detail figure (0.16), your own, or calculated as described next.
+          </p>
+        </section>
+
+        <section id="junction-model" className="learn-section">
+          <h2>How the junction Ψ is worked out</h2>
+          <p>
+            A junction Ψ can&apos;t come from adding up layer resistances the way a U-value does, because the heat turns a corner. It is
+            found the way BS EN ISO 10211 and BRE&apos;s BR 497 conventions set out: by modelling the section in two dimensions and seeing
+            how much more heat flows through it than the U-values alone would say.
+          </p>
+          <p>
+            It is worked out for each outside wall on the ground floor in turn, with that wall&apos;s own build-up meeting the floor
+            build-up of its room, so a brick extension on a cavity-wall house, or a room with a different floor, gets its own Ψ. Each
+            room&apos;s junction loss is then the sum over its outside walls of Ψ × the wall&apos;s length.
+          </p>
+          <h3>1. Building the section</h3>
+          <ul>
+            <li>The outside wall&apos;s build-up, layer by layer, running 1.5 m up from the finished floor (BR 497 asks for at least 1 m).</li>
+            <li>The floor build-up of the room it bounds, running in from the wall for half the floor&apos;s B′, with its top 150 mm above the ground outside.</li>
+            <li>The ground: 20 m beside the house and 20 m down, at 2.0 W/mK.</li>
+            <li>A foundation under the wall, 100 mm proud of it each side, of the material and depth you set (none if the depth is 0).</li>
+            <li>The edge insulation where you put it (horizontal or vertical, inside or outside), and the upstand if there is one.</li>
+          </ul>
+          <h3>2. The boundaries</h3>
+          <p>
+            The room is held at 1 K above the outside air. The wall&apos;s inner face sees the room through R<sub>si</sub> = 0.13 m²K/W and the
+            floor&apos;s top through 0.17 (heat going down); the wall&apos;s outer face and the ground outside see the air through
+            R<sub>se</sub> = 0.04. The cut edges of the model (the top of the wall, the far end of the floor, the far and deep ground) are
+            adiabatic: no heat crosses them.
+          </p>
+          <h3>3. Solving it</h3>
+          <p>
+            The section is cut into a grid of rectangles, about 1 cm across near the junction and growing to 1.5 m far out in the ground,
+            with a grid line on every material edge. Each cell&apos;s heat balance (flow in from its neighbours equals flow out) gives one
+            equation; together they are solved by conjugate gradients. It takes about a quarter of a second.
+          </p>
+          <h3>4. From heat flow to Ψ</h3>
+          <p>The heat flowing in from the room, per metre of wall for 1 K, is L<sub>2D</sub>. The wall and floor U-values already count part of it, over the same internal lengths:</p>
+          <Eq>Ψ = L<sub>2D</sub> − U<sub>wall</sub> × 1.5 m − U<sub>floor</sub> × (B′ ÷ 2)    (W/mK)</Eq>
+          <p>What is left is the junction&apos;s own extra loss. It can come out negative where the floor&apos;s U-value already overstates the edge, as with a thick stone wall on an uninsulated floor.</p>
+          <h3>5. Checking it</h3>
+          <table className="learn-table">
+            <thead><tr><th>Check</th><th>Expected</th><th>This model</th></tr></thead>
+            <tbody>
+              <tr><td>ISO 10211 case 2: heat flow</td><td>9.5 W/m</td><td>9.49 W/m</td></tr>
+              <tr><td>Case 2: four surface temperatures</td><td>Within 0.1 K</td><td>All four within 0.05 K</td></tr>
+              <tr><td>Plain 2-D floor against the ISO 13370 U-value</td><td>Close</td><td>Within 1 to 4 %</td></tr>
+              <tr><td>Grid fineness</td><td>Settled</td><td>Within 0.005 W/mK of a grid four times finer</td></tr>
+            </tbody>
+          </table>
+          <p className="small muted">
+            Test reference case 2 is the standard&apos;s own check for 2-D software: a 500 × 47.5 mm section of concrete, insulation, an
+            aluminium L-section and a timber batten. Its surface temperatures come out at 7.06, 0.76, 16.77 and 18.33 °C against the
+            standard&apos;s 7.1, 0.8, 16.8 and 18.3, matching commercial tools (COMSOL, SimScale, QuickField) to 0.01 K.
+          </p>
+          <h3>What it leaves out</h3>
+          <ul>
+            <li>The edge insulation, upstand and foundation are the same all round the house.</li>
+            <li>Corners of the house (a 3-D effect) aren&apos;t modelled separately.</li>
+            <li>Steady state only: no daily or seasonal swing in the ground.</li>
+            <li>The foundation is a simple block of one material, and details like cavity closers, damp-proof courses and wall ties are left out.</li>
+            <li>Suspended floors aren&apos;t modelled; they take SAP&apos;s default Ψ.</li>
+            <li>The soil is uniform at 2.0 W/mK; wet clay conducts more, dry sand less.</li>
+            <li>Its floor-to-ISO 13370 gap of a few per cent carries into Ψ as roughly 0.01 W/mK, as it does in BR 497&apos;s own method.</li>
+          </ul>
         </section>
 
         {/* ------------------------------------------------------------ MOISTURE: UNDER THE HOOD */}
@@ -1288,6 +1442,10 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
             <dd>The power of solar radiation arriving on a surface, in W/m².</dd>
             <dt>Operative temperature</dt>
             <dd>A measure of how warm a room feels, combining air temperature and the temperature of surrounding surfaces. Roughly their average.</dd>
+            <dt>Perimeter upstand</dt>
+            <dd>A strip of insulation standing on edge between a floor&apos;s screed and the wall, breaking the heat path round the floor insulation at the floor-to-wall junction.</dd>
+            <dt>Psi (Ψ), linear thermal transmittance</dt>
+            <dd>The extra heat lost per metre of a junction, such as where the floor meets the wall, per kelvin of temperature difference, in W/mK, over and above what the U-values on either side count.</dd>
             <dt>R-value (thermal resistance)</dt>
             <dd>How strongly a layer resists heat flow, in m²K/W. Thickness divided by conductivity. Higher means better insulated.</dd>
             <dt>Relative humidity (RH)</dt>

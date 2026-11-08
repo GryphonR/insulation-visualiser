@@ -2,6 +2,8 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import type { ReactNode } from 'react';
 import { calcHouse } from '../engine/house';
 import { syncUfh } from '../engine/house-draw';
+import { yearRes } from '../engine/house-sim';
+import { useYearSims } from './useYearSim';
 import type { House, HouseResult } from '../engine/house';
 import { chain, newProject } from '../engine/house-scenarios';
 import { deleteStored, hasSaved, listProjects, loadActive, newProjectId, openStored, projectKey, rawStored, readStored, saveProject } from '../engine/projects';
@@ -18,6 +20,7 @@ interface Ctx {
   setHouse: (fn: (h: House) => House) => void;
   /** Same edit, written to a copy so a page can mutate freely. */
   upd: (fn: (h: House) => void) => void;
+  /** Design calc with the annual figures from the scenario's typical-year run (see annualFrom). */
   res: HouseResult;
   results: Map<string, HouseResult>;
   ordered: Scenario[];
@@ -109,7 +112,16 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
   const setHouse: Ctx['setHouse'] = (fn) =>
     setProject((p) => ({ ...p, scenarios: p.scenarios.map((s) => (s.id === p.active ? { ...s, house: syncUfh(fn(s.house)) } : s)) }));
   const upd: Ctx['upd'] = (fn) => setHouse((prev) => { const n = structuredClone(prev); fn(n); return n; });
-  const results = useMemo(() => new Map(project.scenarios.map((s) => [s.id, calcCached(s.house)])), [project.scenarios]);
+  const houses = useMemo(() => project.scenarios.map((s) => s.house), [project.scenarios]);
+  const sims = useYearSims(houses);
+  // Year run ÷ degree days, per scenario: while an edit's run is going, its quick estimate is scaled by the last one so figures don't jump.
+  const ratio = useRef(new Map<string, number>());
+  const simsDone = sims.map((x) => (x ? 1 : 0)).join('');
+  const results = useMemo(() => new Map(project.scenarios.map((s, i) => {
+    const r = calcCached(s.house), sim = sims[i];
+    if (sim && r.annualKWh > 0) ratio.current.set(s.id, sim.heatKWh / r.annualKWh);
+    return [s.id, yearRes(s.house, r, sim, ratio.current.get(s.id) ?? 1)];
+  })), [project.scenarios, simsDone]); // eslint-disable-line react-hooks/exhaustive-deps
   const ordered = useMemo(() => {
     const out: Scenario[] = [];
     const walk = (parent: string | null) => project.scenarios.filter((s) => s.parent === parent).forEach((s) => { out.push(s); walk(s.id); });

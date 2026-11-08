@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MONTHS_FULL, PRESETS } from '../engine/data';
 import { BUILTIN_STACKUPS, loadScenario, saveScenario } from '../engine/library';
 import type { Stackup } from '../engine/library';
-import { DEFAULT_SCENARIO, runScenario } from '../engine/scenario';
+import { DEFAULT_SCENARIO, OTHER_LABEL, runScenario } from '../engine/scenario';
 import type { Scenario } from '../engine/scenario';
 import { N_FRAMES } from '../engine/simulate';
 import { clamp, sgn } from '../lib/util';
@@ -36,7 +36,7 @@ export function WallPage({ ids }: { ids: string[] }) {
   const library = useMemo(() => [...BUILTIN_STACKUPS, ...customStackups], [customStackups]);
   // Project walls and roofs can be picked too; marked builtin so they're copied, never edited or deleted, from here.
   const simLib = useMemo(() => [
-    ...house.buildups.filter((b) => (b.kind === 'wall' || b.kind === 'roof') && b.layers.length > 0).map((b): Stackup => ({ id: b.id, name: b.name, layers: b.layers, orient: b.kind === 'roof' ? 'roof' : undefined, builtin: true })),
+    ...house.buildups.filter((b) => (b.kind === 'wall' || b.kind === 'roof' || b.kind === 'floor') && b.layers.length > 0).map((b): Stackup => ({ id: b.id, name: b.name, layers: b.layers, orient: b.kind === 'roof' || b.kind === 'floor' ? b.kind : undefined, builtin: true })),
     ...library,
   ], [house.buildups, library]);
   const setIds = (f: (prev: string[]) => string[]) => go('wall', ...f(ids));
@@ -66,14 +66,19 @@ export function WallPage({ ids }: { ids: string[] }) {
   // Coming from a face or the library: load that build-up's layers (and a roof's orientation) into the simulator.
   const found = house.buildups.find((b) => b.id === buildupId);
   const preset = found ? undefined : library.find((s) => s.id === buildupId);
-  const from = found ?? (preset && { id: preset.id, name: preset.name, layers: preset.layers, kind: preset.orient === 'roof' ? 'roof' : 'wall' });
+  const from = found ?? (preset && { id: preset.id, name: preset.name, layers: preset.layers, kind: preset.orient === 'roof' || preset.orient === 'floor' ? preset.orient : 'wall' });
+  // The house's site and the room where this build-up (or else the largest outside wall or roof) sits.
+  const proj = useMemo(() => projectDay(houseRes, found?.id, from?.kind === 'roof', from?.kind === 'floor'), [houseRes, found?.id, from?.kind]);
+  // Opening the simulator starts from the house as modelled; any change after that is a what-if until "Back to your house".
   useEffect(() => {
-    if (!from || !from.layers.length) return;
-    setSc((s) => ({ ...s, layers: mkLayers(from.layers), orient: from.kind === 'roof' ? 'roof' : s.orient === 'roof' ? 'W' : s.orient, az: undefined, ...(found ? projectDay(houseRes, found.id, found.kind === 'roof')?.patch : undefined) }));
+    setSc((s) => ({
+      ...s,
+      ...(from?.layers.length ? { layers: mkLayers(proj?.flip ? [...from.layers].reverse() : from.layers), orient: from.kind === 'roof' || from.kind === 'floor' ? from.kind : s.orient === 'roof' || s.orient === 'floor' ? 'W' : s.orient, az: undefined } : {}),
+      ...proj?.patch,
+    }));
   }, [from?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { frame, playing, setPlaying, scrub } = useClock(90); // 15:00
-  const proj = useMemo(() => projectDay(houseRes, found?.id, found?.kind === 'roof'), [houseRes, found?.id, found?.kind]);
 
   const res = useMemo(() => runScenario(sc), [sc]);
   const charts = useMemo(() => buildCharts(res), [res]);
@@ -85,7 +90,7 @@ export function WallPage({ ids }: { ids: string[] }) {
   const [changing, setChanging] = useState(false);
   // Project walls and roofs first, then library presets of other names.
   const pool = useMemo(() => {
-    const mine = house.buildups.filter((b) => (b.kind === 'wall' || b.kind === 'roof') && b.layers.length > 0).map((b) => ({ id: b.id, name: b.name, layers: b.layers, orient: b.kind === 'roof' ? 'roof' : undefined }));
+    const mine = house.buildups.filter((b) => (b.kind === 'wall' || b.kind === 'roof' || b.kind === 'floor') && b.layers.length > 0).map((b) => ({ id: b.id, name: b.name, layers: b.layers, orient: b.kind === 'roof' || b.kind === 'floor' ? b.kind : undefined }));
     const names = new Set(mine.map((b) => b.name));
     return [...mine, ...library.filter((s) => !names.has(s.name))];
   }, [house.buildups, library]);
@@ -99,11 +104,14 @@ export function WallPage({ ids }: { ids: string[] }) {
     applyDraft(draft);
   };
 
+  // A floor or ceiling has the ground, a void or another room beyond it instead of sun and air.
   const pills = [
-    { label: 'Sun on surface', value: `${Math.round(fr.I[f])} W/m²` },
-    { label: 'Air', value: `${fr.tair[f].toFixed(1)} °C` },
-    { label: 'Sol-air', value: `${fr.tsa[f].toFixed(1)} °C` },
-    { label: 'Inner face', value: `${fr.tsIn[f].toFixed(1)} °C` },
+    ...(res.params.other ? [{ label: OTHER_LABEL[res.params.other.what], value: `${fr.tsa[f].toFixed(1)} °C` }] : [
+      { label: 'Sun on surface', value: `${Math.round(fr.I[f])} W/m²` },
+      { label: 'Air', value: `${fr.tair[f].toFixed(1)} °C` },
+      { label: 'Sun + air on the surface', value: `${fr.tsa[f].toFixed(1)} °C` },
+    ]),
+    { label: 'Inside surface', value: `${fr.tsIn[f].toFixed(1)} °C` },
     { label: 'Heat flow to room', value: `${sgn(fr.q[f], 1)} W/m²` },
   ];
 
@@ -195,7 +203,7 @@ export function WallPage({ ids }: { ids: string[] }) {
     </>
       )}
       {view === 'flow' && <p className="foot">
-        Model: one-dimensional transient conduction through uniform layers (implicit finite volume, 2-minute steps, repeated until the daily cycle settles). Outside is driven by sol-air temperature (air + absorbed sun, with a long-wave loss for roofs); indoor air is held constant unless the room is free-floating. Weather is a synthetic clear-sky-scaled day built from typical UK monthly means, not measured data. Thermal bridging, moisture, ventilated cavities and window gains in the fixed and scheduled modes are not modelled. Values are for teaching and early design, not compliance.
+        Model: one-dimensional transient conduction through uniform layers (implicit finite volume, 2-minute steps, repeated until the daily cycle settles). Outside is driven by sol-air temperature (air + absorbed sun, with a long-wave loss for roofs); a ground floor instead sits on the ground (or a suspended floor's void) at a steady temperature for the month, through the resistance that gives its BS EN ISO 13370 U-value, and a floor or ceiling between rooms faces the other room at a steady temperature; indoor air is held constant unless the room is free-floating. Weather is a synthetic clear-sky-scaled day built from typical UK monthly means, not measured data. Thermal bridging, moisture, ventilated cavities and window gains in the fixed and scheduled modes are not modelled. Values are for teaching and early design, not compliance.
       </p>}
       {changing && (
         <AddBuildupModal title="Change build-up" actionLabel="View" layeredOnly library={pool} have={new Set()} onClose={() => setChanging(false)}

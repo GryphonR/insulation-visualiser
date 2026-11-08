@@ -79,6 +79,11 @@ export function loadScenario(): { sc: Scenario | null; dropped: string[] } {
       if (k !== 'layers' && typeof p[k] === typeof DEFAULT_SCENARIO[k]) (sc as unknown as Record<string, unknown>)[k] = p[k];
     }
     if (!Number.isInteger(sc.month) || sc.month < 0 || sc.month > 11) sc.month = DEFAULT_SCENARIO.month;
+    const s = p.site;
+    if (sc.loc === 'house') {
+      if (s && typeof s.name === 'string' && Number.isFinite(s.lat) && Number.isFinite(s.dT)) sc.site = { id: 'house', name: s.name, lat: s.lat, dT: s.dT };
+      else sc.loc = DEFAULT_SCENARIO.loc;
+    }
     return { sc, dropped };
   } catch {
     return { sc: null, dropped };

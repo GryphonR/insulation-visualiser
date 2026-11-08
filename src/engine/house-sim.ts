@@ -3,7 +3,7 @@
 import { COLOURS, DAYS, DOY, MEAN, ORIENTS, SWING } from './data';
 import { solarAt, solarFromData } from './solar';
 import type { Tmy } from './weather-tmy';
-import { calcHouse, sourceEff } from './house';
+import { calcHouse, sourceEff, tariff } from './house';
 import type { Face, House, HouseResult, RoomType } from './house';
 import type { Orient } from './data';
 import { roomOut, roomSchedule, systemFlow } from './house-heating';
@@ -15,11 +15,11 @@ export function faceOrient(f: Pick<Face, 'az' | 'tilt' | 'side'>): Orient {
 }
 
 export type CaseId = 'design' | 'summer' | 'snap' | 'year';
-export const CASES: Array<{ id: CaseId; name: string; use: string }> = [
-  { id: 'design', name: 'Winter design day', use: 'Peak heating with the schedule and setback, overcast, at the design temperature.' },
-  { id: 'year', name: 'Typical year', use: 'Annual energy, monthly use and comfort hours.' },
-  { id: 'summer', name: 'Summer peak day', use: 'Overheating in bedrooms and lofts: clear sky, 15–29 °C, no heating.' },
-  { id: 'snap', name: 'Cold snap, 5 days', use: 'How long rooms hold heat with the heating off.' },
+export const CASES: Array<{ id: CaseId; q: string; name: string; use: string }> = [
+  { id: 'design', q: 'Can the heating keep up on the coldest day?', name: 'Winter design day', use: 'Peak heating with the schedule and setback, overcast, at the design temperature.' },
+  { id: 'year', q: 'What will a year of heating cost?', name: 'Typical year', use: 'Annual energy, monthly use and comfort hours.' },
+  { id: 'summer', q: 'Will rooms overheat in a heatwave?', name: 'Summer peak day', use: 'Clear sky, 15–29 °C outside, no heating.' },
+  { id: 'snap', q: 'How long does the house stay warm without heating?', name: 'Cold snap, 5 days', use: 'A power cut or breakdown: heating off from a house held at its setpoints, near the design temperature.' },
 ];
 
 const BED: RoomType[] = ['bedroom', 'bathroom'];
@@ -82,10 +82,15 @@ export interface SimResult {
   loftT: Float32Array | null;
   /** Peak hour W; heat delivered and energy bought (electricity or boiler fuel), kWh. */
   peakW: number; heatKWh: number; boughtKWh: number;
-  comfort: Array<{ id: string; cold: number; warm: number; min: number; max: number; below16: number | null }>;
+  /** Heat delivered and energy bought in each calendar month, kWh (a one-day case lands in its own month). */
+  monthHeat: number[]; monthBought: number[];
+  /** Per room: hours too cold while heated (late: past the warm-up after switching on), too warm, the range, and the first hour below 16 °C. */
+  comfort: Array<{ id: string; cold: number; late: number; warm: number; min: number; max: number; below16: number | null }>;
 }
 
 const DT = 600; // s
+/** Hours a room may take to warm up after its heating comes on before it counts as falling short. */
+const WARMUP_H = 2;
 
 /** One run of a test case. Pass a typical meteorological year to drive the year case with real hourly weather. */
 export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h), tmy?: Tmy): SimResult {
@@ -96,6 +101,8 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
   const N = rooms.length + (base.loft ? 1 : 0), LOFT = rooms.length;
   const idx = new Map(rooms.map((r, i) => [r.room.id, i]));
   const g = h.gains;
+  // An applied bills calibration: rooms run warmer or cooler by dt, and only a share hf of the heat is used.
+  const dt = h.calib?.dt ?? 0, hf = h.calib?.hf ?? 1;
 
   // Node capacity: contents mass by floor area plus air.
   // Two parts per room (ISO 13790 simple hourly idea): air that settles within minutes, and the fabric and
@@ -199,7 +206,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
     rooms.forEach((r, i) => {
       if (!r.room.heated || !heatingOn || snapOff || sched[i] === off) return;
       // The cold snap starts from a house held at its setpoints.
-      const set = sched[i][hr] || id === 'snap' ? r.room.setpoint : g.setback;
+      const set = (sched[i][hr] || id === 'snap' ? r.room.setpoint : g.setback) + dt;
       const need = set * Hsum[i] - rhs[i];
       if (need <= 0) return;
       P[i] = Math.min(roomOut(h, r.room.id, flow, T[i]), need);
@@ -223,25 +230,49 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
   }
 
   let peakW = 0, heatKWh = 0, boughtKWh = 0;
+  const monthHeat = Array(12).fill(0) as number[], monthBought = Array(12).fill(0) as number[];
   for (let k = 0; k < hours; k++) {
+    heat[k] *= hf;
     peakW = Math.max(peakW, heat[k]);
     heatKWh += heat[k] / 1000;
-    if (heat[k] > 0) boughtKWh += heat[k] / 1000 / sourceEff(h, flowAt(out[k]), out[k], base.Tg, MONTH_OF_DAY[(wx.doy(k) - 1) % 365]);
+    const m = MONTH_OF_DAY[(wx.doy(k) - 1) % 365];
+    monthHeat[m] += heat[k] / 1000;
+    if (heat[k] > 0) { const b = heat[k] / 1000 / sourceEff(h, flowAt(out[k]), out[k], base.Tg, m); boughtKWh += b; monthBought[m] += b; }
   }
   const comfort = rooms.map((r, i) => {
-    let cold = 0, warm = 0, min = Infinity, max = -Infinity, below16: number | null = null;
+    let cold = 0, late = 0, warm = 0, min = Infinity, max = -Infinity, below16: number | null = null;
+    // Hours since the heating last came on (a schedule on at midnight carries on from the evening before).
+    let since = sched[i][23] ? WARMUP_H : -1;
     for (let k = 0; k < hours; k++) {
-      const t = Th[i][k];
+      const t = Th[i][k], on = !!sched[i][k % 24];
+      since = on ? (since >= 0 ? since + 1 : 0) : -1;
       min = Math.min(min, t); max = Math.max(max, t);
-      if (r.room.heated && heatingOn && sched[i][k % 24] && t < r.room.setpoint - 1) cold++;
+      if (r.room.heated && heatingOn && on && t < r.room.setpoint - 1) { cold++; if (since >= WARMUP_H) late++; }
       if (t > (BED.includes(r.room.type) ? 26 : 25)) warm++;
       if (below16 === null && t < 16) below16 = k;
     }
-    return { id: r.room.id, cold, warm, min, max, below16 };
+    return { id: r.room.id, cold, late, warm, min, max, below16 };
   });
   return {
     id, hours, rooms: rooms.map((r) => ({ id: r.room.id, name: r.room.name, heated: r.room.heated, setpoint: r.room.setpoint })),
-    out, heat, T: Th, P: Ph, loftT, peakW, heatKWh, boughtKWh, comfort,
+    out, heat, T: Th, P: Ph, loftT, peakW, heatKWh, boughtKWh, monthHeat, monthBought, comfort,
+  };
+}
+
+/**
+ * The design calc with its annual figures (space heat, months, energy bought, cost, carbon) taken from a typical-year run.
+ * Without a run yet, the degree-day figures scaled by k (the last run's ratio for this scenario), marked as an estimate.
+ */
+export function yearRes(h: House, res: HouseResult, sim: SimResult | null, k = 1): HouseResult {
+  const tf = tariff(h.hp);
+  const months = res.months.map((m, i) => {
+    const heat = sim ? sim.monthHeat[i] : m.heat * k, bought = sim ? sim.monthBought[i] : m.bought * k;
+    return { ...m, heat, bought, eff: sim && bought > 0 ? heat / bought : m.eff };
+  });
+  const annualKWh = sim ? sim.heatKWh : res.annualKWh * k, kwh = sim ? sim.boughtKWh : res.hp.kwh * k;
+  return {
+    ...res, annualKWh, months, annualFrom: sim ? 'year' : 'estimate',
+    hp: { ...res.hp, kwh, seasonal: kwh > 0 ? annualKWh / kwh : res.hp.seasonal, cost: (kwh * tf.p) / 100 + tf.standing, co2: kwh * tf.co2 },
   };
 }
 
@@ -254,4 +285,54 @@ export function yearTotals(r: SimResult) {
   });
   const months = DAYS.map((_, m) => days.reduce((t, v, d) => (MONTH_OF_DAY[d] === m ? t + v : t), 0));
   return { days, months, monthOfDay: MONTH_OF_DAY, doyStart: DOY };
+}
+
+/** A one-line answer to a test case's question. cost is the run's running cost, £ (year case only). */
+export function verdict(h: House, r: SimResult, cost = 0): { ok: boolean; text: string } {
+  const named = (ids: string[]) => ids.map((id) => r.rooms.find((x) => x.id === id)!.name).join(', ');
+  const short = r.comfort.filter((c) => c.late > 0).map((c) => c.id);
+  if (r.id === 'design') {
+    const flat = r.peakW >= h.hp.capacity * 1000 - 1;
+    if (short.length) return { ok: false, text: `No: ${named(short)} ${short.length > 1 ? 'stay' : 'stays'} more than 1 K below the setpoint beyond a ${WARMUP_H}-hour warm-up${flat ? ', with the heat source flat out' : ''}.` };
+    return { ok: true, text: `Yes: every heated room is within 1 K of its setpoint after a ${WARMUP_H}-hour warm-up, peaking at ${(r.peakW / 1000).toFixed(1)} of ${h.hp.capacity} kW.` };
+  }
+  if (r.id === 'year') {
+    const text = `About £${Math.round(cost).toLocaleString('en-GB')} for ${Math.round(r.heatKWh).toLocaleString('en-GB')} kWh of space heating.`;
+    // A few cold hours on the coldest mornings are normal; a room short for over a day's worth across the year isn't.
+    const cold = r.comfort.filter((c) => c.late > 24).map((c) => c.id);
+    return cold.length ? { ok: false, text: `${text} ${named(cold)} ${cold.length > 1 ? 'are' : 'is'} more than 1 K below the setpoint for over 24 hours of the year after warming up.` } : { ok: true, text };
+  }
+  if (r.id === 'summer') {
+    // shortcut: a fixed 3 hours over 25 °C (26 °C in bedrooms) on the peak day; CIBSE TM59 judges over a whole summer.
+    const hot = r.comfort.filter((c) => c.warm > 3), worst = r.comfort.reduce((a, c) => (c.max > a.max ? c : a));
+    if (!hot.length) return { ok: true, text: `No: no room is over 25 °C (26 °C in bedrooms) for more than 3 hours; the warmest, ${named([worst.id])}, peaks at ${worst.max.toFixed(1)} °C.` };
+    return { ok: false, text: `Yes: ${named(hot.map((c) => c.id))} ${hot.length > 1 ? 'are' : 'is'} over 25 °C (26 °C in bedrooms) for more than 3 hours; ${named([worst.id])} reaches ${worst.max.toFixed(1)} °C.` };
+  }
+  const heated = r.comfort.filter((c) => r.rooms.find((x) => x.id === c.id)!.heated);
+  const first = heated.filter((c) => c.below16 != null).sort((a, b) => a.below16! - b.below16!)[0];
+  if (!first) return { ok: true, text: `All ${r.hours / 24} days: every heated room stays above 16 °C.` };
+  const when = first.below16 === 0 ? 'within the first hour' : `after ${first.below16} hour${first.below16 === 1 ? '' : 's'}`;
+  return { ok: first.below16! >= 24, text: `${first.below16! >= 24 ? 'Over a day' : 'Less than a day'}: ${named([first.id])} is first to drop below 16 °C, ${when}.` };
+}
+
+/** One room's answer to a test case's question, on the same limits as verdict(). */
+export function roomAnswer(r: SimResult, id: string): { ok: boolean; text: string } | null {
+  const i = r.rooms.findIndex((x) => x.id === id);
+  if (i < 0) return null;
+  const room = r.rooms[i], c = r.comfort[i], f1 = (t: number) => t.toFixed(1);
+  if (r.id === 'summer') return c.warm > 3 ? { ok: false, text: `Over the limit for ${c.warm} hours, peaking at ${f1(c.max)} °C.` } : { ok: true, text: `Peaks at ${f1(c.max)} °C.` };
+  if (!room.heated) return { ok: true, text: `Unheated: between ${f1(c.min)} and ${f1(c.max)} °C.` };
+  if (r.id === 'snap') {
+    if (c.below16 == null) return { ok: true, text: `Stays above 16 °C for all ${r.hours / 24} days.` };
+    return { ok: c.below16 >= 24, text: c.below16 === 0 ? 'Below 16 °C within the first hour.' : `Below 16 °C after ${c.below16} hour${c.below16 === 1 ? '' : 's'}.` };
+  }
+  let peak = 0, kwh = 0;
+  for (let k = 0; k < r.hours; k++) { peak = Math.max(peak, r.P[i][k]); kwh += r.P[i][k] / 1000; }
+  if (r.id === 'year') {
+    const text = `${Math.round(kwh).toLocaleString('en-GB')} kWh a year`;
+    return c.late > 24 ? { ok: false, text: `${text}; more than 1 K below ${room.setpoint} °C for ${c.late} hours after warming up.` } : { ok: true, text: `${text}.` };
+  }
+  return c.late > 0
+    ? { ok: false, text: `More than 1 K below ${room.setpoint} °C for ${c.late} hour${c.late === 1 ? '' : 's'} after warming up; lowest ${f1(c.min)} °C.` }
+    : { ok: true, text: `Holds ${room.setpoint} °C after warming up; peak ${Math.round(peak).toLocaleString('en-GB')} W.` };
 }

@@ -160,3 +160,15 @@ describe('runMoisture', () => {
     expect(runMoisture({ ...base, layers: [] })).toBeNull();
   });
 });
+
+describe('runMoisture at the house site', () => {
+  it("uses the site's latitude and temperatures, the same as a city with those numbers; without a site, the default city", () => {
+    const layers = L(['brick', 225], ['pir', 60], ['pb', 12.5]);
+    const city = runMoisture({ ...base, loc: 'man', layers })!;
+    const site = runMoisture({ ...base, loc: 'house', site: { id: 'house', name: 'This house', lat: 53.5, dT: -0.4 }, layers })!;
+    expect(site.months.map((m) => m.rhSurf)).toEqual(city.months.map((m) => m.rhSurf));
+    const warmer = runMoisture({ ...base, loc: 'house', site: { id: 'house', name: 'This house', lat: 53.5, dT: 1.5 }, layers })!;
+    expect(warmer.months[0].te).toBeGreaterThan(city.months[0].te);
+    expect(runMoisture({ ...base, loc: 'house', layers })!.months[0].te).toBe(runMoisture({ ...base, layers })!.months[0].te);
+  });
+});

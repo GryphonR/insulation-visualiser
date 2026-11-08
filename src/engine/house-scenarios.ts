@@ -82,6 +82,11 @@ export function describe(c: Change, a: House, b: House): { what: string; from: s
     if (kind === 'xf') return `${room(rest)}, exposed floor`;
     if (kind === 'lc') return `${room(rest)}, ceiling to loft`;
     if (kind === 'fr') return `${room(rest)}, flat roof`;
+    if (kind === 'sl') return `${room(rest)}, roof slope`;
+    if (kind === 'ev') return `${room(rest)}, roof over the eaves void`;
+    if (kind === 'rl') return `${room(rest)}, rooflight`;
+    if (kind === 'dw' || kind === 'dc') return 'Dormer walls';
+    if (kind === 'dr') return 'Dormer roof';
     return key;
   };
   const [top, second] = c.path;
@@ -162,16 +167,15 @@ export function groupChanges(changes: Change[]): ChangeGroup[] {
   return out;
 }
 
-/** Peak and annual figures after each change (or group of changes) in turn: the waterfall. */
-export function steps(parent: House, changes: Array<Change | ChangeGroup>) {
+/** The parent, then the house after each change (or group of changes) in turn: the waterfall's houses. */
+export function stepHouses(parent: House, changes: Array<Change | ChangeGroup>): House[] {
   const flat = (x: Change | ChangeGroup) => ('changes' in x ? x.changes : [x]);
-  const r0 = calcHouse(parent);
-  const out = [{ peakW: r0.peakW, kwh: r0.annualKWh, cost: r0.hp.cost }];
-  for (let i = 1; i <= changes.length; i++) {
-    const r = calcHouse(applyChanges(parent, changes.slice(0, i).flatMap(flat)));
-    out.push({ peakW: r.peakW, kwh: r.annualKWh, cost: r.hp.cost });
-  }
-  return out;
+  return [parent, ...changes.map((_, i) => applyChanges(parent, changes.slice(0, i + 1).flatMap(flat)))];
+}
+
+/** Peak and annual figures after each change in turn, from the design calc (the page swaps in typical-year runs). */
+export function steps(parent: House, changes: Array<Change | ChangeGroup>) {
+  return stepHouses(parent, changes).map((h) => { const r = calcHouse(h); return { peakW: r.peakW, kwh: r.annualKWh, cost: r.hp.cost }; });
 }
 
 const KEY = 'insulation-visualiser.house-project.v1';

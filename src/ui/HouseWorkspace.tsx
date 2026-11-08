@@ -4,7 +4,9 @@ import { centroid } from '../engine/geom';
 import type { Pt } from '../engine/geom';
 import { planBounds } from './HousePlan';
 import type { House, HouseResult } from '../engine/house';
-import { applyChanges, chain, describe, diff, groupChanges, steps } from '../engine/house-scenarios';
+import { applyChanges, chain, describe, diff, groupChanges, stepHouses } from '../engine/house-scenarios';
+import { yearRes } from '../engine/house-sim';
+import { useYearSims } from './useYearSim';
 import type { Change, Project, Scenario } from '../engine/house-scenarios';
 import { Chip } from './controls';
 import { useProject } from './project';
@@ -16,7 +18,7 @@ import { WHY } from './assumptions';
 const sgn = (v: number, d = 0) => (Math.abs(v) < 0.5 * 10 ** -d ? '0' : `${v > 0 ? '+' : '−'}${fmt(Math.abs(v), d)}`);
 const ROW_WHY: Record<string, string> = {
   'Heat source spare, %': WHY.capacity,
-  'Heat per kWh bought (est. SCOP or efficiency)': `${WHY.seasonal} Heat pump COPs are estimates for a typical unit; see the Energy & cost page for how each is worked out and to set the performance factor.`,
+  'Heat per kWh bought (est. SCOP or efficiency)': `${WHY.seasonal} Heat pump COPs are estimates for a typical unit; see Heating › System & flow for how each is worked out and to set the performance factor.`,
   'Energy bought, kWh/yr': WHY.bought,
   'Running cost, £/yr': 'Energy bought × each scenario\'s unit price, plus the gas standing charge only where it is switched on for a gas boiler. Prices are set on the Energy & cost page.',
   'Carbon, kgCO₂/yr': WHY.carbon,
@@ -86,9 +88,19 @@ function ScenariosView({ project, active, results, ordered, setProject }: {
   const own = useMemo(() => (parent ? groupChanges(diff(parent.house, active.house)) : []), [parent, active.house]);
   const [off, setOff] = useState<Record<string, boolean>>({});
   const enabled = useMemo(() => own.filter((c) => !off[c.key]), [own, off]);
-  const fall = useMemo(() => (parent ? steps(parent.house, enabled) : []), [parent, enabled]);
   const enabledFlat = useMemo(() => enabled.flatMap((g) => g.changes), [enabled]);
-  const effective = parent && enabled.length !== own.length ? calcHouse(applyChanges(parent.house, enabledFlat)) : results.get(active.id)!;
+  // Each step gets its own typical-year run; until it's in, the quick estimate scaled by the parent's year ÷ degree-day ratio.
+  const fallHouses = useMemo(() => (parent ? stepHouses(parent.house, enabled) : []), [parent, enabled]);
+  const sims = useYearSims(fallHouses);
+  const simsDone = sims.map((x) => (x ? 1 : 0)).join('');
+  const parentRes = parent ? results.get(parent.id) : undefined;
+  const fallRes = useMemo(() => {
+    const k = parent && parentRes ? parentRes.annualKWh / Math.max(1e-9, calcHouse(parent.house).annualKWh) : 1;
+    return fallHouses.map((h, i) => yearRes(h, calcHouse(h), sims[i], k));
+  }, [fallHouses, simsDone, parentRes]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fall = fallRes.map((r) => ({ peakW: r.peakW, kwh: r.annualKWh, cost: r.hp.cost }));
+  // The last step is the parent with every switched-on change.
+  const effective = parent && enabled.length !== own.length ? fallRes[fallRes.length - 1] : results.get(active.id)!;
   const inherited: Array<{ c: Change; from: Scenario; a: House; b: House }> = [];
   const anc = chain(project, active.id);
   for (let i = 1; i < anc.length - 1; i++) diff(anc[i - 1].house, anc[i].house).forEach((c) => inherited.push({ c, from: anc[i], a: anc[i - 1].house, b: anc[i].house }));

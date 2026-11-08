@@ -136,6 +136,9 @@ export const ORIENTS: Orient[] = [
   { id: 'W', name: 'West wall', label: 'W wall', az: 270, tilt: 90 },
   // The roof's pitch and the way its slope faces come from the scenario (flat when the pitch is 0).
   { id: 'roof', name: 'Roof', label: 'Roof', az: 180, tilt: 0 },
+  // A floor faces down onto the ground, a void or a room below; a ceiling up into a room above. No sun, no sky (see SimParams.other).
+  { id: 'floor', name: 'Floor', label: 'Floor', az: 180, tilt: 180 },
+  { id: 'ceiling', name: 'Ceiling, room above', label: 'Ceiling', az: 180, tilt: 0 },
 ];
 
 export const COLOURS = [

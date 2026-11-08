@@ -42,6 +42,11 @@ export interface SimParams {
   /** Prescribed room air temperature by solar hour (ignored when `free`). */
   tinF: (h: number) => number;
   free?: FreeRoom;
+  /**
+   * A floor or ceiling: its far side sees this steady temperature (the ground under a slab, a suspended floor's void, or
+   * the room above or below) through resistance R, m²K/W, in place of sun and outdoor air. Rsi is this room's surface film.
+   */
+  other?: { T: number; R: number; Rsi: number; what: 'ground' | 'void' | 'above' | 'below' };
 }
 
 export interface Cell {
@@ -111,11 +116,12 @@ export interface Frames {
  * 2-minute steps, repeated for several days until the daily cycle settles.
  */
 export function simulate(P: SimParams) {
-  const Rse = 0.04;
-  // Upward heat flow under a roof below 60° tilt (BS EN ISO 6946), horizontal otherwise.
-  const Rsi = P.orient.tilt < 60 ? 0.1 : 0.13;
-  // Clear-sky long-wave loss on the sol-air temperature, full for a flat roof, none for a wall.
-  const skyF = Math.max(0, Math.cos((P.orient.tilt * Math.PI) / 180));
+  // Outside: a surface film to outdoor air, or for a floor or ceiling what lies on its far side.
+  const Rse = P.other ? P.other.R : 0.04;
+  // BS EN ISO 6946: upward heat flow under a roof below 60° tilt, horizontal otherwise (floors and ceilings set their own).
+  const Rsi = P.other ? P.other.Rsi : P.orient.tilt < 60 ? 0.1 : 0.13;
+  // Clear-sky long-wave loss on the sol-air temperature, full for a flat roof, none for a wall, floor or ceiling.
+  const skyF = P.other ? 0 : Math.max(0, Math.cos((P.orient.tilt * Math.PI) / 180));
   const cells: Cell[] = [];
   const lay: LayerGeom[] = [];
   let xmm = 0;
@@ -179,9 +185,9 @@ export function simulate(P: SimParams) {
   for (let k = 0; k < spd; k++) {
     const h = (k * dt) / 3600;
     tinK[k] = P.tinF(h);
-    Ik[k] = solarAt(P.lat, P.doy, h, P.c, P.orient);
+    Ik[k] = P.other ? 0 : solarAt(P.lat, P.doy, h, P.c, P.orient);
     tairK[k] = P.tmean + (P.swing / 2) * Math.cos((2 * Math.PI * (h - 15)) / 24);
-    tsaK[k] = tairK[k] + P.alpha * Ik[k] * Rse - (skyF > 1e-9 ? 3.6 * P.c * skyF : 0);
+    tsaK[k] = P.other ? P.other.T : tairK[k] + P.alpha * Ik[k] * Rse - (skyF > 1e-9 ? 3.6 * P.c * skyF : 0);
     tsaMean += tsaK[k] / spd;
     tinMean += tinK[k] / spd;
   }

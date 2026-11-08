@@ -6,6 +6,7 @@ import type { Project } from '../engine/house-scenarios';
 import type { Pt } from '../engine/geom';
 import { Chip } from './controls';
 import { planBounds } from './HousePlan';
+import { NumInput } from './hform';
 
 
 const TILE = 256, ZOOM = 19;
@@ -133,9 +134,9 @@ export function TraceControls({ house, res, storey: s, trace: t, setTrace: set, 
             }} />
           </label>
           {im && <>
-            <label className="hf"><span className="eyebrow">Image width</span><span className="hf-in"><input type="number" className="thk-input" step={0.1} value={+im.w.toFixed(2)} onChange={(e) => set((x) => { x.images[storey].w = Math.max(0.5, Number(e.target.value) || 1); })} /><span className="small muted">m</span></span></label>
-            <label className="hf"><span className="eyebrow">Left edge x</span><span className="hf-in"><input type="number" className="thk-input" step={0.05} value={+im.x.toFixed(2)} onChange={(e) => set((x) => { x.images[storey].x = Number(e.target.value) || 0; })} /><span className="small muted">m</span></span></label>
-            <label className="hf"><span className="eyebrow">Top edge y</span><span className="hf-in"><input type="number" className="thk-input" step={0.05} value={+im.y.toFixed(2)} onChange={(e) => set((x) => { x.images[storey].y = Number(e.target.value) || 0; })} /><span className="small muted">m</span></span></label>
+            <label className="hf"><span className="eyebrow">Image width</span><span className="hf-in"><NumInput className="thk-input" step={0.1} value={+im.w.toFixed(2)} onChange={(e) => set((x) => { x.images[storey].w = Math.max(0.5, Number(e.target.value) || 1); })} /><span className="small muted">m</span></span></label>
+            <label className="hf"><span className="eyebrow">Left edge x</span><span className="hf-in"><NumInput className="thk-input" step={0.05} value={+im.x.toFixed(2)} onChange={(e) => set((x) => { x.images[storey].x = Number(e.target.value) || 0; })} /><span className="small muted">m</span></span></label>
+            <label className="hf"><span className="eyebrow">Top edge y</span><span className="hf-in"><NumInput className="thk-input" step={0.05} value={+im.y.toFixed(2)} onChange={(e) => set((x) => { x.images[storey].y = Number(e.target.value) || 0; })} /><span className="small muted">m</span></span></label>
             <label className="hf"><span className="eyebrow">Show</span><input type="range" min={0.1} max={1} step={0.05} value={im.opacity} onChange={(e) => set((x) => { x.images[storey].opacity = Number(e.target.value); })} /></label>
             <label className="hf"><span className="eyebrow">Scale from a known length</span>
               <span className="hf-in"><input type="number" className="thk-input" step={0.01} placeholder="m" value={known} onChange={(e) => setKnown(e.target.value)} />
@@ -147,8 +148,8 @@ export function TraceControls({ house, res, storey: s, trace: t, setTrace: set, 
       )}
       {t.mode === 'sat' && (
         <div className="hf-row">
-          <label className="hf"><span className="eyebrow">Plan corner (0, 0) at latitude</span><input type="number" className="thk-input wide" step={0.00001} value={+t.sat.lat.toFixed(6)} onChange={(e) => set((x) => { x.sat.lat = Number(e.target.value) || 0; })} /></label>
-          <label className="hf"><span className="eyebrow">longitude</span><input type="number" className="thk-input wide" step={0.00001} value={+t.sat.lon.toFixed(6)} onChange={(e) => set((x) => { x.sat.lon = Number(e.target.value) || 0; })} /></label>
+          <label className="hf"><span className="eyebrow">Plan corner (0, 0) at latitude</span><NumInput className="thk-input wide" step={0.00001} value={+t.sat.lat.toFixed(6)} onChange={(e) => set((x) => { x.sat.lat = Number(e.target.value) || 0; })} /></label>
+          <label className="hf"><span className="eyebrow">longitude</span><NumInput className="thk-input wide" step={0.00001} value={+t.sat.lon.toFixed(6)} onChange={(e) => set((x) => { x.sat.lon = Number(e.target.value) || 0; })} /></label>
           <span className="nudge" role="group" aria-label="Move the imagery under the plan">
             <button type="button" className="icon-btn small" onClick={() => nudge(0, 1)} aria-label="Imagery up 1 m">↑</button>
             <button type="button" className="icon-btn small" onClick={() => nudge(1, 0)} aria-label="Imagery left 1 m">←</button>

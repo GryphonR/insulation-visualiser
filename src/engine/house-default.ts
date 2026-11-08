@@ -1,6 +1,9 @@
 import { MAT, PRESETS, canonId } from './data';
-import { calcHouse } from './house';
-import type { Buildup, Device, House, Opening, Room } from './house';
+import { calcHouse, roomEdges, roomFaces } from './house';
+import type { Buildup, Device, Dormer, House, Opening, Room, RoofSection, Side } from './house';
+
+/** A pitched roof over the top storey that follows the rooms: gable, ridge along the longer side, on the wall plate. */
+export const mainRoof = (pitch = 35): RoofSection => ({ id: 'roof', name: 'Main roof', form: 'gable', pitch, eaves: 'cold', dormers: [] });
 import { autoEmitters } from './house-heating';
 import type { Emitter, RadType } from './house-heating';
 
@@ -74,8 +77,9 @@ export function defaultHouse(): House {
     faceBoundary: {},
     wallAlign: {},
     neighbourT: 10,
-    loft: { present: true, ach: 4, height: 1.5, pitch: 35 },
-    climate: { station: 7, pct: '99.6', altitude: 60, region: 16, postcode: 'M14' },
+    roofs: [mainRoof()],
+    loft: { ach: 4 },
+    climate: { station: 7, pct: '99', altitude: 60, region: 16, postcode: 'M14' },
     vent: {
       method: 'model', source: 'est', q50: 10.5, mech: 'none', mechFlow: 120, eta: 88, minAch: true,
       factors: [
@@ -130,6 +134,7 @@ function E(id: string, room: string, zone: string, type: RadType, len: number): 
 
 /** Fill in anything an older save lacks (new settings, default build-ups, emitters) and drop layers whose material is gone. */
 export function upgradeHouse(p: House): House {
+  if (!Array.isArray(p.roofs)) p = roofsFromLoft(p);
   const d = defaultHouse();
   const h: House = {
     ...d, ...p, vent: { ...d.vent, ...p.vent }, loft: { ...d.loft, ...p.loft }, climate: { ...d.climate, ...p.climate }, hp: { ...d.hp, ...p.hp, co2: { ...d.hp.co2, ...p.hp?.co2 } },
@@ -140,6 +145,81 @@ export function upgradeHouse(p: House): House {
     if (!h.buildups.some((b) => b.id === id)) { const b = d.buildups.find((x) => x.id === id); if (b) h.buildups.push(b); }
   }
   return withHeating(h);
+}
+
+type OldDormer = { w: number; front: number; window: number } | null;
+type OldShape = {
+  edges?: Array<{ side: string; eaves: 'cold' | 'warm'; dormer: OldDormer }>; axis: 'ew' | 'ns'; sides: [string, string];
+  pitch: number; knee: number; ceiling: number; eaves: ['cold' | 'warm', 'cold' | 'warm']; dormers: [OldDormer, OldDormer]; rooflight: number;
+};
+type OldLoft = { present?: boolean; ach?: number; pitch?: number; form?: 'gable' | 'hip' | 'mono'; ridge?: 'x' | 'y'; facing?: Side };
+
+/**
+ * A house saved before roof sections: one roof over the top storey from the old loft settings, or (with rooms in the roof)
+ * from the first sloped room's pitch, knee and ridge. Rooms keep their collar height and rooflight; dormers move onto the roof;
+ * slope and eaves build-up choices carry over to the new faces.
+ */
+export function roofsFromLoft(p0: House): House {
+  const p = structuredClone(p0) as House & { loft: OldLoft };
+  const loft = p.loft ?? {}, rooms = p.rooms as Array<Room & { shape?: OldShape }>, last = p.storeys.length - 1;
+  const shaped = rooms.filter((r) => r.shape && r.storey + r.span - 1 === last);
+  const roofs: RoofSection[] = [];
+  if (loft.present !== false || shaped.length) {
+    const sec = mainRoof(loft.pitch ?? 35);
+    if (loft.form) sec.form = loft.form;
+    if (loft.ridge) sec.ridge = loft.ridge;
+    if (loft.facing) sec.facing = loft.facing;
+    const first = shaped[0]?.shape;
+    if (first) {
+      sec.pitch = first.pitch;
+      if (first.sides.some((s) => s !== 'full')) sec.plate = Math.max(0, first.knee);
+      sec.eaves = first.edges?.[0]?.eaves ?? first.eaves?.[0] ?? 'cold';
+      if (first.edges) sec.form = 'hip';
+      else {
+        const sloped = first.sides.map((s) => s !== 'full'), slopeSides: [Side, Side] = first.axis === 'ew' ? ['W', 'E'] : ['N', 'S'];
+        if (sloped[0] && sloped[1]) { sec.form = 'gable'; sec.ridge = first.axis === 'ew' ? 'y' : 'x'; }
+        else { sec.form = 'mono'; sec.facing = slopeSides[sloped[0] ? 0 : 1]; }
+      }
+    }
+    // Dormers stand at the middle of the wall they were on.
+    const dormers: Dormer[] = [];
+    for (const r of shaped) {
+      const sh = r.shape!, es = roomEdges(r);
+      const put = (wall: number, d: OldDormer) => { const e = es[wall]; if (d && e) dormers.push({ id: `dm-${r.id}-${wall}`, at: [(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2], w: d.w, front: d.front, window: d.window }); };
+      if (sh.edges && r.poly) sh.edges.forEach((x, i) => put(i, x.dormer));
+      else (sh.axis === 'ew' ? ['W', 'E'] : ['N', 'S']).forEach((side, i) => put(es.findIndex((e) => e.side === side), sh.dormers?.[i] ?? null));
+    }
+    sec.dormers = dormers;
+    roofs.push(sec);
+  }
+  const old: Record<string, string> = {};
+  for (const r of rooms) {
+    const sh = r.shape;
+    delete r.shape;
+    if (!sh) continue;
+    if (sh.ceiling > 0 && sh.ceiling < (p.storeys[r.storey + r.span - 1]?.h ?? 2.4) - 0.01) r.ceiling = sh.ceiling;
+    if (sh.rooflight > 0) r.rooflight = sh.rooflight;
+  }
+  // Old slope, eaves and dormer choices were per room wall: keep each room's first one for its new faces.
+  for (const k of Object.keys(p.faceBuildup ?? {})) {
+    const m = k.match(/^(sl|ev|dw|dr):([^:]+):\d+$/);
+    if (!m) continue;
+    old[`${m[1]}:${m[2]}`] ??= p.faceBuildup[k];
+    delete p.faceBuildup[k];
+  }
+  p.roofs = roofs;
+  p.loft = { ach: loft.ach ?? 4 };
+  // Best effort: a save too old to cost its faces just loses those choices, not the project.
+  if (Object.keys(old).length) try {
+    for (const r of p.rooms) {
+      for (const f of roomFaces(p, r, { Bp: 1 })) {
+        const kind = f.key.split(':')[0], id = kind === 'dw' || kind === 'dr' ? f.key.slice(3).replace(/^dm-([^-]+)-\d+$/, '$1') : r.id;
+        const was = old[`${kind}:${id}`];
+        if (was && ['sl', 'ev', 'dw', 'dr'].includes(kind)) p.faceBuildup[f.key] ??= was;
+      }
+    }
+  } catch { /* keep the converted house without the old choices */ }
+  return p;
 }
 
 /** A house saved before emitters existed: one radiator per heated room, sized for the design loss. */

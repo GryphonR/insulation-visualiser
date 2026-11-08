@@ -1,12 +1,16 @@
 import { useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { ROOM_TEMPS } from '../engine/climate-mcs';
-import { SHADING, SIDES, bearingLabel, buildupU, trueBearing, defaultTemp, edgesToRectShape, rectShapeToEdges, roomArea, roomEdges, roomPoly, setOutline } from '../engine/house';
+import { SHADING, SIDES, bearingLabel, buildupU, trueBearing, defaultTemp, roomArea, roomEdges, roomPoly, setOutline } from '../engine/house';
 import type { BuildupKind, Face, RoomType, Side } from '../engine/house';
 import { MAT } from '../engine/data';
-import { simulate } from '../engine/house-sim';
-import { RoomShapeEditor } from './HouseShape';
-import { Card, Num, fmt, mix, uid } from './hform';
+import { CASES, roomAnswer, simulate } from '../engine/house-sim';
+import type { CaseId, SimResult } from '../engine/house-sim';
+import { useYearSim } from './useYearSim';
+import { scheduleSource } from '../engine/house-heating';
+import { RoomCeilingFields } from './HouseRoof';
+import { Card, Num, Why, fmt, mix, uid, NumInput } from './hform';
+import { WHY } from './assumptions';
 import { useProject } from './project';
 import { Crumbs } from './Shell';
 import { href } from './route';
@@ -30,6 +34,11 @@ export function RoomPage({ id, initialTab }: { id: string; initialTab?: string }
   const [group, setGroup] = useState<Group>('N');
   const [outlineMode, setOutlineMode] = useState(true);
   const day = useMemo(() => simulate(house, 'design', res), [house, res]);
+  // The other test runs for this room: the one-day and cold-snap cases are quick; the year comes from the shared cache.
+  const summer = useMemo(() => simulate(house, 'summer', res), [house, res]);
+  const snap = useMemo(() => simulate(house, 'snap', res), [house, res]);
+  const year = useYearSim(house).result;
+  const runs: Record<CaseId, SimResult | null> = { design: day, year, summer, snap };
   if (!room || !rr) return <div className="callout"><p>That room no longer exists. <a href={href('plan')}>Back to the plan</a></p></div>;
 
   const setRoom = (patch: Partial<typeof room>) => upd((h) => { const r = h.rooms.find((x) => x.id === sel); if (r) Object.assign(r, patch); });
@@ -54,19 +63,52 @@ export function RoomPage({ id, initialTab }: { id: string; initialTab?: string }
   const wIn = (g: Group) => rowsIn(g).reduce((a, r) => a + r.W, 0);
   const maxW = Math.max(1, ...GROUPS.map(wIn));
   const here = rowsIn(group);
+  // The parts of a wall (outside, or shared with each neighbouring room) in plan order: left to right on N/S, top to bottom on E/W.
+  // A room through two storeys gets a band per storey, laid out as the wall unfolds: the upper storey further from the floor.
+  const edgesR = roomEdges(room);
+  type Part = { key: string; pos: number; len: number; to: string; W: number };
+  const bandsOf = (g: Group): Part[][] => {
+    const horiz = g === 'N' || g === 'S', by = new Map<number, Part[]>();
+    for (const row of rowsIn(g)) {
+      const f = faceOf.get(row.key), e = f?.along && edgesR[f.along.edge];
+      if (!f?.along || !e) continue;
+      const tot = f.along.t.reduce((a, [p, q]) => a + q - p, 0) || 1, out = by.get(f.along.storey) ?? [];
+      by.set(f.along.storey, out);
+      for (const [a, b] of f.along.t) {
+        const at = (t: number) => (horiz ? e.a[0] + e.d[0] * t : e.a[1] + e.d[1] * t);
+        out.push({ key: `${f.along.storey}:${f.along.edge}:${a.toFixed(2)}:${row.key}`, pos: Math.min(at(a), at(b)), len: b - a, to: row.to, W: (row.W * (b - a)) / tot });
+      }
+    }
+    // Storeys low to high; the North and West walls unfold upwards / leftwards, so their upper storey comes first.
+    const bands = [...by.entries()].sort((x, y) => x[0] - y[0]).map(([, ps]) => ps.sort((x, y) => x.pos - y.pos));
+    return g === 'N' || g === 'W' ? bands.reverse() : bands;
+  };
+  const maxPerM = Math.max(1e-6, ...GROUPS.flatMap((g) => bandsOf(g).flat()).map((p) => p.W / Math.max(p.len, 0.01)));
   const face = (g: Group, style?: CSSProperties) => {
-    const w = wIn(g), rows = rowsIn(g);
+    const w = wIn(g), rows = rowsIn(g), bands = bandsOf(g), split = bands.length > 1 || (bands[0]?.length ?? 0) > 1;
     const to = rows.length ? [...new Set(rows.filter((r) => !r.key.startsWith('op:')).map((r) => r.to))].join(', ') : 'none';
     return (
       <button type="button" className={`face${group === g ? ' on' : ''}${g === 'floor' || g === 'ceiling' ? ' dashed' : ''}`} aria-pressed={group === g}
         style={{ background: mix([255, 254, 251], [233, 150, 95], w / maxW), ...style }} onClick={() => setGroup(g)}>
-        <b>{GROUP_LABEL[g]}</b><span className="mono">{fmt(w)} W</span><span className="xs">{to}</span>
+        <b>{GROUP_LABEL[g]}</b><span className="mono">{fmt(w)} W</span>
+        {split
+          ? <span className={`face-parts ${g === 'N' || g === 'S' ? 'h' : 'v'}`}>
+              {bands.map((ps, k) => (
+                <span key={k} className="fp-band">
+                  {ps.map((p) => (
+                    <span key={p.key} title={`${p.to}: ${fmt(p.len, 2)} m, ${fmt(p.W)} W`} style={{ flex: `${p.len} 1 0`, background: mix([255, 254, 251], [233, 150, 95], p.W / Math.max(p.len, 0.01) / maxPerM) }}>{p.to}</span>
+                  ))}
+                </span>
+              ))}
+            </span>
+          : <span className="xs">{to}</span>}
         {rows.some((r) => r.key.startsWith('op:')) && <span className="xs mono">{rows.filter((r) => r.key.startsWith('op:')).length} opening(s)</span>}
       </button>
     );
   };
 
   const cv = res.heat.rooms.find((q) => q.id === sel);
+  const src = room.heated ? scheduleSource(house, room) : null;
   const tabs: Array<['faces' | 'details' | 'openings', string]> = [['faces', 'Faces'], ['details', 'Room & outline'], ['openings', 'Windows & doors']];
 
   return (
@@ -86,11 +128,20 @@ export function RoomPage({ id, initialTab }: { id: string; initialTab?: string }
         <div className="kpi"><span className="eb">Emitter cover</span><span className="v">{cv && cv.has ? `${fmt(cv.cover * 100)}%` : '—'}</span><span className="small muted">{cv ? (cv.has ? 'of the loss' : 'no emitter') : 'unheated'}</span></div>
       </div>
 
+      {(src?.kind === 'none' || src?.kind === 'off') && (
+        <aside role="status" className="callout">
+          <div className="eyebrow">Not heated in the simulations</div>
+          {src.kind === 'none'
+            ? <p>{room.name} is set as heated but has no emitter, so the hour-by-hour runs give it no heat and it drifts below its setpoint. <a href={href('emitters')}>Add an emitter ›</a> or <button type="button" className="btn-link inline" onClick={() => setRoom({ heated: false })}>mark it unheated</button>.</p>
+            : <p>{room.name}'s heating zone “{src.zone!.name}” is switched off, so the hour-by-hour runs give it no heat. <a href={href('zones')}>Zones ›</a></p>}
+        </aside>
+      )}
+
       {tab === 'faces' && (
         <div className="plan-split">
           <div className="plan-main">
             <Card title="Faces unfolded around the floor" note="Each face is one element with its own build-up and boundary. Click a face to inspect it."
-              right={<button type="button" className="btn-link" onClick={() => setTab('details')}>Shape: {room.shape ? 'sloping' : 'flat ceiling'} · change ›</button>}>
+              right={<button type="button" className="btn-link" onClick={() => setTab('details')}>Ceiling: {room.ceiling === 'roof' ? 'open to the roof' : typeof room.ceiling === 'number' ? `collar at ${room.ceiling} m` : 'storey height'} · change ›</button>}>
               <div className="box-wrap">
                 <div className="box">
                   <span />{face('N')}<span />
@@ -105,7 +156,7 @@ export function RoomPage({ id, initialTab }: { id: string; initialTab?: string }
               </div>
               <div className="h-table-wrap">
                 <table className="h-table">
-                  <thead><tr><th>Face</th><th>To</th><th>Build-up</th><th className="n">m²</th><th className="n">U</th><th className="n">ΔT</th><th className="n">W</th></tr></thead>
+                  <thead><tr><th>Face</th><th>To</th><th>Build-up</th><th className="n">m²</th><th className="n">U<Why label="What is U?">{WHY.uValue}</Why></th><th className="n">ΔT<Why label="What is ΔT?">{WHY.dT}</Why></th><th className="n">W</th></tr></thead>
                   <tbody>
                     {rr.rows.map((row) => {
                       const face = rr.faces.find((f) => f.key === row.key);
@@ -143,7 +194,19 @@ export function RoomPage({ id, initialTab }: { id: string; initialTab?: string }
             </Card>
           </div>
           <div className="plan-side">
-            <Card title="Room air over the design day" note={`${fmt(res.Tout, 1)} °C outside; the heat pump follows the living and bedroom schedules.`}>
+            <Card title="This room in the test runs" note="The house's test questions, answered for this room.">
+              {CASES.map((c) => {
+                const a = runs[c.id] && roomAnswer(runs[c.id]!, sel);
+                return (
+                  <div key={c.id} className="stack-6" style={{ borderBottom: '1px solid var(--line)', paddingBottom: 8 }}>
+                    <b className="small">{c.q}</b>
+                    <span className={`small${a && !a.ok ? ' bad' : ''}`}>{a ? a.text : 'Running the year…'}</span>
+                    <a className="small" href={href('year', c.id, sel)}>See the run ›</a>
+                  </div>
+                );
+              })}
+            </Card>
+            <Card title="Room air over the design day" note={`${fmt(res.Tout, 1)} °C outside; the heating follows this room’s schedule.`}>
               {(() => {
                 const i = day.rooms.findIndex((r) => r.id === sel), T = i >= 0 ? day.T[i] : null;
                 if (!T) return <p className="small muted">Not simulated.</p>;
@@ -254,14 +317,11 @@ export function RoomPage({ id, initialTab }: { id: string; initialTab?: string }
                         <label className="small"><input type="checkbox" checked={outlineMode} onChange={(e) => setOutlineMode(e.target.checked)} /> Corner handles on the plan</label>
                         <button type="button" className="btn-link" onClick={() => upd((h) => {
                           const r = h.rooms.find((x) => x.id === sel)!;
-                          if (r.shape?.edges) r.shape = edgesToRectShape(r.shape);
-                          if (!r.shape) delete r.shape;
                           setOutline(r, null); h.openings.forEach((o) => { if (o.room === r.id) delete o.edge; });
                         })}>Back to a rectangle</button>
                       </span>
                     : <button type="button" className="btn-secondary" onClick={() => upd((h) => {
                         const r = h.rooms.find((x) => x.id === sel)!;
-                        if (r.shape && !r.shape.edges) r.shape = { ...r.shape, edges: rectShapeToEdges(r.shape) };
                         setOutline(r, roomPoly(r));
                         // A rectangle's walls N, E, S, W become walls 1–4: keep each window on its wall.
                         h.openings.forEach((o) => { if (o.room === r.id) o.edge = ['N', 'E', 'S', 'W'].indexOf(o.side); });
@@ -273,11 +333,10 @@ export function RoomPage({ id, initialTab }: { id: string; initialTab?: string }
                     {room.poly.map(([x, y], i) => (
                       <span key={i} className="vx-row small">
                         <b>{i + 1}</b>
-                        <input type="number" className="thk-input" step={0.05} value={x} aria-label={`Corner ${i + 1} x`} onChange={(e) => upd((h) => { const r = h.rooms.find((q) => q.id === sel)!; setOutline(r, r.poly!.map((p, j) => (j === i ? [Number(e.target.value) || 0, p[1]] : p))); })} />
-                        <input type="number" className="thk-input" step={0.05} value={y} aria-label={`Corner ${i + 1} y`} onChange={(e) => upd((h) => { const r = h.rooms.find((q) => q.id === sel)!; setOutline(r, r.poly!.map((p, j) => (j === i ? [p[0], Number(e.target.value) || 0] : p))); })} />
+                        <NumInput className="thk-input" step={0.05} value={x} aria-label={`Corner ${i + 1} x`} onChange={(e) => upd((h) => { const r = h.rooms.find((q) => q.id === sel)!; setOutline(r, r.poly!.map((p, j) => (j === i ? [Number(e.target.value) || 0, p[1]] : p))); })} />
+                        <NumInput className="thk-input" step={0.05} value={y} aria-label={`Corner ${i + 1} y`} onChange={(e) => upd((h) => { const r = h.rooms.find((q) => q.id === sel)!; setOutline(r, r.poly!.map((p, j) => (j === i ? [p[0], Number(e.target.value) || 0] : p))); })} />
                         <button type="button" className="btn-link inline" disabled={room.poly!.length <= 3} onClick={() => upd((h) => {
                           const r = h.rooms.find((q) => q.id === sel)!;
-                          if (r.shape?.edges) r.shape.edges.splice(i, 1);
                           setOutline(r, r.poly!.filter((_, j) => j !== i));
                           h.openings.forEach((o) => { if (o.room === r.id && o.edge != null && o.edge >= i) o.edge = Math.max(0, o.edge - 1); });
                         })}>remove</button>
@@ -286,10 +345,10 @@ export function RoomPage({ id, initialTab }: { id: string; initialTab?: string }
                   </div>
                 </>}
               </div>
-              {room.storey + room.span === house.storeys.length && (
-                <RoomShapeEditor room={room} setShape={(s) => upd((h) => { const r = h.rooms.find((x) => x.id === room.id); if (r) { if (s) r.shape = s; else delete r.shape; } })}
-                  outside={roomEdges(room).map((e) => rr.faces.some((f) => f.key.startsWith(`w:${room.id}:${e.id}:`) && f.to.k !== 'room'))} />
-              )}
+              <div className="stack-10">
+                <span className="eyebrow">Ceiling and roof</span>
+                <RoomCeilingFields house={house} room={room} res={res} upd={upd} />
+              </div>
         </Card>
       )}
 

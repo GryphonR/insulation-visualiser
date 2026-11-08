@@ -2,8 +2,12 @@
 // Plan and rules: docs/whole-house-plan.md.
 import { DAYS, MAT, MEAN } from './data';
 import { layerR } from './swap';
-import { bearingLabel, compass, edges, overlapArea3, overlapAreaPoly, polyArea, selfIntersects, sharedSpan } from './geom';
+import { junctionPsi } from './junction';
+import { bearingLabel, compass, edges, overlapArea3, overlapAreaPoly, pointInPoly, polyArea, selfIntersects, sharedSpan } from './geom';
 import type { Edge, Pt } from './geom';
+import { edgeTilt, footprint, roofAt, roofModel } from './house-roof';
+import type { RoofEdge, RoofModel } from './house-roof';
+export type { RoofEdge };
 export { bearingLabel };
 import { MCS_HDD, MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS, climateFromPostcode, designTemp, postcodeArea } from './climate-mcs';
 
@@ -14,7 +18,7 @@ export function climateOf(h: House): { station: number; region: number; lat: num
   const s = MCS_STATIONS[h.climate.station] ?? MCS_STATIONS[0];
   return { station: h.climate.station, region: h.climate.region, lat: s[2], lon: s[3], fromPostcode: false, km: 0 };
 }
-import { flowNeeded, loopLength, loopMax, roomOut, systemFlow } from './house-heating';
+import { flowNeeded, loopLength, loopMax, roomOut, scheduleSource, systemFlow } from './house-heating';
 import type { Heating } from './house-heating';
 import type { Bills } from './house-calibrate';
 
@@ -58,33 +62,79 @@ export const DOOR_LIBRARY: Array<Pick<Buildup, 'name' | 'u'>> = [
 export const SHADING: Record<string, [string, number]> = {
   none: ['Unshaded', 1], light: ['Light (nets, sparse trees)', 0.8], overhang: ['Overhang or reveal', 0.7], heavy: ['Heavy (buildings, dense trees)', 0.5],
 };
-export interface FloorEdge { edge: 'none' | 'horizontal' | 'vertical'; D: number; R: number; upstand: 'off' | 'none' | 'insulated' | 'custom'; psi: number }
+/** Foundation edge insulation (D: width out or depth down, m) and the floor-to-wall junction. The insulation is a material and
+ * thickness (mm) from the library; R, m²K/W, is only used by older projects saved before that. */
+export interface FloorEdge { edge: 'none' | 'horizontal' | 'vertical'; D: number; R: number; mat?: string; t?: number;
+  /** Which side of the foundation the edge insulation is on: BS EN ISO 13370 counts both the same for the floor U-value; the calculated junction Ψ uses it. */
+  side?: 'inside' | 'outside';
+  /** Junction 'calc': the upstand's material and thickness, mm (no material: no upstand), and the foundation's conductivity, W/mK. */
+  upMat?: string; upT?: number; footK?: number;
+  /** Junction 'calc' and the drawing: foundation depth below outside ground level, m (unset 0.75; 0: none, the wall stands on the ground). */
+  footD?: number; upstand: 'off' | 'none' | 'insulated' | 'custom' | 'calc'; psi: number }
+/** The edge insulation's thermal resistance, m²K/W: from its material and thickness, or the resistance an older project typed in. */
+export const edgeR = (e: FloorEdge) => (e.mat && MAT[e.mat] ? layerR(MAT[e.mat], e.t ?? MAT[e.mat].t) : e.R);
 /** Floor-to-wall junction Ψ, W/mK (SAP Table K1, E5 ground floor: default and approved detail). */
 export const UPSTAND_PSI = { none: 0.32, insulated: 0.16 } as const;
-export const upstandPsi = (e?: FloorEdge) => (!e || e.upstand === 'off' ? 0 : e.upstand === 'custom' ? Math.max(0, e.psi) : UPSTAND_PSI[e.upstand]);
+export const upstandPsi = (e?: FloorEdge) => (!e || e.upstand === 'off' ? 0 : e.upstand === 'custom' ? Math.max(0, e.psi) : e.upstand === 'calc' ? UPSTAND_PSI.none : UPSTAND_PSI[e.upstand]);
+/** Foundation conductivities offered for the calculated junction, W/mK. */
+export const FOOTINGS_K: Array<[number, string]> = [[1.13, 'Dense concrete or block'], [0.47, 'Lightweight aggregate block'], [0.15, 'Aircrete thermal block'], [0.77, 'Brick'], [2.3, 'Stone']];
+
+/**
+ * The floor-to-wall junction's Ψ, W/mK, where this outside wall meets this ground floor: the set or entered value, or for 'calc'
+ * a 2-D heat-flow model of the two build-ups at the junction (BS EN ISO 10211, BR 497), with the house's edge insulation,
+ * upstand and foundation. A suspended floor isn't modelled: it takes the SAP default.
+ */
+export function junctionPsiFor(h: House, Bp: number, wall: Buildup | undefined, floor: Buildup | undefined): number {
+  const e = h.floorEdge;
+  if (!e || e.upstand !== 'calc') return upstandPsi(e);
+  if (!wall || !floor || floor.floorType === 'suspended' || !wall.layers.length || !floor.layers.length) return UPSTAND_PSI.none;
+  const em = e.mat && MAT[e.mat] ? e.mat : undefined;
+  return junctionPsi({
+    wall: wall.layers, floor: floor.layers, Uwall: buildupU(wall), Ufloor: groundFloorU(floor, Bp, 0, e), b: Math.min(10, Math.max(0.5, Bp / 2)),
+    edge: e.edge !== 'none' && em ? { kind: e.edge, side: e.side ?? 'outside', D: e.D, mat: em, t: e.t ?? MAT[em].t } : undefined,
+    upstand: e.upMat && MAT[e.upMat] && (e.upT ?? 0) > 0 ? { mat: e.upMat, t: e.upT! } : undefined,
+    footK: e.footK, footDepth: e.footD,
+  });
+}
+
+/** The junction Ψ of the house's default outside wall and ground floor (what the floor-edge drawing shows). */
+export const junctionPsiOf = (h: House, Bp: number) =>
+  junctionPsiFor(h, Bp, h.buildups.find((b) => b.id === h.defaults.extWall), h.buildups.find((b) => b.id === h.defaults.groundFloor));
+
+/** One kind of floor-to-wall junction in the house: an outside wall build-up meeting a ground-floor build-up, its length and Ψ. */
+export interface Junction { wall: string; floor: string; len: number; psi: number }
 
 export interface Storey {
   name: string; h: number; zone: number;
   /** Depth below ground, m (lowest storey only): its outside walls are in the ground and its floor is a basement floor. */
   below?: number;
 }
-export type SlopeSide = 'full' | 'plate' | 'knee';
-export interface Dormer { w: number; front: number; window: number }
-/** One wall of a polygon room under the roof: how it meets the ceiling, its eaves, and an optional dormer. */
-export interface EdgeSlope { side: SlopeSide; eaves: 'cold' | 'warm'; dormer: Dormer | null }
-/** Sloping ceilings under the roof (board 1c). Sides are [west, east] for axis 'ew', [north, south] for 'ns'.
- *  A polygon room uses `edges` instead: one entry per wall, in outline order. */
-export interface RoomShape {
-  edges?: EdgeSlope[];
-  axis: 'ew' | 'ns';
-  /** full = full-height wall; plate = coombed (wall to the wall plate, then slope); knee = knee wall with an eaves void behind. */
-  sides: [SlopeSide, SlopeSide];
-  pitch: number; knee: number; ceiling: number;
-  /** Roof over the eaves void: cold (tiles only) or warm (insulated like the slope). */
-  eaves: ['cold' | 'warm', 'cold' | 'warm'];
-  dormers: [Dormer | null, Dormer | null];
-  /** Rooflight area in the first slope, m². */
-  rooflight: number;
+/** A dormer on a roof section: it stands on the eave nearest `at` (plan m), `w` wide, its front `front` m above the storey floor, with a window of `window` m². */
+export interface Dormer { id: string; at: Pt; w: number; front: number; window: number }
+/**
+ * Shape of a roof section: gable (slopes from the edges along the ridge, gable ends across it), hip (slopes from every edge),
+ * mono (one slope, from the edges facing `facing`), flat, or custom (each edge set by hand).
+ */
+export type RoofForm = 'gable' | 'hip' | 'mono' | 'flat' | 'custom';
+/** A roof over part (or all) of the house. Rooms under it take their ceilings, slopes, knee walls and dormers from it. */
+export interface RoofSection {
+  id: string; name: string;
+  /** Storey whose walls carry it; the top storey when unset. */
+  storey?: number;
+  /** Wall-plate height above that storey's floor, m (where the slopes start); that storey's height when unset. */
+  plate?: number;
+  /** Outline in plan metres, at the eaves; unset = follows the outside of the rooms whose top storey carries it. */
+  poly?: Pt[];
+  form: RoofForm; pitch: number;
+  /** Gable: ridge along the plan's x (left–right) or y (up–down); along the longer side when unset. */
+  ridge?: 'x' | 'y';
+  /** Mono: the plan side the slope faces. */
+  facing?: Side;
+  /** Custom: one per outline edge, in order. */
+  edges?: RoofEdge[];
+  /** Roof over eaves voids behind knee walls: cold (tiles only) or warm (insulated like the slopes). */
+  eaves: 'cold' | 'warm';
+  dormers: Dormer[];
 }
 export type RoomType = 'living' | 'dining' | 'kitchen' | 'bedroom' | 'bathroom' | 'wc' | 'hall' | 'landing' | 'utility' | 'study' | 'store' | 'other'
   | 'garage' | 'conservatory' | 'porch' | 'cellar';
@@ -97,8 +147,13 @@ export interface Room {
   heated: boolean; setpoint: number;
   /** Air changes per hour, unheated rooms only. */
   ach: number;
-  /** Sloping ceilings, rooms on the top storey only. */
-  shape?: RoomShape;
+  /**
+   * Under a roof: how high its ceiling goes on its top storey. Unset = flat at the storey height (the roof slopes it where it
+   * comes lower); a number = a flat collar at that height; 'roof' = open to the roof (vaulted).
+   */
+  ceiling?: number | 'roof';
+  /** Rooflight area in its biggest roof slope, m². */
+  rooflight?: number;
   /** Outline of a room of any shape, corners in metres; x, y, w, d then hold its bounding box. */
   poly?: Pt[];
 }
@@ -144,11 +199,10 @@ export interface House {
   neighbourT: number;
   /** True bearing of "up" on the plan, degrees clockwise from north (0 = plan drawn north-up). */
   north?: number;
-  /**
-   * The loft and the pitched roof over it. Ridge runs along the plan's x (left–right) or y (up–down) axis, by default the
-   * longer side of the loft's footprint; a monopitch faces one plan side. Gable is the default form.
-   */
-  loft: { present: boolean; ach: number; height: number; pitch: number; form?: 'gable' | 'hip' | 'mono'; ridge?: 'x' | 'y'; facing?: Side };
+  /** The roofs over the house. No roof: every top ceiling is a flat roof. */
+  roofs: RoofSection[];
+  /** The loft (the space between the roofs and the flat ceilings under them): its ventilation, ach. Its shape comes from the roofs. */
+  loft: { ach: number };
   /** Outside colour of every roof (light, mid or dark from COLOURS): how much sun the roof covering absorbs. Mid when unset. */
   roofColour?: string;
   /**
@@ -161,6 +215,8 @@ export interface House {
   suspended: { vent: number; voidH: number };
   climate: {
     station: number; pct: '99.6' | '99'; altitude: number; region: number; postcode: string;
+    /** Your own design outside temperature, °C, in place of the MCS figure; unset to use MCS. */
+    designT?: number;
     /** Pick the station and region from the postcode (MCS nearest-location rule); false to use the ones chosen by hand. */
     auto?: boolean;
     /** Weather for the year run: synthetic from monthly means, or the station's typical meteorological year (PVGIS). */
@@ -242,6 +298,8 @@ export interface Face {
   gEff?: number;
   /** Edge length along the plan, outside walls only. */
   len?: number;
+  /** Walls: which wall of the room (roomEdges index), on which storey, and the stretches of it this face covers, metres from its start. */
+  along?: { edge: number; storey: number; t: Array<[number, number]> };
 }
 
 const EPS = 1e-6;
@@ -266,9 +324,10 @@ export function groundFloorU(b: Buildup, Bp: number, z = 0, edge?: FloorEdge): n
   if (b.u != null) return b.u;
   const lam = 2, dt = 0.3 + lam * (0.17 + layersR(b) + 0.04) + z / 2;
   const U0 = dt < Bp ? (2 * lam / (Math.PI * Bp + dt)) * Math.log(Math.PI * Bp / dt + 1) : lam / (0.457 * Bp + dt);
-  if (z > 0 || !edge || edge.edge === 'none' || edge.D <= 0 || edge.R <= 0) return U0;
+  const R = edge ? edgeR(edge) : 0;
+  if (z > 0 || !edge || edge.edge === 'none' || edge.D <= 0 || R <= 0) return U0;
   // shortcut: R' is taken as the insulation's own R (the soil it displaces, d/λ, is ignored); fine for edge insulation under ~100 mm.
-  const d2 = edge.R * lam, D = edge.edge === 'vertical' ? 2 * edge.D : edge.D;
+  const d2 = R * lam, D = edge.edge === 'vertical' ? 2 * edge.D : edge.D;
   const dPsi = -(lam / Math.PI) * (Math.log(D / dt + 1) - Math.log(D / (dt + d2) + 1));
   return Math.max(0.01, U0 + (2 * dPsi) / Bp);
 }
@@ -290,142 +349,249 @@ export function basementWallU(b: Buildup, z: number, floor: Buildup): number {
   return ((2 * lam) / (Math.PI * z)) * (1 + (0.5 * dt) / (dt + z)) * Math.log(z / dw + 1);
 }
 
-/** Cross-section of a room with sloping ceilings. W runs across the slopes, L along the ridge. */
-export function shapeGeo(r: Room, sh: RoomShape) {
-  const ew = sh.axis === 'ew', W = ew ? r.w : r.d, L = ew ? r.d : r.w;
-  const slopeSides: [Side, Side] = ew ? ['W', 'E'] : ['N', 'S'], gables: [Side, Side] = ew ? ['N', 'S'] : ['W', 'E'];
-  const th = (Math.min(70, Math.max(10, sh.pitch)) * Math.PI) / 180, t = Math.tan(th), sn = Math.sin(th);
-  const sloped = sh.sides.map((s) => s !== 'full'), n = sloped.filter(Boolean).length;
-  const k = Math.max(0, sh.knee);
-  const hcMax = n ? k + ((W - 0.4) * t) / n : sh.ceiling;
-  const hc = n ? Math.max(k + 0.1, Math.min(sh.ceiling, hcMax)) : sh.ceiling;
-  const run = sloped.map((s) => (s ? (hc - k) / t : 0));
-  const fw = Math.max(0, W - run[0] - run[1]);
-  const A = W * hc - sloped.reduce((a, s, i) => a + (s ? 0.5 * run[i] * (hc - k) : 0), 0);
-  const dormers = sh.dormers.map((d, i) => dormerGeo(sloped[i] ? d : null, k, hc, t, sn, L));
-  const slopeArea = sloped.map((s, i) => (s ? ((hc - k) / sn) * L - (dormers[i]?.slopeCut ?? 0) : 0));
-  const V = A * L + dormers.reduce((a, d) => a + (d?.vol ?? 0), 0);
-  return { W, L, k, hc, hcMax, t, sn, run, fw, A, V, slopeSides, gables, sloped, dormers, slopeArea };
-}
+// --- Roofs ---------------------------------------------------------------------------------------------
+// The house has roof sections; each room under one takes its ceiling, slopes, knee walls and dormers from it.
 
-const FLAT_EDGE: EdgeSlope = { side: 'full', eaves: 'cold', dormer: null };
-/** One wall setting per outline edge: pad new walls as full height, drop extra ones. */
-export const fitEdges = (e: EdgeSlope[], n: number): EdgeSlope[] => Array.from({ length: n }, (_, i) => e[i] ?? { ...FLAT_EDGE });
+/** Thickness of the default outside wall, m: how far the eaves of a roof that follows the rooms sit outside them. */
+export const extWallThickness = (h: House) =>
+  Math.min(0.7, Math.max(0.1, (h.buildups.find((b) => b.id === h.defaults.extWall)?.layers ?? []).reduce((t, [, mm]) => t + mm, 0) / 1000));
+/** The storey whose walls carry a section (the top storey when unset), and its wall-plate height above that storey's floor. */
+export const roofStorey = (h: Pick<House, 'storeys'>, s: RoofSection) => Math.min(h.storeys.length - 1, Math.max(0, s.storey ?? h.storeys.length - 1));
+export const roofPlate = (h: Pick<House, 'storeys'>, s: RoofSection) => s.plate ?? h.storeys[roofStorey(h, s)]?.h ?? 2.4;
 
-type DormerGeo = { hd: number; xr: number; dw: number; front: number; cheeks: number; roof: number; slopeCut: number; vol: number; window: number };
-function dormerGeo(d: Dormer | null, k: number, hc: number, t: number, sn: number, wallLen: number): DormerGeo | null {
-  if (!d) return null;
-  const hd = Math.max(k + 0.3, Math.min(d.front, hc)), xr = (hd - k) / t, dw = Math.max(0.5, Math.min(d.w, wallLen - 0.2));
-  return { hd, xr, dw, front: dw * (hd - k), cheeks: xr * (hd - k), roof: xr * dw, slopeCut: ((hd - k) / sn) * dw, vol: 0.5 * xr * (hd - k) * dw, window: Math.min(d.window, dw * (hd - k) * 0.9) };
-}
-
-/** What a sloping-ceiling room means for its faces, the same for rectangles and polygons. */
-export interface ShapeOut {
-  k: number; hc: number; sn: number; V: number; flatA: number;
-  /** Height of the wall on this edge in the shaped storey. */
-  wallH: (e: { side: Side; idx: number }) => number;
-  /** The slope a knee wall on this edge sits under, or −1 if the edge is not a knee wall. */
-  kneeOf: (e: { side: Side; idx: number }) => number;
-  /** `side` is the plan side the slope rises from and `az` its plan bearing (north-up); add the house's north for the true bearing. */
-  slopes: Array<{ i: number; side: Side; az: number; area: number; dormer: DormerGeo | null; kind: SlopeSide; eaves: 'cold' | 'warm' }>;
-}
-
-/** A rectangle's two-sided shape as one setting per wall, in outline order N, E, S, W (for "Make any shape"). */
-export function rectShapeToEdges(sh: RoomShape): EdgeSlope[] {
-  const at = sh.axis === 'ew' ? [3, 1] : [0, 2];
-  const out = Array.from({ length: 4 }, () => ({ ...FLAT_EDGE }));
-  at.forEach((idx, i) => { out[idx] = { side: sh.sides[i], eaves: sh.eaves[i], dormer: sh.dormers[i] ? { ...sh.dormers[i]! } : null }; });
-  return out;
-}
-
-/** Back to a rectangle: keep the slopes if they sit on one opposite pair of walls (N/S or E/W), else none. */
-export function edgesToRectShape(sh: RoomShape): RoomShape | undefined {
-  const e = fitEdges(sh.edges ?? [], 4);
-  const ew = e[0].side === 'full' && e[2].side === 'full', ns = e[1].side === 'full' && e[3].side === 'full';
-  const pair = ew ? [3, 1] : ns ? [0, 2] : null;
-  if (!pair) return undefined;
-  const { edges: _edges, ...rest } = sh;
-  void _edges;
-  return { ...rest, axis: ew ? 'ew' : 'ns', sides: [e[pair[0]].side, e[pair[1]].side], eaves: [e[pair[0]].eaves, e[pair[1]].eaves], dormers: [e[pair[0]].dormer, e[pair[1]].dormer] };
-}
-
-const shapeCache = new Map<string, ShapeOut>();
-export function shapeOf(r: Room, sh: RoomShape): ShapeOut {
-  if (!(r.poly && r.poly.length >= 3 && sh.edges)) {
-    const g = shapeGeo(r, sh);
-    return {
-      k: g.k, hc: g.hc, sn: g.sn, V: g.V, flatA: g.fw * g.L,
-      wallH: (e) => { const i = g.slopeSides.indexOf(e.side); return i >= 0 ? (sh.sides[i] === 'full' ? g.hc : g.k) : g.A / g.W; },
-      kneeOf: (e) => { const i = g.slopeSides.indexOf(e.side); return i >= 0 && sh.sides[i] === 'knee' ? i : -1; },
-      slopes: g.slopeSides.flatMap((side, i) => (g.sloped[i] ? [{ i, side, az: SIDES.indexOf(side) * 90, area: g.slopeArea[i], dormer: g.dormers[i], kind: sh.sides[i], eaves: sh.eaves[i] }] : [])),
-    };
+const footCache = new Map<string, Pt[][]>();
+/** A section's outlines: the drawn one, or the outside of the rooms whose top storey carries it (one outline per separate block). */
+export function roofOutlines(h: House, s: RoofSection): Pt[][] {
+  if (s.poly && s.poly.length >= 3) return [s.poly];
+  const st = roofStorey(h, s), polys = h.rooms.filter((r) => topStorey(r) === st).map(roomPoly), grow = extWallThickness(h);
+  const key = JSON.stringify([polys, grow]);
+  let out = footCache.get(key);
+  if (!out) {
+    out = footprint(polys, grow);
+    if (footCache.size > 100) footCache.clear();
+    footCache.set(key, out);
   }
-  const key = JSON.stringify([r.poly, sh]);
-  const hit = shapeCache.get(key);
-  if (hit) return hit;
-  const out = polyShape(r.poly, sh);
-  if (shapeCache.size > 200) shapeCache.clear();
-  shapeCache.set(key, out);
   return out;
+}
+
+/** How each edge of an outline meets the roof: an eave with a slope rising from it, or a vertical gable. */
+export function roofEdgesOf(s: RoofSection, poly: Pt[]): RoofEdge[] {
+  const es = edges(poly), p = s.pitch;
+  if (s.form === 'custom') return es.map((_, i) => s.edges?.[i] ?? { kind: 'eave', pitch: p });
+  if (s.form === 'flat') return es.map(() => ({ kind: 'eave', pitch: 0 }));
+  if (s.form === 'hip') return es.map(() => ({ kind: 'eave', pitch: p }));
+  if (s.form === 'mono') {
+    const want = SIDES.indexOf(s.facing ?? 'S') * 90, off = (az: number) => Math.abs(((az - want + 540) % 360) - 180);
+    const best = Math.min(...es.map((e) => off(e.az)));
+    return es.map((e) => ({ kind: off(e.az) <= Math.max(45, best) + 1e-6 ? 'eave' : 'gable', pitch: p }));
+  }
+  // Gable: the edges running along the ridge carry the slopes; the ones across it are gable ends.
+  const xs = poly.map((q) => q[0]), ys = poly.map((q) => q[1]);
+  const ridge = s.ridge ?? (Math.max(...xs) - Math.min(...xs) >= Math.max(...ys) - Math.min(...ys) ? 'x' : 'y');
+  return es.map((e) => ({ kind: (ridge === 'x' ? Math.abs(e.d[0]) >= Math.abs(e.d[1]) - 1e-9 : Math.abs(e.d[1]) > Math.abs(e.d[0]) + 1e-9) ? 'eave' : 'gable', pitch: p }));
+}
+
+/** One outline of one section, ready to give heights. `key` is `section.n`. */
+export interface RoofPart { sec: RoofSection; key: string; storey: number; plate: number; poly: Pt[]; model: RoofModel }
+const partCache = new Map<string, RoofPart[]>();
+let partKey = '';
+/** Every roof outline in the house with its planes. */
+export function roofParts(h: House): RoofPart[] {
+  const key = JSON.stringify([h.roofs ?? [], h.storeys.map((s) => s.h), h.rooms.map((r) => [r.storey, r.span, roomPoly(r)]), extWallThickness(h)]);
+  partKey = key;
+  const hit = partCache.get(key);
+  if (hit) return hit;
+  const out = (h.roofs ?? []).flatMap((sec) => {
+    const storey = roofStorey(h, sec), plate = roofPlate(h, sec);
+    return roofOutlines(h, sec).filter((p) => p.length >= 3 && !selfIntersects(p)).map((poly, n): RoofPart => ({ sec, key: `${sec.id}.${n}`, storey, plate, poly, model: roofModel(poly, roofEdgesOf(sec, poly), plate) }));
+  });
+  if (partCache.size > 50) partCache.clear();
+  partCache.set(key, out);
+  return out;
+}
+
+/** The roof over a plan point among some sections' outlines: the highest one there, its height above the storey floor and its plane. */
+export function roofOver(parts: RoofPart[], p: Pt): { z: number; i: number; part: RoofPart } | null {
+  let best: { z: number; i: number; part: RoofPart } | null = null;
+  for (const part of parts) {
+    if (!pointInPoly(p, part.poly)) continue;
+    const r = roofAt(part.model, p);
+    if (!best || r.z > best.z) best = { ...r, part };
+  }
+  return best;
+}
+
+/** The highest a room's ceiling goes on its top storey: the storey height, a collar height of its own, or the roof itself. */
+export const ceilingCap = (h: House, r: Room) => (r.ceiling === 'roof' ? Infinity : typeof r.ceiling === 'number' && r.ceiling > 0 ? r.ceiling : h.storeys[topStorey(r)]?.h ?? 2.4);
+
+export interface RoomSlope { part: string; edge: number; planAz: number; tilt: number; area: number }
+export interface RoomDormer { d: Dormer; part: string; edge: number; planAz: number; front: number; cheeks: number; roof: number; window: number; vol: number }
+/** What a room under a roof takes from it, on its top storey. Areas are plan-true (they add up to the room's uncovered ceiling). */
+export interface RoomRoof {
+  /** Volume of the top storey's part of the room, m³ (dormers included). */
+  V: number;
+  /** Flat ceiling under a loft, and flat roof (nothing over it or the roof sits right on the ceiling), m² of plan. */
+  flatLoft: number; flatOut: number;
+  /** Plan area of the ceiling not under a room above, as sampled (flat parts plus slopes). */
+  unc: number;
+  slopes: RoomSlope[];
+  /** Per wall in outline order: share of it at full height, and the mean height of the rest weighted by its share. */
+  walls: Array<{ full: number; low: number }>;
+  /** Per wall: an eaves void behind it (the roof carries on past it), with the slope over the void and the section's eaves. */
+  knee: Array<{ tilt: number; eaves: 'cold' | 'warm' } | null>;
+  dormers: RoomDormer[];
+}
+
+const roomRoofCache = new Map<string, RoomRoof | null>();
+/** A room's share of the roof over its top storey, or null when no roof is over it (its ceiling is then flat). */
+export function roomRoof(h: House, r: Room): RoomRoof | null {
+  const top = topStorey(r), last = h.storeys.length - 1, all = roofParts(h), parts = all.filter((p) => p.storey === top);
+  if (!parts.length) return null;
+  const poly = roomPoly(r), st = h.storeys[top];
+  const above = top < last ? h.rooms.filter((o) => o.id !== r.id && onStorey(o, top + 1)).map(roomPoly) : [];
+  const neighbours = h.rooms.filter((o) => o.id !== r.id && onStorey(o, top)).map(roomPoly);
+  const key = JSON.stringify([partKey, r.id, poly, r.storey, r.span, r.ceiling, above, neighbours]);
+  if (roomRoofCache.has(key)) return roomRoofCache.get(key)!;
+  const out = computeRoomRoof(h, r, parts, poly, st, above, neighbours);
+  if (roomRoofCache.size > 400) roomRoofCache.clear();
+  roomRoofCache.set(key, out);
+  return out;
+}
+
+function computeRoomRoof(h: House, r: Room, parts: RoofPart[], poly: Pt[], st: Storey, above: Pt[][], neighbours: Pt[][]): RoomRoof | null {
+  const cap = ceilingCap(h, r), flatH = Number.isFinite(cap) ? cap : st.h;
+  const A = polyArea(poly), step = Math.max(0.03, Math.min(0.15, Math.sqrt(A) / 50));
+  const xs = poly.map((q) => q[0]), ys = poly.map((q) => q[1]);
+  let n = 0, any = false, vol = 0, loft = 0, out = 0;
+  const sl = new Map<string, { part: RoofPart; edge: number; plan: number }>();
+  for (let x = Math.min(...xs) + step * 0.513; x < Math.max(...xs); x += step) {
+    for (let y = Math.min(...ys) + step * 0.491; y < Math.max(...ys); y += step) {
+      const p: Pt = [x, y];
+      if (!pointInPoly(p, poly)) continue;
+      n++;
+      if (above.some((a) => pointInPoly(p, a))) { vol += st.h; continue; }
+      const R = roofOver(parts, p);
+      if (!R) { vol += flatH; out++; continue; }
+      any = true;
+      if (R.z - cap > 0.05) { vol += cap; loft++; continue; }
+      // The roof is the ceiling here (or sits on a flat ceiling): a slope of its plane, or flat at the plate where no eave governs.
+      vol += Math.max(0, Math.min(cap, R.z));
+      if (R.i < 0) { out++; continue; }
+      const k = `${R.part.key}:${R.i}`, s = sl.get(k);
+      if (s) s.plan++; else sl.set(k, { part: R.part, edge: R.i, plan: 1 });
+    }
+  }
+  if (!any || !n) return null;
+  const cell = A / n;
+  const E = edges(poly), wallT = extWallThickness(h);
+  const walls = E.map((e) => {
+    let full = 0, low = 0;
+    for (let j = 0; j < 30; j++) {
+      const u = ((j + 0.5) / 30) * e.len, p: Pt = [e.a[0] + e.d[0] * u - e.n[0] * 0.01, e.a[1] + e.d[1] * u - e.n[1] * 0.01];
+      const R = above.some((a) => pointInPoly(p, a)) ? null : roofOver(parts, p);
+      if (!R || R.z >= cap) full++; else low += Math.max(0, R.z);
+    }
+    return { full: full / 30, low: low / 30 };
+  });
+  // A low wall with roof still over the far side of it (and no room there) has an eaves void behind it.
+  const knee = E.map((e, i) => {
+    if (walls[i].full > 0.5) return null;
+    let hits = 0, tilt = 0, eaves: 'cold' | 'warm' = 'cold';
+    for (let j = 0; j < 5; j++) {
+      const u = ((j + 0.5) / 5) * e.len, p: Pt = [e.a[0] + e.d[0] * u + e.n[0] * (wallT + 0.15), e.a[1] + e.d[1] * u + e.n[1] * (wallT + 0.15)];
+      if (neighbours.some((q) => pointInPoly(p, q))) continue;
+      const R = roofOver(parts, p);
+      if (R && R.z > 0.05 && R.i >= 0) { hits++; tilt = edgeTilt(R.part.model, R.i); eaves = R.part.sec.eaves; }
+    }
+    return hits >= 3 ? { tilt, eaves } : null;
+  });
+  const slopes: RoomSlope[] = [...sl.values()].map(({ part, edge, plan }) => {
+    const tilt = edgeTilt(part.model, edge);
+    return { part: part.key, edge, planAz: edges(part.poly)[edge].az, tilt, area: (plan * cell) / Math.cos((tilt * Math.PI) / 180) };
+  });
+  // Dormers stand on the nearest eave of their section; this room takes those whose inside falls in it.
+  const dormers: RoomDormer[] = [];
+  const seen = new Set<string>();
+  for (const part of parts) for (const d of part.sec.dormers ?? []) {
+    if (seen.has(d.id)) continue;
+    const pl = placeDormer(part, d);
+    if (!pl) continue;
+    seen.add(d.id);
+    const { i: edge, u, e, th, rise, xr, dw } = pl, best = { i: edge, u };
+    // The room under the dormer: the first one met walking in from its front (past a knee wall's eaves void if need be).
+    const inside = Array.from({ length: 20 }, (_, j) => wallT + 0.1 + ((xr + 0.3) * j) / 19).some((dd) => pointInPoly([e.a[0] + e.d[0] * best.u - e.n[0] * dd, e.a[1] + e.d[1] * best.u - e.n[1] * dd], poly));
+    if (!inside) continue;
+    const front = dw * rise;
+    dormers.push({ d, part: part.key, edge: best.i, planAz: e.az, front, cheeks: xr * rise, roof: xr * dw, window: Math.min(d.window, front * 0.9), vol: 0.5 * xr * rise * dw });
+    const s = slopes.find((x) => x.part === part.key && x.edge === best.i);
+    if (s) s.area = Math.max(0, s.area - (rise / Math.sin(th)) * dw);
+  }
+  const slopeCells = [...sl.values()].reduce((a, x) => a + x.plan, 0);
+  return { V: vol * cell + dormers.reduce((a, x) => a + x.vol, 0), flatLoft: loft * cell, flatOut: out * cell, unc: (loft + out + slopeCells) * cell, slopes, walls, knee, dormers };
 }
 
 /**
- * Sloping ceiling over a room of any shape: from every sloped wall the ceiling rises at the roof pitch from the
- * knee (or wall plate) height, the lowest of those slopes wins at each point (hips form at corners), capped at the
- * flat ceiling. Areas, volume and gable heights come from sampling the room on a fine grid.
+ * Where a dormer stands: on the eave of this outline nearest its `at` point (within 1.5 m), `u` m along it, with its rise
+ * above the plate, depth into the roof and width. Null when no eave is near or the slope is too shallow for one.
  */
-function polyShape(poly: Pt[], sh: RoomShape): ShapeOut {
-  const es = edges(poly), ed = fitEdges(sh.edges ?? [], es.length);
-  const th = (Math.min(70, Math.max(10, sh.pitch)) * Math.PI) / 180, t = Math.tan(th), sn = Math.sin(th);
-  const k = Math.max(0, sh.knee), hc = Math.max(k + 0.1, sh.ceiling);
-  const sloped = ed.map((x) => x.side !== 'full');
-  const segDist = (p: Pt, e: Edge) => {
-    const vx = p[0] - e.a[0], vy = p[1] - e.a[1], u = Math.max(0, Math.min(e.len, vx * e.d[0] + vy * e.d[1]));
-    return Math.hypot(vx - u * e.d[0], vy - u * e.d[1]);
-  };
-  const height = (p: Pt) => { let h = hc; es.forEach((e, i) => { if (sloped[i]) h = Math.min(h, k + t * segDist(p, e)); }); return h; };
-  const inside = (p: Pt) => {
-    let c = false;
-    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-      const a = poly[i], b = poly[j];
-      if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < ((b[0] - a[0]) * (p[1] - a[1])) / (b[1] - a[1]) + a[0]) c = !c;
-    }
-    return c;
-  };
-  const A = polyArea(poly), step = Math.max(0.02, Math.min(0.1, Math.sqrt(A) / 160)), cell = step * step;
-  const xs = poly.map((q) => q[0]), ys = poly.map((q) => q[1]);
-  let V = 0, flat = 0;
-  const slopeH = es.map(() => 0);
-  for (let x = Math.min(...xs) + step / 2; x < Math.max(...xs); x += step) {
-    for (let y = Math.min(...ys) + step / 2; y < Math.max(...ys); y += step) {
-      const p: Pt = [x, y];
-      if (!inside(p)) continue;
-      let h = hc, gov = -1;
-      es.forEach((e, i) => { if (!sloped[i]) return; const z = k + t * segDist(p, e); if (z < h) { h = z; gov = i; } });
-      V += h * cell;
-      if (gov < 0) flat += cell; else slopeH[gov] += cell;
+export function placeDormer(part: RoofPart, d: Dormer): { i: number; u: number; e: Edge; th: number; rise: number; xr: number; dw: number; hd: number } | null {
+  const pe = edges(part.poly);
+  let best = { i: -1, dist: 1.5, u: 0 };
+  part.model.planes.forEach(({ i }) => {
+    const e = pe[i], u = Math.max(0, Math.min(e.len, (d.at[0] - e.a[0]) * e.d[0] + (d.at[1] - e.a[1]) * e.d[1]));
+    const dist = Math.hypot(d.at[0] - e.a[0] - e.d[0] * u, d.at[1] - e.a[1] - e.d[1] * u);
+    if (dist < best.dist) best = { i, dist, u };
+  });
+  if (best.i < 0) return null;
+  const e = pe[best.i], th = (edgeTilt(part.model, best.i) * Math.PI) / 180, t = Math.tan(th);
+  if (t < 0.1) return null;
+  const hd = Math.max(part.plate + 0.3, d.front), rise = hd - part.plate;
+  return { i: best.i, u: best.u, e, th, rise, xr: rise / t, dw: Math.max(0.5, Math.min(d.w, e.len - 0.2)), hd };
+}
+
+/**
+ * The loft: the space between the roof and the flat ceilings under it, and the roof over that space as slopes
+ * (true bearing, tilt, m²). Eaves voids behind knee walls are left to the knee walls.
+ */
+const loftCache = new Map<string, { V: number; slopes: LoftSlope[] }>();
+export function loftGeo(h: House): { V: number; slopes: LoftSlope[] } {
+  const parts = roofParts(h), key = JSON.stringify([partKey, h.north ?? 0, h.rooms.map((r) => r.ceiling ?? null)]);
+  const hit = loftCache.get(key);
+  if (hit) return hit;
+  if (loftCache.size > 50) loftCache.clear();
+  const out = computeLoft(h, parts);
+  loftCache.set(key, out);
+  return out;
+}
+
+function computeLoft(h: House, parts: RoofPart[]): { V: number; slopes: LoftSlope[] } {
+  const last = h.storeys.length - 1;
+  let V = 0;
+  const by = new Map<string, LoftSlope>();
+  for (const part of parts) {
+    const S = part.storey, st = h.storeys[S], same = parts.filter((p) => p.storey === S);
+    const rooms = h.rooms.filter((r) => onStorey(r, S)), up = S < last ? h.rooms.filter((r) => onStorey(r, S + 1)).map(roomPoly) : [];
+    const A = polyArea(part.poly), step = Math.max(0.05, Math.min(0.2, Math.sqrt(A) / 80)), cell = step * step;
+    const xs = part.poly.map((q) => q[0]), ys = part.poly.map((q) => q[1]);
+    for (let x = Math.min(...xs) + step * 0.513; x < Math.max(...xs); x += step) {
+      for (let y = Math.min(...ys) + step * 0.491; y < Math.max(...ys); y += step) {
+        const p: Pt = [x, y];
+        if (!pointInPoly(p, part.poly)) continue;
+        const R = roofOver(same, p);
+        if (!R || R.part !== part || R.i < 0) continue;
+        const r = rooms.find((q) => pointInPoly(p, roomPoly(q)));
+        if (r && topStorey(r) > S) continue;
+        if (up.some((q) => pointInPoly(p, q))) continue;
+        const c = r ? ceilingCap(h, r) : st.h;
+        if (!Number.isFinite(c) || R.z - c <= 0.05) continue;
+        V += (R.z - c) * cell;
+        const k = `${part.key}:${R.i}`, tilt = edgeTilt(part.model, R.i), az = trueBearing(h, edges(part.poly)[R.i].az);
+        const s = by.get(k) ?? by.set(k, { az, tilt, area: 0 }).get(k)!;
+        s.area += cell / Math.cos((tilt * Math.PI) / 180);
+      }
     }
   }
-  // Mean height along each full-height wall (a gable end where slopes meet it).
-  const edgeH = es.map((e, i) => {
-    if (sloped[i]) return k;
-    let s = 0;
-    for (let j = 0; j < 40; j++) { const u = ((j + 0.5) / 40) * e.len; s += height([e.a[0] + e.d[0] * u - e.n[0] * 0.01, e.a[1] + e.d[1] * u - e.n[1] * 0.01]); }
-    return s / 40;
-  });
-  // Sampling error: scale so the plan areas add up exactly.
-  const sum = flat + slopeH.reduce((a, b) => a + b, 0), fix = sum > 0 ? A / sum : 1;
-  const slopes = es.flatMap((e, i) => {
-    if (!sloped[i]) return [];
-    const dormer = dormerGeo(ed[i].dormer, k, hc, t, sn, e.len);
-    return [{ i, side: compass(e.az), az: e.az, area: Math.max(0, (slopeH[i] * fix) / Math.cos(th) - (dormer?.slopeCut ?? 0)), dormer, kind: ed[i].side, eaves: ed[i].eaves }];
-  });
-  return {
-    k, hc, sn, V: V * fix + slopes.reduce((a, x) => a + (x.dormer?.vol ?? 0), 0), flatA: flat * fix,
-    wallH: (e) => edgeH[e.idx] ?? hc,
-    kneeOf: (e) => (ed[e.idx]?.side === 'knee' ? e.idx : -1),
-    slopes,
-  };
+  return { V, slopes: [...by.values()].filter((s) => s.area > EPS) };
 }
 
 /** [a, b] with the cut ranges removed. */
@@ -445,7 +611,6 @@ export function setOutline(r: Room, poly: Pt[] | null): void {
   const xs = poly.map((p) => p[0]), ys = poly.map((p) => p[1]);
   r.poly = poly.map(([x, y]) => [+x.toFixed(3), +y.toFixed(3)] as Pt);
   r.x = Math.min(...xs); r.y = Math.min(...ys); r.w = +(Math.max(...xs) - r.x).toFixed(3); r.d = +(Math.max(...ys) - r.y).toFixed(3);
-  if (r.shape?.edges) r.shape.edges = fitEdges(r.shape.edges, r.poly.length);
 }
 
 /** A room's outline: its polygon if it has one, else its rectangle (corners clockwise on the plan). */
@@ -472,14 +637,11 @@ export function roomHeight(h: House, r: Room): number {
   return t;
 }
 
-/** A room's shape applies only on the top storey of the house. */
-export const roomShape = (h: House, r: Room) => (r.shape && topStorey(r) === h.storeys.length - 1 && (!r.poly || r.shape.edges) ? r.shape : undefined);
-
 export function roomVolume(h: House, r: Room): number {
-  const sh = roomShape(h, r);
-  if (!sh) return roomArea(r) * roomHeight(h, r);
+  const rr = roomRoof(h, r);
+  if (!rr) return roomArea(r) * roomHeight(h, r);
   const below = roomHeight(h, r) - (h.storeys[topStorey(r)]?.h ?? 0);
-  return shapeOf(r, sh).V + roomArea(r) * below;
+  return rr.V + roomArea(r) * below;
 }
 
 /**
@@ -491,7 +653,8 @@ export const maxWallGap = (h: House) =>
 
 export const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
-interface Ctx { Bp: number }
+/** Bp: the ground floor's B′, m. junctions: count the floor-to-wall junctions, and note each kind here (unset on a preliminary pass). */
+interface Ctx { Bp: number; junctions?: Map<string, Junction> }
 
 /** Every face of a room, with its build-up and U-value. */
 export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
@@ -500,12 +663,13 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
     return h.buildups.find((b) => b.id === id) ?? h.buildups.find((b) => b.id === h.defaults[def]) ?? h.buildups[0];
   };
   const last = h.storeys.length - 1, faces: Face[] = [], top = topStorey(r);
-  const sh = roomShape(h, r), g = sh ? shapeOf(r, sh) : null;
-  // Wall height on one edge of one storey: sloped rooms have low walls under the slopes and gable ends of their mean height.
+  const g = roomRoof(h, r), cap = ceilingCap(h, r);
+  // Wall height on one edge of one storey: under a roof, walls are as high as the roof where it comes lower than the ceiling.
   const wallH = (e: { side: Side; idx: number }, s: number, external: boolean) => {
-    const st = h.storeys[s];
-    if (g && s === top) return g.wallH(e);
-    return st.h + (external && s < last ? st.zone : 0);
+    const st = h.storeys[s], full = st.h + (external && s < last ? st.zone : 0);
+    if (!g || s !== top) return full;
+    const w = g.walls[e.idx];
+    return w ? w.full * (Number.isFinite(cap) && r.ceiling != null ? cap : full) + w.low : full;
   };
   const ground = h.storeys[0]?.below ?? 0;
   const floorB = B(`gf:${r.id}`, 'groundFloor');
@@ -515,7 +679,6 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
   const doorsDone = new Set<string>();
   const wallGap = maxWallGap(h);
   const trueAz = (az: number) => trueBearing(h, az);
-  const pitch = sh ? Math.min(70, Math.max(10, sh.pitch)) : 0;
   for (const e of myEdges) {
     // e.side is the plan side (wall identity, saved choices); `side` and `az` are where the wall really faces.
     const az = trueAz(e.az), side = compass(az), ext: Face[] = [];
@@ -536,30 +699,30 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
             ? h.openings.filter((d) => d.to && ((d.room === r.id && d.to === o.id) || (d.room === o.id && d.to === r.id))) : [];
           doorsDone.add(key);
           const doorA = Math.min(doors.reduce((t, d) => t + openingArea(d, e.len, rh), 0), (span[1] - span[0]) * wallH(e, s, false));
-          faces.push({ key, label: `${named} wall`, kind: 'wall', side, az, to: { k: 'room', id: o.id }, area: (span[1] - span[0]) * wallH(e, s, false) - doorA, buildup: b, U: buildupU(b, FILMS.intWall) });
+          faces.push({ key, label: `${named} wall`, kind: 'wall', side, az, to: { k: 'room', id: o.id }, area: (span[1] - span[0]) * wallH(e, s, false) - doorA, buildup: b, U: buildupU(b, FILMS.intWall), along: { edge: e.idx, storey: s, t: [span] } });
           for (const d of doors) {
             const db = h.buildups.find((x) => x.id === d.buildup) ?? h.buildups[0];
             faces.push({ key: `op:${d.id}`, label: d.name, kind: 'door', side, az, to: { k: 'room', id: o.id }, area: openingArea(d, e.len, rh), buildup: db, U: buildupU(db, FILMS.intWall) });
           }
         }
       }
-      const len = subtract(0, e.len, cuts).reduce((t, [a, b]) => t + b - a, 0);
+      const rest = subtract(0, e.len, cuts), len = rest.reduce((t, [a, b]) => t + b - a, 0);
       if (len <= EPS) continue;
       const key = `w:${r.id}:${e.id}:${s}`, party = h.faceBoundary[key] === 'party';
-      const si = g && s === top ? g.kneeOf(e) : -1, knee = si >= 0;
+      const kn = g && s === top ? g.knee[e.idx] : null, knee = !!kn;
       const b = B(key, knee ? 'knee' : 'extWall'), area = len * wallH(e, s, true);
       const what = knee ? 'knee wall (via eaves void)' : 'wall';
       const label = `${isPoly ? `${named}${knee ? `, ${what}` : ''}` : `${named} ${what}`}${r.span > 1 ? ` (${st.name.toLowerCase()})` : ''}`;
       let U = buildupU(b, FILMS.extWall), to: To = party ? { k: 'party' } : { k: 'out' };
-      if (knee && !party) {
+      if (kn && !party) {
         // Knee wall and the roof over the eaves void in series: per m² of knee wall the roof is 1/sin(pitch) m².
-        const eavesB = B(`ev:${r.id}:${si}`, g!.slopes.find((x) => x.i === si)?.eaves === 'warm' ? 'slope' : 'loftRoof');
-        U = 1 / (1 / buildupU(b, FILMS.intWall) + g!.sn / buildupU(eavesB, FILMS.roof));
+        const eavesB = B(`ev:${r.id}:${e.id}`, kn.eaves === 'warm' ? 'slope' : 'loftRoof');
+        U = 1 / (1 / buildupU(b, FILMS.intWall) + Math.sin((Math.max(10, kn.tilt) * Math.PI) / 180) / buildupU(eavesB, FILMS.roof));
       } else if (s === 0 && ground > 0 && !party) {
         to = { k: 'ground' };
         U = basementWallU(b, Math.min(ground, st.h), floorB);
       }
-      ext.push({ key, label, kind: 'wall', side, az, to, area, buildup: b, U, canParty: true, len });
+      ext.push({ key, label, kind: 'wall', side, az, to, area, buildup: b, U, canParty: true, len, along: { edge: e.idx, storey: s, t: rest } });
     }
     // Openings come out of this wall's outside area, shared by area. On a polygon room an opening sits on its
     // chosen wall, or the first wall facing its compass side.
@@ -594,9 +757,20 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
   };
   if (r.storey === 0) {
     const b = floorB;
-    // The floor-to-wall junction of a solid slab, spread over the floor: Ψ × this room's outside wall length on the ground storey.
-    const edgeLen = faces.filter((f) => f.kind === 'wall' && f.to.k === 'out' && f.key.endsWith(':0') && f.key.startsWith('w:')).reduce((t, f) => t + (f.len ?? 0), 0);
-    const junction = A > EPS ? (upstandPsi(h.floorEdge) * edgeLen) / A : 0;
+    // The floor-to-wall junctions of a solid slab, spread over the floor: each outside wall on the ground storey, Ψ for its own
+    // build-up meeting this room's floor, × its length.
+    let lossPerK = 0;
+    if (ctx.junctions && ground === 0 && b.floorType !== 'suspended') {
+      for (const f of faces) {
+        if (f.kind !== 'wall' || f.to.k !== 'out' || !f.key.endsWith(':0') || !f.key.startsWith('w:') || !f.len) continue;
+        const psi = junctionPsiFor(h, ctx.Bp, f.buildup, b), key = `${f.buildup.id}|${b.id}`;
+        lossPerK += psi * f.len;
+        const j = ctx.junctions.get(key) ?? { wall: f.buildup.name, floor: b.name, len: 0, psi };
+        j.len += f.len;
+        ctx.junctions.set(key, j);
+      }
+    }
+    const junction = A > EPS ? lossPerK / A : 0;
     const groundU = (x: Buildup) => (ground > 0 ? groundFloorU(x, ctx.Bp, ground) : x.floorType === 'suspended' ? suspendedFloorU(x, ctx.Bp, h.suspended.vent, h.suspended.voidH) : groundFloorU(x, ctx.Bp, 0, h.floorEdge) + junction);
     const label = ground > 0 ? 'Basement floor' : b.floorType === 'suspended' ? 'Suspended floor' : 'Floor';
     zoned({ key: `gf:${r.id}`, label, kind: 'floor', to: { k: 'ground' }, area: A, buildup: b, U: groundU(b) }, 0, (z) => overlapAreaPoly(z.poly, rp), groundU);
@@ -630,33 +804,38 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
       zoned({ key, label: 'Ceiling', kind: 'ceiling', to: { k: 'room', id: o.id }, area: a, buildup: b, U: buildupU(b, FILMS.intFloor) }, top + 1, (z) => overlapArea3(z.poly, rp, roomPoly(o)), (x) => buildupU(x, FILMS.intFloor));
     }
   }
-  const flatA = g ? g.flatA : A - covered;
-  if (flatA > EPS) {
-    const toLoft = top === last && h.loft.present;
+  // Under a roof the sampled shares are scaled to the exact uncovered area; without one the rest of the ceiling is a flat roof.
+  const unc = Math.max(0, A - covered), k = g && g.unc > EPS ? unc / g.unc : 0;
+  const zoneShare = (z: FloorZone) => Math.max(0, overlapAreaPoly(z.poly, rp) - above.reduce((t, o) => t + overlapArea3(z.poly, rp, roomPoly(o)), 0));
+  const flats: Array<[boolean, number]> = g ? [[true, g.flatLoft * k], [false, g.flatOut * k]] : [[false, unc]];
+  for (const [toLoft, flatA] of flats) {
+    if (flatA <= EPS) continue;
     const key = toLoft ? `lc:${r.id}` : `fr:${r.id}`, b = B(key, toLoft ? 'loftCeiling' : 'flatRoof');
     const films = toLoft ? FILMS.loftCeiling : FILMS.roof;
-    zoned({ key, label: g ? (toLoft ? 'Flat ceiling (collar) to loft' : 'Flat roof') : toLoft ? 'Ceiling to loft' : 'Flat roof', kind: 'ceiling', to: toLoft ? { k: 'loft' } : { k: 'out' }, tilt: 0, area: flatA, buildup: b, U: buildupU(b, films) },
-      top + 1, (z) => (g ? (overlapAreaPoly(z.poly, rp) / (A || 1)) * flatA : Math.max(0, overlapAreaPoly(z.poly, rp) - above.reduce((t, o) => t + overlapArea3(z.poly, rp, roomPoly(o)), 0))), (x) => buildupU(x, films));
+    zoned({ key, label: toLoft ? (r.ceiling != null ? 'Flat ceiling (collar) to loft' : 'Ceiling to loft') : 'Flat roof', kind: 'ceiling', to: toLoft ? { k: 'loft' } : { k: 'out' }, tilt: 0, area: flatA, buildup: b, U: buildupU(b, films) },
+      top + 1, (z) => (unc > EPS ? (zoneShare(z) / unc) * flatA : 0), (x) => buildupU(x, films));
   }
-  if (g && sh) {
+  if (g) {
     const rlB = h.buildups.find((b) => b.kind === 'glazing') ?? h.buildups[0];
     const rlG = rlB.g != null ? rlB.g * (1 - (rlB.frame ?? 0.3)) : undefined;
-    g.slopes.forEach(({ i, az: planAz, area: slopeArea, dormer: d }, n) => {
-      // The rooflight goes in the first slope.
-      const rl = n === 0 ? Math.min(sh.rooflight, slopeArea * 0.8) : 0;
-      const sb = B(`sl:${r.id}:${i}`, 'slope');
-      const az = trueAz(planAz), side = compass(az);
-      const name = isPoly ? `Wall ${i + 1} (${bearingLabel(az)})` : h.north ? bearingLabel(az) : side;
-      faces.push({ key: `sl:${r.id}:${i}`, label: `${name} slope`, kind: 'ceiling', side, az, tilt: pitch, to: { k: 'out' }, area: slopeArea - rl, buildup: sb, U: buildupU(sb, FILMS.roof) });
-      if (rl > EPS) faces.push({ key: `rl:${r.id}`, label: 'Rooflight', kind: 'window', az, tilt: pitch, to: { k: 'out' }, area: rl, buildup: rlB, U: buildupU(rlB), gEff: rlG });
-      if (d) {
-        const wb = B(`dw:${r.id}:${i}`, 'dormerWall'), rb = B(`dr:${r.id}:${i}`, 'dormerRoof');
-        faces.push({ key: `dw:${r.id}:${i}`, label: `${name} dormer front`, kind: 'wall', side, az, to: { k: 'out' }, area: d.front - d.window, buildup: wb, U: buildupU(wb, FILMS.extWall) });
-        faces.push({ key: `dc:${r.id}:${i}`, label: `${name} dormer cheeks (2)`, kind: 'wall', to: { k: 'out' }, area: d.cheeks, buildup: wb, U: buildupU(wb, FILMS.extWall) });
-        faces.push({ key: `dr:${r.id}:${i}`, label: `${name} dormer roof`, kind: 'ceiling', tilt: 0, to: { k: 'out' }, area: d.roof, buildup: rb, U: buildupU(rb, FILMS.roof) });
-        if (d.window > EPS) faces.push({ key: `dg:${r.id}:${i}`, label: `${name} dormer window`, kind: 'window', side, az, to: { k: 'out' }, area: d.window, buildup: rlB, U: buildupU(rlB), gEff: rlG });
-      }
-    });
+    const slopes = g.slopes.map((s) => ({ ...s, area: s.area * k })).filter((s) => s.area > EPS);
+    // The rooflight goes in the biggest pitched slope.
+    const rlIn = slopes.filter((s) => s.tilt >= 5).reduce<RoomSlope | null>((a, s) => (!a || s.area > a.area ? s : a), null);
+    for (const s of slopes) {
+      const flat = s.tilt < 5, key = `sl:${r.id}:${s.part}:${s.edge}`, sb = B(key, flat ? 'flatRoof' : 'slope');
+      const rl = s === rlIn ? Math.min(Math.max(0, r.rooflight ?? 0), s.area * 0.8) : 0;
+      const az = trueAz(s.planAz), side = compass(az);
+      faces.push({ key, label: flat ? 'Flat roof' : `${h.north ? bearingLabel(az) : side} roof slope`, kind: 'ceiling', side, az, tilt: s.tilt, to: { k: 'out' }, area: s.area - rl, buildup: sb, U: buildupU(sb, FILMS.roof) });
+      if (rl > EPS) faces.push({ key: `rl:${r.id}`, label: 'Rooflight', kind: 'window', az, tilt: s.tilt, to: { k: 'out' }, area: rl, buildup: rlB, U: buildupU(rlB), gEff: rlG });
+    }
+    for (const d of g.dormers) {
+      const az = trueAz(d.planAz), side = compass(az), name = `${h.north ? bearingLabel(az) : side} dormer`, id = d.d.id;
+      const wb = B(`dw:${id}`, 'dormerWall'), rb = B(`dr:${id}`, 'dormerRoof');
+      faces.push({ key: `dw:${id}`, label: `${name} front`, kind: 'wall', side, az, to: { k: 'out' }, area: d.front - d.window, buildup: wb, U: buildupU(wb, FILMS.extWall) });
+      faces.push({ key: `dc:${id}`, label: `${name} cheeks (2)`, kind: 'wall', to: { k: 'out' }, area: d.cheeks, buildup: wb, U: buildupU(wb, FILMS.extWall) });
+      faces.push({ key: `dr:${id}`, label: `${name} roof`, kind: 'ceiling', tilt: 0, to: { k: 'out' }, area: d.roof, buildup: rb, U: buildupU(rb, FILMS.roof) });
+      if (d.window > EPS) faces.push({ key: `dg:${id}`, label: `${name} window`, kind: 'window', side, az, to: { k: 'out' }, area: d.window, buildup: rlB, U: buildupU(rlB), gEff: rlG });
+    }
   }
   return faces;
 }
@@ -671,13 +850,20 @@ export interface RoomResult {
 export interface HouseResult {
   /** Station and region in use, where the house is, and whether they came from the postcode. */
   climate: ReturnType<typeof climateOf>;
-  Tout: number; Tg: number; hdd: number; hddKnown: boolean; station: string; region: string;
+  /** Design outside temperature: your own figure if set, else ToutMcs (the MCS station figure for the percentile and altitude). */
+  /** The floor-to-wall junctions by wall and floor build-up, with their Ψ, W/mK, as used (set, entered or calculated). */
+  junctions: Junction[];
+  /** Their Ψ averaged over the length of wall, W/mK (0 with none). */
+  junctionPsi: number;
+  Tout: number; ToutMcs: number; Tg: number; hdd: number; hddKnown: boolean; station: string; region: string;
   rooms: RoomResult[];
   /** The loft: its temperature, floor area and volume, and the roof over it as slopes (true bearing, tilt, m²) of U-value `U`. */
   loft: { T: number; area: number; V: number; U: number; slopes: LoftSlope[] } | null;
   q50: number; n50: number; envelope: number; heatedV: number; heatedA: number;
   peakW: number; paths: Array<{ label: string; W: number }>;
   htc: number; hlp: number; annualKWh: number;
+  /** Set by yearRes: annualKWh, months and running costs come from a typical-year run, or are a scaled estimate while it runs. Unset: degree days. */
+  annualFrom?: 'estimate' | 'year';
   /** By month: heat, outside and flow temperature, heat per kWh bought (COP or boiler efficiency), kWh bought. */
   months: Array<{ heat: number; Tout: number; flow: number; eff: number; bought: number }>;
   /** Heat source: heat per kWh bought on the design day and over the year, kWh bought, £/yr (standing charge included), kgCO2/yr, spare capacity. */
@@ -702,6 +888,19 @@ export type Fuel = 'gas' | 'oil' | 'lpg';
 export const SOURCE_LABEL: Record<HeatSource, string> = { boiler: 'Boiler, non-condensing', condensing: 'Condensing boiler', ashp: 'Air-to-water heat pump', gshp: 'Ground-to-water heat pump' };
 export const FUEL_LABEL: Record<Fuel, string> = { gas: 'Mains gas', oil: 'Heating oil', lpg: 'LPG' };
 export const isHeatPump = (s: HeatSource) => s === 'ashp' || s === 'gshp';
+/**
+ * Typical design flow and flow−return drop for each source: an old boiler at 82/71 °C, a condensing boiler at 70/50 °C
+ * (the return low enough to condense), a heat pump at 45 °C with a 5 K drop (the MCS range is 35–55 °C).
+ */
+export const SOURCE_FLOW: Record<HeatSource, { maxFlow: number; dT: number }> = {
+  boiler: { maxFlow: 80, dT: 11 }, condensing: { maxFlow: 70, dT: 20 }, ashp: { maxFlow: 45, dT: 5 }, gshp: { maxFlow: 45, dT: 5 },
+};
+/** Switch the heat source, with that source's typical flow temperature and flow−return drop (edits h in place). */
+export function setSource(h: House, s: HeatSource): void {
+  h.hp.source = s;
+  h.hp.maxFlow = SOURCE_FLOW[s].maxFlow;
+  h.heating.dT = SOURCE_FLOW[s].dT;
+}
 /** Heat per kWh bought as text: COP for a heat pump, % for a boiler. */
 export const effText = (s: HeatSource, e: number) => (isHeatPump(s) ? `COP ${e.toFixed(2)}` : `${Math.round(e * 100)}%`);
 
@@ -764,27 +963,11 @@ export function tariff(hp: House['hp']): { p: number; standing: number; co2: num
 }
 
 export interface LoftSlope { az: number; tilt: number; area: number }
-/**
- * The loft roof as slopes with true bearings: its plan area shared out by roof form over the loft's footprint `box` (plan m).
- * shortcut: a hip is split as if over the footprint's bounding rectangle; L-shaped roofs come out approximate.
- */
-export function loftSlopes(h: Pick<House, 'loft' | 'north'>, box: { w: number; d: number }, planA: number): LoftSlope[] {
-  const L = h.loft, tilt = Math.min(70, Math.max(0, L.pitch)), k = 1 / Math.cos((tilt * Math.PI) / 180);
-  const ridge = L.ridge ?? (box.w >= box.d ? 'x' : 'y');
-  // Plan bearings: a ridge along x has its long slopes facing up (0°) and down (180°) the plan, its hip ends left and right.
-  const [a, b] = ridge === 'x' ? [0, 180] : [90, 270], ends = ridge === 'x' ? [90, 270] : [0, 180];
-  let parts: Array<[number, number]>;
-  if (L.form === 'mono') parts = [[SIDES.indexOf(L.facing ?? 'S') * 90, 1]];
-  else if (L.form === 'hip') {
-    const len = ridge === 'x' ? box.w : box.d, wid = ridge === 'x' ? box.d : box.w, m = Math.min(len, wid), e = len * wid > 0 ? (m * m) / 4 / (len * wid) : 0.25;
-    parts = [[a, (1 - 2 * e) / 2], [b, (1 - 2 * e) / 2], [ends[0], e], [ends[1], e]];
-  } else parts = [[a, 0.5], [b, 0.5]];
-  return parts.filter(([, f]) => f > EPS).map(([az, f]) => ({ az: trueBearing(h, az), tilt, area: planA * f * k }));
-}
 
 export function calcHouse(h: House): HouseResult {
   const cl = climateOf(h);
-  const Tout = designTemp(cl.station, h.climate.altitude, h.climate.pct);
+  const ToutMcs = designTemp(cl.station, h.climate.altitude, h.climate.pct);
+  const Tout = Number.isFinite(h.climate.designT) ? h.climate.designT! : ToutMcs;
   const reg = MCS_MEAN_TEMPS[cl.region] ?? MCS_MEAN_TEMPS[0], Tg = reg[4];
   const area = postcodeArea(h.climate.postcode), hddKnown = area in MCS_HDD, hdd = MCS_HDD[area] ?? 2200;
   const checks: HouseResult['checks'] = [];
@@ -795,18 +978,19 @@ export function calcHouse(h: House): HouseResult {
   const P = pre.filter((f) => f.kind === 'wall' && (f.to.k === 'out' || f.to.k === 'ground') && f.key.startsWith('w:') && f.key.endsWith(':0')).reduce((t, f) => t + (f.len ?? 0), 0);
   const gA = ground.reduce((t, r) => t + roomArea(r), 0);
   const Bp = P > EPS ? gA / (0.5 * P) : 1000;
-  const ctx = { Bp };
+  const ctx = { Bp, junctions: new Map<string, Junction>() };
 
   const faces = new Map(h.rooms.map((r) => [r.id, roomFaces(h, r, ctx)]));
+  const junctions = [...ctx.junctions.values()], jLen = junctions.reduce((t, j) => t + j.len, 0);
+  const junctionPsi = jLen > EPS ? junctions.reduce((t, j) => t + j.psi * j.len, 0) / jLen : 0;
   const T: Record<string, number> = {};
   for (const r of h.rooms) T[r.id] = r.heated ? r.setpoint : (r.setpoint + Tout) / 2;
   const loftFaces = h.rooms.flatMap((r) => (faces.get(r.id) ?? []).filter((f) => f.to.k === 'loft').map((f) => ({ ...f, to: { k: 'room', id: r.id } as To })));
-  const loftA = loftFaces.reduce((t, f) => t + f.area, 0), hasLoft = h.loft.present && loftA > EPS;
-  const loftRooms = h.rooms.filter((r) => (faces.get(r.id) ?? []).some((f) => f.to.k === 'loft')).flatMap(roomPoly);
-  const lx = loftRooms.map((p) => p[0]), ly = loftRooms.map((p) => p[1]);
-  const loftBox = loftRooms.length ? { w: Math.max(...lx) - Math.min(...lx), d: Math.max(...ly) - Math.min(...ly) } : { w: 1, d: 1 };
-  const slopes = loftSlopes(h, loftBox, loftA);
-  const loftV = loftA * h.loft.height, loftRoofA = slopes.reduce((t, s) => t + s.area, 0);
+  const loftA = loftFaces.reduce((t, f) => t + f.area, 0), hasLoft = loftA > EPS;
+  const lg = hasLoft ? loftGeo(h) : { V: 0, slopes: [] };
+  // A loft whose roof slopes found no sample (a sliver) still gets a roof the size of its floor.
+  const slopes = lg.slopes.length ? lg.slopes : [{ az: trueBearing(h, 180), tilt: 0, area: loftA }];
+  const loftV = Math.max(lg.V, loftA * 0.1), loftRoofA = slopes.reduce((t, s) => t + s.area, 0);
   const roofB = h.buildups.find((b) => b.id === h.defaults.loftRoof) ?? h.buildups[0];
   const roofU = buildupU(roofB, FILMS.roof);
   T.loft = (Tout + 10) / 2;
@@ -892,7 +1076,7 @@ export function calcHouse(h: House): HouseResult {
 
   const Tin = heatedV > EPS ? hr.reduce((t, x) => t + x.T * x.V, 0) / heatedV : 21;
   const htc = Tin - Tout > EPS ? peakW / (Tin - Tout) : 0;
-  // shortcut: degree-day estimate scales the whole design loss, ground loss included; replace with the year simulation (board 4b) in phase 2.
+  // Degree-day estimate of the whole design loss, ground loss included: a quick stand-in until the typical-year run (yearRes) is in.
   const wts = MEAN.map((m, i) => Math.max(0, 15.5 + (h.calib?.dt ?? 0) - m) * DAYS[i]), wsum = wts.reduce((a, b) => a + b, 0) || 1;
   // Calibration: warmer rooms raise the degree-day base; part-heated houses use a share of it.
   const ddRatio = h.calib ? wsum / (MEAN.reduce((a, m, i) => a + Math.max(0, 15.5 - m) * DAYS[i], 0) || 1) : 1;
@@ -952,11 +1136,15 @@ export function calcHouse(h: House): HouseResult {
   if (!hddKnown) checks.push({ level: 'warn', text: `Postcode area "${area || h.climate.postcode}" not in the MCS degree-day table; using 2,200 K·day.` });
   if (v.mech === 'mvhr' && q50 > 5) checks.push({ level: 'warn', text: `MVHR with q50 ${q50.toFixed(1)}: above 5 m³/h·m² most of the heat recovery is lost to leakage.` });
   if (hp.spare < 0) checks.push({ level: 'warn', text: `${SOURCE_LABEL[h.hp.source]} is ${Math.round(-hp.spare * 100)}% short of the design heat loss.` });
+  const offZones = new Map<string, string[]>();
   for (const e of emitRooms) {
-    const name = h.rooms.find((r) => r.id === e.id)?.name ?? e.id;
-    if (!e.has) checks.push({ level: 'warn', text: `${name} is heated but has no emitter.` });
+    const room = h.rooms.find((r) => r.id === e.id), name = room?.name ?? e.id, src = room && scheduleSource(h, room);
+    if (!e.has) checks.push({ level: 'warn', text: `${name} is set as heated but has no emitter, so the hour-by-hour runs give it no heat. Add one under Heating › Emitters, or mark the room unheated.` });
+    else if (src?.kind === 'off') offZones.set(src.zone!.name, [...(offZones.get(src.zone!.name) ?? []), name]);
     else if (e.cover < 0.995) checks.push({ level: 'warn', text: `${name}: emitters give ${Math.round(e.out)} W at ${designFlow.toFixed(0)} °C flow, ${Math.round(e.need)} W needed (${Math.round(e.cover * 100)}%).` });
   }
+  offZones.forEach((names, zone) => checks.push({ level: 'warn', text: `Heating zone “${zone}” is switched off, so the hour-by-hour runs give no heat to ${names.join(', ')}.` }));
+
   for (const e of h.heating.emitters) {
     if (e.kind === 'ufh' && loopLength(e, h) > loopMax(e)) checks.push({ level: 'warn', text: `UFH loop in ${h.rooms.find((r) => r.id === e.room)?.name ?? e.room} is ${Math.round(loopLength(e, h))} m; keep ${e.pipe ?? 16} mm loops under ${loopMax(e)} m (split it in two, or use wider pipe or spacing).` });
     if (e.kind === 'ufh' && e.rect) {
@@ -967,7 +1155,7 @@ export function calcHouse(h: House): HouseResult {
   }
 
   return {
-    Tout, Tg, hdd, hddKnown, station: MCS_STATIONS[cl.station]?.[0] ?? '?', region: reg[0], climate: cl,
+    junctions, junctionPsi, Tout, ToutMcs, Tg, hdd, hddKnown, station: MCS_STATIONS[cl.station]?.[0] ?? '?', region: reg[0], climate: cl,
     rooms, loft: hasLoft ? { T: T.loft, area: loftA, V: loftV, U: roofU, slopes } : null,
     q50, n50, envelope, heatedV, heatedA, peakW, paths, htc, hlp: heatedA > EPS ? htc / heatedA : 0, annualKWh, months, hp, checks,
     heat: { designFlow, rooms: emitRooms, gov: gov ? { id: gov.id, req: gov.req } : null },

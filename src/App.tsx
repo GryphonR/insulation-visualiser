@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { loadCustomStackups, saveCustomStackups } from './engine/library';
 import type { Stackup } from './engine/library';
 import { newProject } from './engine/house-scenarios';
@@ -28,6 +28,9 @@ import { go, useRoute } from './ui/route';
 import { sanitizeProject } from './engine/house-scenarios';
 import { addImportedMaterials } from './engine/data';
 import './ui/house.css';
+
+// Three.js is big: load the 3D view only when it is opened.
+const House3D = lazy(() => import('./ui/House3D'));
 import './ui/shell.css';
 
 export default function App() {
@@ -70,6 +73,7 @@ function Routes({ firstVisit }: { firstVisit: boolean }) {
       );
       break;
     case 'plan': page = <PlanPage key={arg ?? 'p'} selected={arg} />; break;
+    case 'view3d': page = <Suspense fallback={<p className="muted small">Loading the 3D view…</p>}><House3D /></Suspense>; break;
     case 'room': page = <RoomPage key={`${arg}/${arg2 ?? ""}`} id={arg ?? ''} initialTab={arg2} />; break;
     case 'projects': page = <ProjectsPage />; break;
     case 'site': page = <SitePage />; break;
@@ -87,7 +91,7 @@ function Routes({ firstVisit }: { firstVisit: boolean }) {
     case 'checks': page = <ChecksPage />; break;
     case 'gains': page = <GainsPage />; break;
     case 'results': page = <ResultsPage />; break;
-    case 'year': case 'conditions': page = <HouseRuns key={active.id} house={house} setHouse={setHouse} project={project} ordered={ordered} />; break;
+    case 'year': case 'conditions': page = <HouseRuns key={`${active.id}/${arg}/${arg2}`} house={house} setHouse={setHouse} project={project} ordered={ordered} initialCase={arg} initialRoom={arg2} />; break;
     case 'energy': page = <EnergyPage />; break;
     case 'bills': page = <HouseBills key={active.id} house={house} setHouse={setHouse} />; break;
     case 'moisture': page = <HouseMoisture key={active.id} house={house} />; break;

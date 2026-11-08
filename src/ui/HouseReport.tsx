@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { MONTHS, customMaterialsIn } from '../engine/data';
-import { FUEL_LABEL, SOURCE_LABEL, buildupU, calcHouse, effText, isHeatPump, tariff } from '../engine/house';
+import { FUEL_LABEL, SOURCE_LABEL, buildupU, effText, isHeatPump, tariff } from '../engine/house';
 import type { House } from '../engine/house';
 import { RAD_LABEL, ratedOf } from '../engine/house-heating';
 import type { Project } from '../engine/house-scenarios';
@@ -8,13 +8,14 @@ import { download } from '../lib/util';
 import { Chip } from './controls';
 import { fmt } from './hform';
 import { sourceWhy } from './assumptions';
+import { useProject } from './project';
 
 const SECTIONS = [['cond', 'Design conditions'], ['rooms', 'Room-by-room table'], ['hp', 'Heat pump and running'], ['fabric', 'Build-ups (U-values)'], ['assume', 'Assumptions and checks']] as const;
 type Sec = (typeof SECTIONS)[number][0];
 
 /** Board 4e: a printable heat loss report for the scenario being edited, plus project export and import. */
 export function HouseReport({ house, scenarioName, project, onImport }: { house: House; scenarioName: string; project: Project; onImport: (p: Project) => void }) {
-  const res = useMemo(() => calcHouse(house), [house]);
+  const { res } = useProject();
   const [inc, setInc] = useState<Record<Sec, boolean>>({ cond: true, rooms: true, hp: true, fabric: true, assume: true });
   const fileRef = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState('');
@@ -66,14 +67,14 @@ export function HouseReport({ house, scenarioName, project, onImport }: { house:
         <div className="tiles">
           <div className="tile"><span className="tiles-head">Design heat loss</span><span className="tile-value"><span className="mono big">{fmt(res.peakW / 1000, 2)}</span><span className="small muted">kW</span></span></div>
           <div className="tile"><span className="tiles-head">Heat loss parameter</span><span className="tile-value"><span className="mono big">{fmt(res.hlp, 2)}</span><span className="small muted">W/m²K</span></span></div>
-          <div className="tile"><span className="tiles-head">Space heating</span><span className="tile-value"><span className="mono big">{fmt(Math.round(res.annualKWh / 100) * 100)}</span><span className="small muted">kWh/yr</span></span></div>
+          <div className="tile"><span className="tiles-head">Space heating</span><span className="tile-value"><span className="mono big">{fmt(Math.round(res.annualKWh / 100) * 100)}</span><span className="small muted">kWh/yr{res.annualFrom === "year" ? "" : " (estimate)"}</span></span></div>
           <div className="tile"><span className="tiles-head">{SOURCE_LABEL[house.hp.source]}</span><span className="tile-value"><span className="mono big">{house.hp.capacity}</span><span className="small muted">kW · {isHeatPump(house.hp.source) ? `SCOP ${fmt(res.hp.seasonal, 2)}` : `${fmt(res.hp.seasonal * 100)}% seasonal`}</span></span></div>
         </div>
 
         {inc.cond && <section>
           <h2>Design conditions</h2>
           <table className="h-table"><tbody>
-            <tr><td>Outside design temperature</td><td className="mono">{res.Tout} °C ({house.climate.pct}%, {res.station}, {house.climate.altitude} m altitude)</td></tr>
+            <tr><td>Outside design temperature</td><td className="mono">{res.Tout} °C ({Number.isFinite(house.climate.designT) ? `set by hand; MCS gives ${res.ToutMcs} °C at ` : ''}{house.climate.pct}%, {res.station}, {house.climate.altitude} m altitude)</td></tr>
             <tr><td>Ground temperature</td><td className="mono">{res.Tg} °C ({res.region} annual mean)</td></tr>
             <tr><td>Degree days</td><td className="mono">{fmt(res.hdd)} K·day, base 15.5 °C ({house.climate.postcode})</td></tr>
             <tr><td>Airtightness</td><td className="mono">q50 {fmt(res.q50, 1)} m³/h·m² ({house.vent.source === 'meas' ? 'measured' : 'estimated'}{house.calib && house.vent.source !== 'meas' ? `, ×${house.calib.q} from bills` : ''}) · {house.vent.method === 'cibse' ? 'CIBSE room-type rates' : 'whole-house model'}{house.vent.minAch ? ', 0.5 ach minimum in habitable rooms' : ''}</td></tr>

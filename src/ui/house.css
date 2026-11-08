@@ -18,10 +18,6 @@
 .hf .thk-input { width: 76px; min-height: 36px; }
 .hf-lab { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .why { display: inline; }
-/* Beside a field label the open note drops to its own line under the label. */
-.hf-lab .why { display: contents; }
-.hf-lab .why-t { flex-basis: 100%; }
-.tile .why-t { width: auto; }
 .sheet { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
 .why-b { width: 22px; height: 22px; padding: 0; margin-left: 4px; border: 1.5px solid var(--muted); border-radius: 50%; background: var(--card); color: var(--ink); font: 600 12px var(--sans); line-height: 1; cursor: pointer; vertical-align: middle; }
 .why-b[aria-expanded='true'] { background: var(--ink); color: var(--card); border-color: var(--ink); }
@@ -78,7 +74,7 @@
 .path { grid-template-columns: minmax(120px, 34%) 1fr 72px; }
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-.sched { display: flex; flex-direction: column; gap: 4px; }
+.hsched { display: flex; flex-direction: column; gap: 4px; }
 .sched-row { display: grid; grid-template-columns: 110px 1fr; gap: 8px; align-items: center; }
 .sched-cells { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 2px; }
 .sc { height: 26px; border: 0; border-radius: 3px; background: #e8e6de; cursor: pointer; padding: 0; }
@@ -213,8 +209,8 @@ svg.draw .vx.moving { fill: #c2410c; }
 .tiles-center .tile-value { justify-content: center; }
 
 /* Floor plan: the canvas fills the page and the tools float over it */
-.plan-stage { position: relative; flex: 1; min-height: 480px; overflow: hidden; background: #fff; }
-.plan-stage .draw-wrap { position: absolute; inset: 0; }
+.plan-stage { position: relative; flex: 1; min-height: 480px; overflow: hidden; background: #fff; --tabs-h: 44px; }
+.plan-stage .draw-wrap { position: absolute; inset: 0 0 var(--tabs-h) 0; }
 .draw-menu { position: absolute; left: 10px; top: 10px; z-index: 3; display: flex; flex-direction: column; border: 1.5px solid var(--ink); background: rgba(255, 255, 255, 0.94); }
 .draw-menu button { position: relative; width: 34px; height: 34px; padding: 0; border: 0; border-top: 1px solid var(--line-strong); background: transparent; font-size: 16px; cursor: pointer; color: var(--ink); }
 .draw-menu > button:first-child { border-top: 0; }
@@ -246,3 +242,27 @@ svg.draw .vx.moving { fill: #c2410c; }
 .float-panel .layer-band > button { min-height: 32px; }
 .north-arrow { display: inline-block; font-weight: 700; line-height: 1; transition: transform 0.15s; }
 .float-top .thk-input { width: 4.5em; }
+
+/* 3D view */
+.view3d .view3d-canvas { position: absolute; inset: 0; cursor: grab; touch-action: none; }
+.view3d .view3d-canvas canvas { display: block; }
+.view3d-legend, .view3d-pick { position: absolute; background: #fff; border: 1px solid #d7dde2; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; max-width: min(320px, calc(100% - 32px)); box-shadow: 0 2px 8px rgba(20, 33, 43, 0.08); }
+.view3d-legend { left: 16px; bottom: 16px; }
+.view3d-pick { right: 16px; bottom: 16px; }
+.view3d-bar { height: 10px; border-radius: 5px; background: linear-gradient(90deg, hsl(40, 55%, 90%), hsl(20, 72%, 67%), hsl(0, 90%, 45%)); }
+/* Storey and layer tabs along the bottom of the plan, ground up from left to right. */
+.layer-tabs { position: absolute; left: 0; right: 0; bottom: 0; height: var(--tabs-h); z-index: 4; display: flex; align-items: flex-end; gap: 8px; padding: 0 10px; border-top: 1.5px solid var(--ink); background: #fff; }
+.lt-row { flex: 1; min-width: 0; display: flex; align-items: flex-end; gap: 3px; overflow-x: auto; height: 100%; padding-top: 5px; }
+.lt { flex: none; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-height: 36px; padding: 2px 12px; border: 1px solid var(--line-strong); border-bottom: 0; background: #f7f5ef; cursor: pointer; font-size: 13px; color: var(--ink); line-height: 1.2; }
+.lt span { font-size: 11px; color: var(--muted); }
+.lt.on { background: #fbe6d8; border-color: var(--accent); box-shadow: inset 0 3px 0 var(--accent); }
+.lt-band { min-height: 28px; padding: 2px 8px; font-size: 12px; color: var(--muted); border-style: dashed; background: repeating-linear-gradient(135deg, #f6f1e7, #f6f1e7 6px, #fbf8f1 6px, #fbf8f1 12px); }
+.lt-band.on { background: #e3f2ef; border: 1px solid #0b8a7a; border-bottom: 0; box-shadow: inset 0 3px 0 #0b8a7a; color: var(--ink); }
+.lt-add { flex: none; align-self: center; min-height: 28px; padding: 0 10px; border: 1px solid var(--line-strong); background: #fff; cursor: pointer; font-size: 12px; }
+.lt-add:disabled { opacity: 0.5; cursor: default; }
+.lt-faint { flex: none; align-self: center; white-space: nowrap; }
+.plan-stage .plan-hint { bottom: calc(var(--tabs-h) + 10px); }
+.plan-stage .float-panel { bottom: calc(var(--tabs-h) + 56px); }
+@media (max-width: 640px) { .lt-faint { display: none; } }
+/* The help note floats over the page, placed beside its "?" by Why. */
+.why-pop { position: fixed; z-index: 1000; margin: 0; box-shadow: 0 6px 20px rgba(20, 33, 43, 0.18); }

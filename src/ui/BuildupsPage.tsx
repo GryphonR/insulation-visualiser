@@ -79,7 +79,8 @@ export function BuildupsPage({ selected }: { selected?: string }) {
   const R = b ? 1 / buildupU(b) : 0;
   // Same typical-day run the layer editor uses: decrement and delay barely depend on weather.
   const dyn = useMemo(() => {
-    if (!b || b.layers.length === 0) return null;
+    // A floor sits on the ground, which doesn't swing over a day: no decrement or delay to show.
+    if (!b || b.layers.length === 0 || b.kind === 'floor') return null;
     const { sim } = runScenario({ ...DEFAULT_SCENARIO, orient: b.kind === 'roof' ? 'roof' : DEFAULT_SCENARIO.orient, layers: layersFromTuples(b.layers) });
     return { decr: sim.decr, lag: sim.lag };
   }, [b]);

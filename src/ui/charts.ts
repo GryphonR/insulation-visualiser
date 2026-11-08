@@ -1,4 +1,5 @@
 import { fmtTick, niceRange, pad2, sgn } from '../lib/util';
+import { OTHER_LABEL } from '../engine/scenario';
 import type { ScenarioResult } from '../engine/scenario';
 import { N_FRAMES, FRAMES_PER_HOUR } from '../engine/simulate';
 
@@ -135,19 +136,24 @@ export function buildCharts(res: ScenarioResult): ChartSpec[] {
   const [saLo, saHi] = rangeOf(fr.tsa);
   const cut = Math.max(sim.qsmax - sim.qsmin, 1e-6);
   const cutPct = Math.round((1 - (sim.qmax - sim.qmin) / cut) * 100);
-  return [
+  // A ground floor is driven by the ground (or void) below instead of sun and air, and sees no sunshine.
+  // A floor or ceiling is driven by what lies beyond it (ground, void or another room) instead of sun and air, and sees no sunshine.
+  const other = res.params.other, floor = !!other, drive = other ? OTHER_LABEL[other.what] : 'Sol-air (air + sun)';
+  const charts = [
     buildChart({
       title: 'Temperatures',
-      sub: 'Outside drivers against what the wall faces see',
+      sub: floor ? 'What lies beyond and this room, against what each face sees' : 'Outside drivers against what the wall faces see',
       alt: 'Line chart of air, sol-air, outer face, inner face and room temperature over 24 hours',
       series: [
         { name: 'Air', arr: fr.tair, col: '#6b7a86', sw: 2, dash: '6 4' },
-        { name: 'Sol-air (air + sun)', arr: fr.tsa, col: '#c75b00', sw: 2.5 },
+        { name: drive, arr: fr.tsa, col: '#c75b00', sw: 2.5 },
         { name: 'Outer face', arr: fr.tsOut, col: '#a23b72', sw: 2 },
         { name: 'Inner face', arr: fr.tsIn, col: '#0b63b5', sw: 3 },
         { name: 'Room air', arr: fr.tin, col: '#2d7a4d', sw: 2, dash: '2 4' },
       ],
-      note: `Inner face swings ${sim.timin.toFixed(1)} to ${sim.timax.toFixed(1)} °C while the sol-air temperature outside swings ${saLo.toFixed(1)} to ${saHi.toFixed(1)} °C.`,
+      note: floor
+        ? `Inner face ${sim.timin.toFixed(1)} to ${sim.timax.toFixed(1)} °C, with the ${drive.toLowerCase()} steady at ${other!.T.toFixed(1)} °C; with nothing swinging beyond it, the surface follows this room.`
+        : `Inner face swings ${sim.timin.toFixed(1)} to ${sim.timax.toFixed(1)} °C while the sol-air temperature outside swings ${saLo.toFixed(1)} to ${saHi.toFixed(1)} °C.`,
     }),
     buildChart({
       title: 'Heat flow into the room',
@@ -157,7 +163,7 @@ export function buildCharts(res: ScenarioResult): ChartSpec[] {
       series: [
         { name: 'Outer face (left axis)', arr: fr.qOut, col: '#a23b72', sw: 2 },
         { name: 'Inner face, simulated (right axis)', arr: fr.q, col: '#0b63b5', sw: 3, axis: 'right' },
-        { name: 'Steady-state: U × (sol-air − room) (right axis)', arr: sim.qss, col: '#6b7a86', sw: 2, dash: '6 4', axis: 'right' },
+        { name: `Steady-state: U × (${floor ? 'other side' : 'sol-air'} − room) (right axis)`, arr: sim.qss, col: '#6b7a86', sw: 2, dash: '6 4', axis: 'right' },
       ],
       note: `Steady-state calculation: ${sgn(sim.qsmin, 1)} to ${sgn(sim.qsmax, 1)} W/m². Simulated: ${sgn(sim.qmin, 1)} to ${sgn(sim.qmax, 1)} W/m². ${res.params.free ? 'In a free-floating room the room temperature moves too, so this is not a like-for-like comparison; the wall alone delays heat by about ' + sim.lag.toFixed(1) + ' h.' : cutPct >= 0 ? `The swing is cut by ${cutPct}% and arrives about ${sim.lag.toFixed(1)} h later.` : `The swing is ${-cutPct}% larger and arrives about ${sim.lag.toFixed(1)} h later.`}`,
     }),
@@ -175,4 +181,5 @@ export function buildCharts(res: ScenarioResult): ChartSpec[] {
           : 'This face sees direct sun for part of the day only; the rest is diffuse sky light.',
     }),
   ];
+  return floor ? charts.slice(0, 2) : charts;
 }

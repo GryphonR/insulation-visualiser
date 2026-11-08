@@ -1,13 +1,16 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { maxWallGap, onStorey, pairKey, roomEdges, roomPoly } from '../engine/house';
+import { maxWallGap, onStorey, pairKey, roofEdgesOf, roofOutlines, roofParts, roofStorey, roomEdges, roomPoly } from '../engine/house';
 import type { House, Room } from '../engine/house';
+import { roofLines } from '../engine/house-roof';
+import { freezeOutline, newRoof } from './HouseRoof';
 import { centroid, dropSpikes, pointInPoly, polyArea, selfIntersects, sharedSpan } from '../engine/geom';
 import type { Pt } from '../engine/geom';
-import { addEmitter, addFloorZone, addRoomAt, copyRooms, cutPlan, deleteRoom, emitterPose, flushDelta, innerDoorAt, innerWallThickness, insertCorner, isOutside, joinedCorners, moveCorners, nearestWall, openingCentre, pieceAlign, pieceGap, pieceSeg, pieceThickness, problems, removeCorner, roomAt, splitRoom, stretchAtWall, wallIndex, wallPieces } from '../engine/house-draw';
+import { addEmitter, addFloorZone, addRoomAt, cutPlan, deleteRoom, emitterPose, flushDelta, innerDoorAt, innerWallThickness, insertCorner, isOutside, joinedCorners, moveCorners, nearestWall, openingCentre, pieceAlign, pieceGap, pieceSeg, pieceThickness, problems, removeCorner, roomAt, splitRoom, stretchAtWall, wallIndex, wallPieces } from '../engine/house-draw';
 import type { WallPiece } from '../engine/house-draw';
 import { planBounds } from './HousePlan';
 import { uid } from './hform';
+import { href } from './route';
 
 export type Tool = 'select' | 'box' | 'room' | 'split' | 'corner' | 'window' | 'door' | 'radiator' | 'ufh';
 /** A wall of a room; with `span`, just the piece of it between two metre marks along the wall (`other` is the room it is shared with, if any). */
@@ -15,7 +18,7 @@ export interface WallRef { room: string; edge: number; span?: [number, number]; 
 export interface Sel { room: string; walls: WallRef[]; item: { k: 'op' | 'em'; id: string } | null; /** A floor or ceiling zone. */ zone?: string; /** Several rooms picked with the selection box or Shift-click. */ group?: string[]; /** Arrows on the selected inside wall pick which side of the plan stretches to fit its build-up. */ stretch?: boolean }
 export const NO_SEL: Sel = { room: '', walls: [], item: null };
 /** What a right-click menu is for. */
-type MenuFor = { k: 'wall'; wall: WallRef } | { k: 'room'; id: string } | { k: 'op' | 'em'; id: string };
+type MenuFor = { k: 'wall'; wall: WallRef } | { k: 'room'; id: string } | { k: 'corner'; room: string; idx: number } | { k: 'op' | 'em'; id: string };
 /** A field of the selection that the side panel can be opened on: its dropdown (build-up, glazing or radiator type), its first size, or a room's name. */
 export type EditField = 'type' | 'size' | 'name';
 
@@ -45,7 +48,7 @@ type Drag =
  * The drawing canvas for one storey: rooms of any shape whose corners and walls drag, with windows, doors and heat emitters
  * placed on them. Every edit is one `upd` on a copy of the house; nothing is written while a drag is under way.
  */
-export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fill, label, below, sticky, grid, snapOn, band, underlay, overlay, onEdit }: {
+export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fill, label, below, sticky, grid, snapOn, band, roof, underlay, overlay, onEdit }: {
   house: House; storey: number; tool: Tool; setTool: (t: Tool) => void;
   sel: Sel; setSel: (s: Sel) => void; upd: (fn: (h: House) => void) => void;
   fill: (r: Room) => string; label: (r: Room) => string;
@@ -55,6 +58,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   sticky: boolean; grid: number; snapOn: boolean;
   /** Editing a floor or ceiling layer (zones and heated-floor loops) instead of the rooms of a storey. */
   band?: number;
+  /** Editing the roof sections (drawn over the rooms of `storey`, greyed). */
+  roof?: boolean;
   underlay?: (to: (p: Pt) => Pt, S: number) => ReactNode;
   /** Drawn over everything and may capture the pointer (the scale tool); `from` turns an event into snapped plan metres. */
   overlay?: (to: (p: Pt) => Pt, S: number, from: (e: React.PointerEvent) => Pt | null) => ReactNode;
@@ -77,7 +82,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   const pinch = useRef<{ d: number; v: View } | null>(null);
   const coarse = useMemo(() => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches, []);
   const hs = coarse ? 1.8 : 1;
-  const zoneMode = band != null;
+  const roofMode = !!roof;
+  const zoneMode = band != null || roofMode;
   /** Digits typed while drawing a room: the length of the next wall. */
   const [typed, setTyped] = useState('');
   /** Shift held: no snapping to walls or angles. */
@@ -128,6 +134,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     if (!box) return;
     if (on.k === 'wall') setSel({ room: on.wall.room, walls: [on.wall], item: null });
     else if (on.k === 'room') setSel({ ...NO_SEL, room: on.id });
+    else if (on.k === 'corner') setSel({ ...NO_SEL, room: on.room });
     else setSel({ ...NO_SEL, room: (on.k === 'op' ? house.openings : house.heating.emitters).find((x) => x.id === on.id)?.room ?? '', item: { k: on.k, id: on.id } });
     setMenuTip('');
     setMenu({ x: clientX - box.left, y: clientY - box.top, at, on });
@@ -205,9 +212,36 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   };
 
   // A floor or ceiling layer shows all its zones; a storey shows the underfloor heating zones in its floor.
-  const zones = (house.zones ?? []).filter((z) => (zoneMode ? z.band === band : !!z.ufh && z.band === storey));
+  type ZoneLike = { id: string; poly: Pt[]; name: string; buildup: string; ufh?: boolean };
+  const zones: ZoneLike[] = roofMode
+    ? house.roofs.flatMap((r) => roofOutlines(house, r).slice(0, 1).map((poly) => ({ id: r.id, poly, name: r.name, buildup: '' })))
+    : (house.zones ?? []).filter((z) => (zoneMode ? z.band === band : !!z.ufh && z.band === storey));
+  /** Change a zone's or roof's outline; a roof that follows the rooms first gets an outline of its own, and per-edge settings follow the corners. */
+  const editPoly = (h: House, id: string, op: { move?: (q: Pt, i: number) => Pt; insert?: [number, Pt]; remove?: number }) => {
+    const round = (q: Pt): Pt => [+q[0].toFixed(3), +q[1].toFixed(3)];
+    const apply = (poly: Pt[]) => {
+      if (op.move) return poly.map((q, i) => round(op.move!(q, i)));
+      if (op.insert) { const p = [...poly]; p.splice(op.insert[0] + 1, 0, round(op.insert[1])); return p; }
+      if (op.remove != null && poly.length > 3) return poly.filter((_, i) => i !== op.remove);
+      return poly;
+    };
+    if (!roofMode) { const x = h.zones?.find((q) => q.id === id); if (x) x.poly = apply(x.poly); return; }
+    const r = h.roofs.find((q) => q.id === id);
+    if (!r) return;
+    freezeOutline(h, r);
+    if (!r.poly) return;
+    if (r.form === 'custom') {
+      const es = roofEdgesOf(r, r.poly);
+      if (op.insert) es.splice(op.insert[0] + 1, 0, { ...es[op.insert[0]] });
+      if (op.remove != null && r.poly.length > 3) es.splice(op.remove, 1);
+      r.edges = es;
+    }
+    r.poly = apply(r.poly);
+  };
+  // Ridges, hips and valleys of every roof, and which edges are eaves.
+  const roofDraw = useMemo(() => (roofMode ? roofParts(house).map((p) => ({ id: p.sec.id, lines: roofLines(p.model, 0.1), kinds: p.model.edges, poly: p.poly })) : []), [roofMode, house]);
   const zoneDelta = (d: Extract<Drag, { k: 'zone' }>): Pt => {
-    const z = (house.zones ?? []).find((q) => q.id === d.id);
+    const z = zones.find((q) => q.id === d.id);
     if (!z) return [0, 0];
     const base = z.poly[d.idx ?? 0], t = magnet([base[0] + d.cur[0] - d.start[0], base[1] + d.cur[1] - d.start[1]]);
     return [t[0] - base[0], t[1] - base[1]];
@@ -220,7 +254,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
 
   const begin = (e: React.PointerEvent, d: Drag) => {
     e.stopPropagation();
-    svgRef.current?.setPointerCapture(e.pointerId);
+    // The pointer is captured on its first move (in move), so a click without a drag still reaches what was pressed and its double-click works.
     svgRef.current?.focus({ preventScroll: true });
     setDrag(d);
   };
@@ -265,6 +299,12 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   const create = (pts: Pt[]) => {
     const id = uid(zoneMode || tool === 'ufh' ? 'z' : 'r');
     if (tool === 'ufh') { upd((h) => addFloorZone(h, id, band ?? storey, pts, true)); setSel({ ...NO_SEL, zone: id }); }
+    else if (roofMode) {
+      const r = newRoof(house, pts);
+      if (storey !== house.storeys.length - 1) r.storey = storey;
+      upd((h) => { h.roofs.push(r); });
+      setSel({ ...NO_SEL, zone: r.id });
+    }
     else if (zoneMode) { upd((h) => addFloorZone(h, id, band!, pts)); setSel({ ...NO_SEL, zone: id }); }
     else { upd((h) => { addRoomAt(h, id, pts, storey); }); setSel({ room: id, walls: [], item: null }); }
     if (!sticky) setTool('select');
@@ -354,6 +394,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   };
 
   const move = (e: React.PointerEvent) => {
+    if (drag && e.buttons && !svgRef.current?.hasPointerCapture(e.pointerId)) svgRef.current?.setPointerCapture(e.pointerId);
     loose.current = e.shiftKey || !snapOn;
     if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, [e.clientX, e.clientY]);
     if (pinch.current && pointers.current.size === 2) {
@@ -406,7 +447,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     } else if (d.k === 'zone') {
       const dl = zoneDelta(d);
       if (!dl[0] && !dl[1]) return;
-      upd((h) => { const x = h.zones?.find((q) => q.id === d.id); if (x) x.poly = x.poly.map((q, i): Pt => (d.idx == null || d.idx === i ? [+(q[0] + dl[0]).toFixed(3), +(q[1] + dl[1]).toFixed(3)] : q)); });
+      upd((h) => editPoly(h, d.id, { move: (q, i) => (d.idx == null || d.idx === i ? [q[0] + dl[0], q[1] + dl[1]] : q) }));
     } else if (d.k === 'op') {
       const o = house.openings.find((x) => x.id === d.id), at = o && openingAt(d.cur, o.w, isDoorOp(o));
       if (o && at) upd((h) => { const x = h.openings.find((q) => q.id === d.id)!; x.room = at.room.id; x.edge = at.edge; x.side = roomEdges(at.room)[at.edge].side; x.t = at.t; if (at.to) x.to = at.to; else delete x.to; });
@@ -476,7 +517,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     else if (tool === 'select' && (e.key === 'Delete' || e.key === 'Backspace')) {
       if (sel.item?.k === 'op') upd((h) => { h.openings = h.openings.filter((o) => o.id !== sel.item!.id); });
       else if (sel.item?.k === 'em') upd((h) => { h.heating.emitters = h.heating.emitters.filter((x) => x.id !== sel.item!.id); });
-      else if (sel.zone) upd((h) => { h.zones = h.zones?.filter((z) => z.id !== sel.zone); });
+      else if (sel.zone) upd((h) => { h.zones = h.zones?.filter((z) => z.id !== sel.zone); h.roofs = h.roofs.filter((z) => z.id !== sel.zone); });
       else if (!sel.walls.length && sel.room) { const ids = sel.group?.length ? sel.group : [sel.room]; upd((h) => ids.forEach((id) => deleteRoom(h, id))); setSel(NO_SEL); return; }
       else return;
       setSel({ ...sel, item: null });
@@ -680,6 +721,9 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
           <pattern id="zone-hatch" width={z(9)} height={z(9)} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
             <rect width={z(9)} height={z(9)} fill="#0b8a7a" fillOpacity={0.12} /><line x1={0} y1={0} x2={0} y2={z(9)} stroke="#0b8a7a" strokeWidth={z(2.5)} strokeOpacity={0.55} />
           </pattern>
+          <pattern id="roof-hatch" width={z(10)} height={z(10)} patternUnits="userSpaceOnUse" patternTransform="rotate(30)">
+            <rect width={z(10)} height={z(10)} fill="#5b4a8a" fillOpacity={0.07} /><line x1={0} y1={0} x2={0} y2={z(10)} stroke="#5b4a8a" strokeWidth={z(1.2)} strokeOpacity={0.3} />
+          </pattern>
           <pattern id="ufh-hatch" width={z(9)} height={z(9)} patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
             <rect width={z(9)} height={z(9)} fill="#b45309" fillOpacity={0.1} /><line x1={0} y1={0} x2={0} y2={z(9)} stroke="#b45309" strokeWidth={z(2)} strokeOpacity={0.5} />
           </pattern>
@@ -711,6 +755,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
                   setSel({ room: r.id, walls: [], item: null, group: moving.length > 1 ? moving : [] });
                   begin(e, { k: 'move', start: raw(e), cur: raw(e), verts: moving.flatMap((id) => roomPoly(house.rooms.find((x) => x.id === id)!).map((_, i): [string, number] => [id, i])), base: roomPoly(r)[0], free: false, room: true, moved: false });
                 } : undefined}
+                onDoubleClick={tool === 'select' && !zoneMode ? () => { location.hash = href('room', r.id); } : undefined}
                 onContextMenu={tool === 'select' && !zoneMode ? menuOn({ k: 'room', id: r.id }) : undefined} />
               <text x={c[0]} y={c[1] - z(3)} textAnchor="middle" className="plan-t" style={{ fontSize: z(13) }}>{r.name}</text>
               <text x={c[0]} y={c[1] + z(12)} textAnchor="middle" className="plan-s" style={{ fontSize: z(12) }}>{zoneMode ? '' : label(r)}</text>
@@ -765,13 +810,13 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
           const nearEdge = (q: Pt) => { let best = { i: -1, d: 0.5 }; pz.forEach((a, i) => { const b = pz[(i + 1) % pz.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, u = Math.max(0, Math.min(1, ((q[0] - a[0]) * (b[0] - a[0]) + (q[1] - a[1]) * (b[1] - a[1])) / (L * L))), d = Math.hypot(q[0] - a[0] - u * (b[0] - a[0]), q[1] - a[1] - u * (b[1] - a[1])); if (d < best.d) best = { i, d }; }); return best.i; };
           return (
             <g key={zn.id}>
-              <polygon points={pts(pz)} fill={zn.ufh ? 'url(#ufh-hatch)' : 'url(#zone-hatch)'} stroke={on ? '#c2410c' : zn.ufh ? '#b45309' : '#0b8a7a'} strokeWidth={z(on ? 2.5 : 1.8)} strokeDasharray={zn.ufh ? `${z(6)} ${z(3)}` : undefined}
+              <polygon points={pts(pz)} fill={roofMode ? 'url(#roof-hatch)' : zn.ufh ? 'url(#ufh-hatch)' : 'url(#zone-hatch)'} stroke={on ? '#c2410c' : roofMode ? '#5b4a8a' : zn.ufh ? '#b45309' : '#0b8a7a'} strokeWidth={z(on ? 2.5 : 1.8)} strokeDasharray={zn.ufh ? `${z(6)} ${z(3)}` : undefined}
                 style={{ cursor: tool === 'select' ? 'move' : undefined }} pointerEvents={zoneMode && tool === 'select' ? undefined : 'none'}
                 onPointerDown={(e) => { setSel({ ...NO_SEL, zone: zn.id }); begin(e, { k: 'zone', id: zn.id, start: raw(e), cur: raw(e), moved: false }); }}
-                onDoubleClick={(e) => { e.stopPropagation(); const i = nearEdge(raw(e)); if (i >= 0) upd((h) => { const x = h.zones?.find((q) => q.id === zn.id); if (x) x.poly.splice(i + 1, 0, [snap(raw(e)[0]), snap(raw(e)[1])]); }); }} />
+                onDoubleClick={(e) => { e.stopPropagation(); const i = nearEdge(raw(e)); if (i >= 0) { const p: Pt = [snap(raw(e)[0]), snap(raw(e)[1])]; upd((h) => editPoly(h, zn.id, { insert: [i, p] })); } }} />
               {zoneMode ? <>
                 <text x={c[0]} y={c[1] - z(2)} textAnchor="middle" className="plan-t" style={{ fontSize: z(12) }} pointerEvents="none">{zn.name}</text>
-                <text x={c[0]} y={c[1] + z(12)} textAnchor="middle" className="plan-s" style={{ fontSize: z(11) }} pointerEvents="none">{(bu?.name ?? '?').slice(0, 20)}{(bu?.name.length ?? 0) > 20 ? '…' : ''} · {polyArea(pz).toFixed(1)} m²</text>
+                <text x={c[0]} y={c[1] + z(12)} textAnchor="middle" className="plan-s" style={{ fontSize: z(11) }} pointerEvents="none">{roofMode ? (() => { const r = house.roofs.find((x) => x.id === zn.id); return r ? `${r.form === 'custom' ? 'edge by edge' : r.form}${r.form === 'flat' ? '' : ` ${r.pitch}°`} · on the ${house.storeys[roofStorey(house, r)]?.name.toLowerCase()}` : ''; })() : <>{(bu?.name ?? '?').slice(0, 20)}{(bu?.name.length ?? 0) > 20 ? '…' : ''}</>} · {polyArea(pz).toFixed(1)} m²</text>
               </> : (() => {
                 // A tag below the room labels: click to select the zone, drag to move it.
                 const t = `${zn.name} · ${polyArea(pz).toFixed(1)} m²`, w = z(t.length * 6.6 + 14), y = c[1] + z(44);
@@ -786,6 +831,22 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
             </g>
           );
         })}
+
+        {roofMode && roofDraw.map((p, k) => (
+          <g key={`rd${k}`} pointerEvents="none">
+            {p.lines.map(([a, b], i) => <line key={i} x1={a[0] * S} y1={a[1] * S} x2={b[0] * S} y2={b[1] * S} stroke="#5b4a8a" strokeWidth={z(1.6)} strokeLinecap="round" />)}
+            {p.poly.map((a, i) => {
+              const b = p.poly[(i + 1) % p.poly.length], gable = p.kinds[i]?.kind === 'gable', m = to([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+              return (
+                <g key={`e${i}`}>
+                  <line x1={a[0] * S} y1={a[1] * S} x2={b[0] * S} y2={b[1] * S} stroke="#5b4a8a" strokeWidth={z(gable ? 1.5 : 3)} strokeDasharray={gable ? `${z(6)} ${z(4)}` : undefined} />
+                  {sel.zone === p.id && <text x={m[0]} y={m[1] - z(5)} textAnchor="middle" className="draw-dim" style={{ fontSize: z(10), strokeWidth: z(3) }}>{i + 1}{gable ? ' gable' : ''}</text>}
+                </g>
+              );
+            })}
+            {(house.roofs.find((r) => r.id === p.id)?.dormers ?? []).map((d) => <rect key={d.id} x={to(d.at)[0] - z(6)} y={to(d.at)[1] - z(6)} width={z(12)} height={z(12)} fill="#5b4a8a" />)}
+          </g>
+        ))}
 
         {/* Windows and doors */}
         {opLayer}
@@ -826,19 +887,19 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
           <text key={`${r.id}-d${e.idx}`} x={mid[0]} y={mid[1] + z(4)} textAnchor="middle" className="draw-dim" style={{ fontSize: z(11), strokeWidth: z(3) }}>{e.len.toFixed(2)} m</text>
         )))}
 
-        {/* Corners: every one drags; double-click removes it. */}
+        {/* Corners: every one drags; double-click or the right-click menu removes it. */}
         {tool === 'select' && !zoneMode && onThis.flatMap((r) => polyOf(r).map((q, i) => {
           const v = to(q), on = sel.room === r.id, moving = drag?.k === 'move' && drag.verts.some(([id, j]) => id === r.id && j === i);
           return <circle key={`${r.id}-v${i}`} cx={v[0]} cy={v[1]} r={z((on ? 6.5 : 4.5) * hs)} className={`vx${on ? ' on' : ''}${moving ? ' moving' : ''}`} strokeWidth={z(2)} aria-label={`${r.name} corner ${i + 1}`}
-            onPointerDown={(e) => { setSel({ room: r.id, walls: [], item: null }); begin(e, { k: 'move', start: raw(e), cur: raw(e), verts: together(r.id, [i], e.altKey), base: roomPoly(r)[i], free: true, moved: false }); }}
-            onDoubleClick={(e) => { e.stopPropagation(); upd((h) => removeCorner(h, r.id, i)); }} />;
+            onPointerDown={(e) => { if (e.button === 2) { e.stopPropagation(); return; } setSel({ room: r.id, walls: [], item: null }); begin(e, { k: 'move', start: raw(e), cur: raw(e), verts: together(r.id, [i], e.altKey), base: roomPoly(r)[i], free: true, moved: false }); }}
+            onDoubleClick={(e) => { e.stopPropagation(); upd((h) => removeCorner(h, r.id, i)); }} onContextMenu={menuOn({ k: 'corner', room: r.id, idx: i })} />;
         }))}
 
         {/* Corners of the selected zone, over the room corners they often sit on. */}
         {tool === 'select' && zones.filter((zn) => zn.id === sel.zone).flatMap((zn) => zonePoly(zn).map((q, i) => (
           <circle key={`${zn.id}-v${i}`} cx={to(q)[0]} cy={to(q)[1]} r={z(6.5 * hs)} className="vx on" strokeWidth={z(2)} aria-label={`${zn.name} corner ${i + 1}`}
             onPointerDown={(e) => begin(e, { k: 'zone', id: zn.id, idx: i, start: raw(e), cur: raw(e), moved: false })}
-            onDoubleClick={(e) => { e.stopPropagation(); if (zn.poly.length > 3) upd((h) => { const x = h.zones?.find((y) => y.id === zn.id); if (x) x.poly.splice(i, 1); }); }} />
+            onDoubleClick={(e) => { e.stopPropagation(); if (zn.poly.length > 3) upd((h) => editPoly(h, zn.id, { remove: i })); }} />
         )))}
         {/* In-progress drawing and placement previews */}
         {draft.length > 0 && <>
@@ -897,16 +958,18 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
             const r = house.rooms.find((x) => x.id === on.id);
             if (!r) return { title: '', tip: '', items: [] };
             return { title: `${r.name} actions`, tip: `${r.name} · ${polyArea(roomPoly(r)).toFixed(1)} m²`, items: [
+              { label: 'Open room', glyph: '↗', run: () => { location.hash = href('room', r.id); } },
               edit('Rename', '✎', 'name'),
               { label: 'Add a radiator', glyph: '≣', off: r.heated ? undefined : `${r.name} is unheated; make it heated first`, run: () => placeEmitter(at) },
               { label: r.heated ? 'Make unheated' : 'Make heated', glyph: r.heated ? '❄' : '♨', run: () => upd((h) => { const x = h.rooms.find((q) => q.id === r.id); if (x) x.heated = !x.heated; }) },
-              { label: 'Duplicate', glyph: '⧉', run: () => {
-                // copyRooms names the new room first, so with one room it is `r<sfx>0`.
-                const sfx = uid(''); let k = 0;
-                upd((h) => { copyRooms(h, [r.id], [1, 1], undefined, true, (p) => `${p}${sfx}${k++}`); });
-                setSel({ ...NO_SEL, room: `r${sfx}0` });
-              } },
               { label: 'Delete room', glyph: '✕', run: () => { upd((h) => deleteRoom(h, r.id)); setSel(NO_SEL); } },
+            ] };
+          }
+          if (on.k === 'corner') {
+            const r = house.rooms.find((x) => x.id === on.room);
+            if (!r) return { title: '', tip: '', items: [] };
+            return { title: 'Corner actions', tip: `${r.name} · corner ${on.idx + 1}`, items: [
+              { label: 'Delete corner', glyph: '✕', off: roomPoly(r).length <= 3 ? 'A room needs at least three corners' : undefined, run: () => upd((h) => removeCorner(h, r.id, on.idx)) },
             ] };
           }
           if (on.k === 'op') {

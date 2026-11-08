@@ -2,7 +2,7 @@
 // Each starts from the age-band template (newHouse) and adds rooms, windows, party walls and its own build-ups.
 import { calcHouse } from './house';
 import type { Buildup, Device, House, Opening, Room } from './house';
-import { CHIMNEY, FAN, defaultHouse } from './house-default';
+import { CHIMNEY, FAN, defaultHouse, mainRoof } from './house-default';
 import { autoEmitters } from './house-heating';
 import { newProject } from './house-scenarios';
 import type { Project, Scenario } from './house-scenarios';
@@ -75,7 +75,7 @@ export function stoneCottage(): Project {
     { id: 'door', name: 'Solid timber door', kind: 'door', layers: [], u: 3.0 },
   ]);
   h.climate = { ...h.climate, postcode: 'GL54', auto: true, altitude: 150 };
-  h.loft = { ...h.loft, pitch: 40 };
+  h.roofs = [mainRoof(40)];
   h.vent.devices = [dev('chim', 'living', 'Chimney', false, CHIMNEY, 1), dev('kfan', 'kitchen', 'Extract fan', true, FAN, 1), dev('bfan', 'bath', 'Extract fan', true, FAN, 0)];
   finish(h, [
     room('living', 'Living room', 'living', 0, 0, 0, 4.4, 5.0, 21),

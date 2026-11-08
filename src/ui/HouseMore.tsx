@@ -1,10 +1,13 @@
 import { useState } from 'react';
-import { SHADING, UPSTAND_PSI, bearingLabel, buildupU } from '../engine/house';
+import { FOOTINGS_K, SHADING, UPSTAND_PSI, bearingLabel, buildupU, edgeR } from '../engine/house';
 import type { Buildup, FloorEdge } from '../engine/house';
 import { Chip } from './controls';
 import { MAT } from '../engine/data';
-import { Card, Num, fmt } from './hform';
+import { Card, Num, Why, fmt } from './hform';
+import { WHY } from './assumptions';
 import { GainsCard } from './HouseRuns';
+import { MaterialPickerModal } from './MaterialPickerModal';
+import { EdgeSketch } from './EdgeSketch';
 import { useProject } from './project';
 import { href } from './route';
 
@@ -14,13 +17,19 @@ export function GainsPage() {
   return <div className="house"><GainsCard house={house} upd={upd} /></div>;
 }
 
-const EDGE0: FloorEdge = { edge: 'none', D: 0.6, R: 1.5, upstand: 'off', psi: UPSTAND_PSI.none };
+const EDGE0: FloorEdge = { edge: 'none', D: 0.6, R: 1.5, mat: 'm_xps_033', t: 50, upstand: 'off', psi: UPSTAND_PSI.none };
 
 /** Board 2b: what the ground floor sits on, and its edge: foundation edge insulation and the upstand junction. */
 export function FloorPage() {
   const { house, upd, res } = useProject();
   const fe = house.floorEdge ?? EDGE0;
   const setFe = (patch: Partial<FloorEdge>) => upd((h) => { h.floorEdge = { ...(h.floorEdge ?? EDGE0), ...patch }; });
+  const [picking, setPicking] = useState<'edge' | 'up' | null>(null);
+  const um = fe.upMat ? MAT[fe.upMat] : undefined;
+  // The drawing shows the default outside wall on the default ground floor: its own Ψ, or the average if that pair isn't in the house.
+  const dWall = house.buildups.find((b) => b.id === house.defaults.extWall)?.name, dFloor = house.buildups.find((b) => b.id === house.defaults.groundFloor)?.name;
+  const sketchPsi = res.junctions.find((jn) => jn.wall === dWall && jn.floor === dFloor)?.psi ?? res.junctionPsi;
+  const em = fe.mat ? MAT[fe.mat] : undefined;
   const floors = res.rooms.flatMap((r) => r.faces.filter((f) => f.kind === 'floor' && (f.to.k === 'ground')).map((f) => ({ r, f })));
   const area = floors.reduce((a, x) => a + x.f.area, 0);
   const W = res.rooms.reduce((a, r) => a + r.rows.filter((x) => x.kind === 'floor' && x.to === 'ground').reduce((b, x) => b + x.W, 0), 0);
@@ -40,24 +49,68 @@ export function FloorPage() {
           </div>
           <p className="small muted">The U-value is the BS EN ISO 13370 figure for the whole floor: it depends on the floor area and exposed perimeter, so a bigger footprint loses less per m². Change the layers or the floor type in the build-up library.</p>
         </Card>
+        {picking === 'edge' && <MaterialPickerModal value={fe.mat ?? ''} title="Edge insulation material" onClose={() => setPicking(null)}
+          onSelect={(id) => { setFe({ mat: id, t: fe.mat === id ? fe.t : MAT[id]?.t }); setPicking(null); }} />}
+        {picking === 'up' && <MaterialPickerModal value={fe.upMat ?? ''} title="Upstand material" onClose={() => setPicking(null)}
+          onSelect={(id) => { setFe({ upMat: id, upT: fe.upMat === id ? fe.upT : 25 }); setPicking(null); }} />}
         <Card title="Floor edge" note="Solid slabs on the ground only. Both lower or add to every ground-floor room's floor U-value.">
           <div className="stack-10">
-            <div className="eyebrow">Foundation edge insulation (BS EN ISO 13370)</div>
+            <div className="eyebrow">Foundation edge insulation (BS EN ISO 13370)<Why label="Horizontal or vertical: what's the difference?">{WHY.edgeInsulation}</Why></div>
             <div className="chips" role="group" aria-label="Edge insulation">
               {([['none', 'None'], ['horizontal', 'Horizontal, round the edge'], ['vertical', 'Vertical, down the foundation']] as const).map(([k, l]) => <Chip key={k} on={fe.edge === k} onClick={() => setFe({ edge: k })}>{l}</Chip>)}
             </div>
-            {fe.edge !== 'none' && (
-              <div className="hf-row">
-                <Num label={fe.edge === 'vertical' ? 'Depth below ground' : 'Width from the wall'} unit="m" step={0.1} value={fe.D} onChange={(v) => setFe({ D: Math.max(0, v) })} />
-                <Num label="Its thermal resistance" unit="m²K/W" step={0.25} value={fe.R} onChange={(v) => setFe({ R: Math.max(0, v) })} />
+            {fe.edge !== 'none' && (<>
+              <div className="chips" role="group" aria-label="Side of the foundation">
+                {([['outside', 'Outside the foundation'], ['inside', 'Inside the foundation']] as const).map(([k, l]) => <Chip key={k} on={(fe.side ?? 'outside') === k} onClick={() => setFe({ side: k })}>{l}</Chip>)}
               </div>
-            )}
+              <p className="small muted">BS EN ISO 13370 counts both sides the same for the floor U-value{fe.upstand === 'calc' ? '; the calculated junction below does use it.' : ', so here it only moves it in the drawing.'}</p>
+              <div className="hf-row">
+                <Num label={fe.edge === 'vertical' ? 'Depth below ground' : 'Width from the wall'} unit="m" step={0.1} value={fe.D} why={WHY.edgeD} onChange={(v) => setFe({ D: Math.max(0, v) })} />
+                <label className="hf"><span className="hf-lab"><span className="eyebrow">Insulation</span></span>
+                  <button type="button" className="btn-secondary" onClick={() => setPicking('edge')}>{em ? em.name : 'Choose a material'}</button>
+                </label>
+                {em && !em.R && <Num label="Thickness" unit="mm" step={em.step} min={em.min} max={em.max} value={fe.t ?? em.t} onChange={(v) => setFe({ t: Math.max(1, v) })} />}
+              </div>
+              <p className="small muted">{em
+                ? <>R {fmt(edgeR(fe), 2)} m²K/W{em.k ? ` (${fe.t ?? em.t} mm ÷ λ ${em.k} W/mK)` : ''}.<Why>{WHY.edgeR}</Why></>
+                : <>R {fmt(fe.R, 2)} m²K/W, typed in before materials could be picked. Choose a material to work it out from its thickness instead.</>}</p>
+            </>)}
             <div className="eyebrow">Floor-to-wall junction (perimeter upstand)</div>
             <div className="chips" role="group" aria-label="Perimeter upstand">
-              {([['off', 'Leave out'], ['none', `No upstand, Ψ ${UPSTAND_PSI.none}`], ['insulated', `Insulated upstand, Ψ ${UPSTAND_PSI.insulated}`], ['custom', 'Own Ψ']] as const).map(([k, l]) => <Chip key={k} on={fe.upstand === k} onClick={() => setFe({ upstand: k })}>{l}</Chip>)}
+              {([['off', 'Leave out'], ['calc', 'Calculate from my build-ups'], ['none', `No upstand, Ψ ${UPSTAND_PSI.none}`], ['insulated', `Insulated upstand, Ψ ${UPSTAND_PSI.insulated}`], ['custom', 'Own Ψ']] as const).map(([k, l]) => <Chip key={k} on={fe.upstand === k} onClick={() => k === 'calc' && fe.upstand !== 'calc' && fe.upMat === undefined ? setFe({ upstand: k, upMat: 'pir', upT: 25 }) : setFe({ upstand: k })}>{l}</Chip>)}
             </div>
             {fe.upstand === 'custom' && <div className="hf-row"><Num label="Ψ" unit="W/mK" step={0.01} value={fe.psi} onChange={(v) => setFe({ psi: Math.max(0, v) })} /></div>}
+            {fe.upstand === 'calc' && (<>
+              <div className="hf-row">
+                <label className="hf"><span className="hf-lab"><span className="eyebrow">Upstand</span></span>
+                  <span className="chips">
+                    <button type="button" className="btn-secondary" onClick={() => setPicking('up')}>{um ? um.name : 'Choose a material'}</button>
+                    {um && <button type="button" className="btn-link inline" onClick={() => setFe({ upMat: undefined })}>No upstand</button>}
+                  </span>
+                </label>
+                {um && !um.R && <Num label="Thickness" unit="mm" step={5} min={5} max={100} value={fe.upT ?? 25} onChange={(v) => setFe({ upT: Math.max(1, v) })} />}
+                <label className="hf"><span className="eyebrow">Foundation under the wall</span>
+                  <select className="select" value={fe.footK ?? FOOTINGS_K[0][0]} onChange={(e) => setFe({ footK: Number(e.target.value) })}>
+                    {FOOTINGS_K.map(([k, l]) => <option key={k} value={k}>{l} (λ {k})</option>)}
+                  </select>
+                </label>
+                <Num label="Foundation depth" unit="m" step={0.05} min={0} max={2} value={fe.footD ?? 0.75} why={WHY.footD} onChange={(v) => setFe({ footD: Math.min(2, Math.max(0, v)) })} />
+              </div>
+              {res.junctions.length > 1 ? (<>
+                <div className="h-table-wrap">
+                  <table className="h-table">
+                    <thead><tr><th>Outside wall</th><th>Ground floor</th><th className="n">Length, m</th><th className="n">Ψ, W/mK</th></tr></thead>
+                    <tbody>{res.junctions.map((jn) => <tr key={jn.wall + jn.floor}><td className="small">{jn.wall}</td><td className="small">{jn.floor}</td><td className="n mono">{fmt(jn.len, 1)}</td><td className="n mono">{fmt(jn.psi, 3)}</td></tr>)}</tbody>
+                  </table>
+                </div>
+                <p className="small">Each worked out from a 2-D heat-flow model of that wall meeting that floor (BS EN ISO 10211); <b>{fmt(res.junctionPsi, 3)} W/mK</b> on average over the walls.<Why label="How is this worked out?">{WHY.junctionCalc}</Why></p>
+              </>) : (
+                <p className="small"><b>Ψ {fmt(res.junctionPsi, 3)} W/mK</b>, from a 2-D heat-flow model of your wall and ground floor at this junction (BS EN ISO 10211).<Why label="How is this worked out?">{WHY.junctionCalc}</Why></p>
+              )}
+            </>)}
             <p className="small muted">The junction is a loss per metre of outside wall on the ground floor, spread over each room's floor. The two set values are SAP Table K1 (E5, ground floor): the default for an unchecked detail, and an approved detail with an insulated upstand at the screed edge. Use your own Ψ from a junction calculation if you have one.</p>
+            <EdgeSketch house={house} fe={fe} psi={sketchPsi} />
+            <p className="small"><a href={href('learn', 'floor-edge')}>Why floor edges and junctions matter ›</a> · <a href={href('learn', 'junction-model')}>How the junction Ψ is worked out ›</a></p>
           </div>
         </Card>
         <Card title="Suspended timber floors" note="Used when a ground floor build-up is set to suspended timber.">

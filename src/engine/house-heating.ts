@@ -112,14 +112,20 @@ export function systemFlow(h: House, needs: RoomNeed[], Tdesign: number, Te: num
   return clamp(f);
 }
 
+/** What sets a room's heating hours: no emitter (never heated), its zone switched off, the zone's own hours, or an occupancy row. */
+export function scheduleSource(h: House, room: Room): { kind: 'none' | 'off' | 'zone' | 'living' | 'bedrooms'; zone?: House['heating']['zones'][number] } {
+  const e = h.heating.emitters.find((x) => x.room === room.id);
+  if (!e) return { kind: 'none' };
+  const zone = h.heating.zones.find((x) => x.id === e.zone);
+  if (zone && !zone.on) return { kind: 'off', zone };
+  if (zone?.hours) return { kind: 'zone', zone };
+  return { kind: room.type === 'bedroom' || room.type === 'bathroom' ? 'bedrooms' : 'living', zone };
+}
+
 /** Hours a room's heating is scheduled on: its zone's own hours, or the occupancy schedule for its type. */
 export function roomSchedule(h: House, room: Room): number[] | null {
-  const e = h.heating.emitters.find((x) => x.room === room.id);
-  if (!e) return null;
-  const z = h.heating.zones.find((x) => x.id === e.zone);
-  if (z && !z.on) return Array(24).fill(0);
-  if (z?.hours) return z.hours;
-  return room.type === 'bedroom' || room.type === 'bathroom' ? h.gains.bedrooms : h.gains.living;
+  const s = scheduleSource(h, room);
+  return s.kind === 'none' ? null : s.kind === 'off' ? Array(24).fill(0) : s.kind === 'zone' ? s.zone!.hours! : h.gains[s.kind];
 }
 
 /** One K2 radiator per heated room, the shortest 600-high length (in 200 mm steps) that meets the need at the max flow. */

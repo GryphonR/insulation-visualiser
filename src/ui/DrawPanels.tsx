@@ -5,17 +5,18 @@ import { RAD_LABEL, UFH_PIPES, UFH_SPACINGS, loopLength, loopMax } from '../engi
 import type { RadType } from '../engine/house-heating';
 import { addBasement, addStoreyAbove, bandName, canAddBasement, canRemoveBasement, canRemoveTop, copyRooms, deleteRoom, flipRooms, innerDoorAt, isOutside, narrowAtWall, openingCentre, pieceAlign, pieceGap, pieceKeys, pieceThickness, removeBasement, setPieceAlign, removeTop, rotateRooms, setWallLength, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
 import { polyArea } from '../engine/geom';
-import { Num, fmt, uid } from './hform';
+import { Num, fmt, uid, NumInput } from './hform';
 import { NO_SEL } from './DrawCanvas';
 import type { Sel, Tool, WallRef } from './DrawCanvas';
 import { href } from './route';
+import { RoofSectionFields, newRoof } from './HouseRoof';
 
 const TOOLS: Array<[Tool, string, string]> = [
   ['select', 'Select', '↖'], ['room', 'Room', '⬠'], ['box', 'Box room', '▭'], ['split', 'Split room', '✂'], ['corner', 'Add corner', '＋'],
   ['window', 'Window', '▬'], ['door', 'Door', '▯'], ['radiator', 'Radiator', '≣'], ['ufh', 'UFH zone', '▦'],
 ];
 const HINT: Record<Tool, string> = {
-  select: 'Drag a wall or a corner to reshape; drag a room to move it and it snaps flush to its neighbours. Shift-drag on empty canvas boxes several rooms; Shift-click a room adds it; Shift-click walls selects several. Arrow keys nudge. Double-click a wall to add a corner, a corner to remove it. Alt stops neighbours following; hold Shift while drawing for free (no snapping). Double-click a tool to keep it.',
+  select: 'Drag a wall or a corner to reshape; drag a room to move it and it snaps flush to its neighbours. Shift-drag on empty canvas boxes several rooms; Shift-click a room adds it; Shift-click walls selects several. Arrow keys nudge. Double-click a wall to add a corner, a corner to remove it, a room to open it. Alt stops neighbours following; hold Shift while drawing for free (no snapping). Double-click a tool to keep it.',
   room: 'Click each corner; lines snap square and 45° and sit flush on other rooms (Shift: free). Type a length and press Enter to set the next wall exactly. Click the first corner, double-click or press Enter to finish; Backspace undoes, Esc cancels.',
   box: 'Drag out a rectangular room, or click one corner then the opposite corner.',
   split: 'Click two points to draw a line across a room; it is cut in two along the line, with its windows, walls and emitters shared out.',
@@ -34,17 +35,22 @@ const HINT_BAND: Partial<Record<Tool, string>> = {
 };
 
 /** What the current tool does, for the hint bubble. */
-export const drawHint = (band: boolean, tool: Tool) => (band ? HINT_BAND[tool] ?? HINT[tool] : HINT[tool]);
+const HINT_ROOF: Partial<Record<Tool, string>> = {
+  select: 'Click a roof to edit its form, pitch, edges and dormers on the right. Drag it, or its corners, to reshape it (a roof that follows the rooms gets an outline of its own). Double-click an edge to add a corner, a corner to remove it.',
+  room: 'Click each corner of the roof at its eaves (outside the walls); click the first corner, double-click or press Enter to finish. It sits on the storey shown.',
+  box: 'Drag out a rectangular roof at its eaves, or click one corner then the opposite one.',
+};
+export const drawHint = (band: boolean | 'roof', tool: Tool) => (band === 'roof' ? HINT_ROOF[tool] ?? HINT[tool] : band ? HINT_BAND[tool] ?? HINT[tool] : HINT[tool]);
 
 /** The drawing menu: a slim column of tool icons (names on hover) that floats over the canvas. */
 export function DrawMenu({ band, tool, setTool, sticky, setSticky, snapOn, setSnapOn, grid, setGrid }: {
   /** On a floor or ceiling layer: only zones and (on floors) heated-floor loops can be drawn. */
-  band: null | 'floor' | 'top';
+  band: null | 'floor' | 'top' | 'roof';
   tool: Tool; setTool: (t: Tool) => void; sticky: boolean; setSticky: (v: boolean) => void; snapOn: boolean; setSnapOn: (v: boolean) => void; grid: number; setGrid: (v: number) => void;
 }) {
   return (
     <div className="draw-menu" role="toolbar" aria-label="Drawing tools">
-      {TOOLS.filter(([id]) => !band || id === 'select' || id === 'room' || id === 'box' || (id === 'ufh' && band === 'floor')).map(([id, l, glyph]) => [id, band ? ({ room: 'Zone', box: 'Box zone' } as Record<string, string>)[id] ?? l : l, glyph] as [Tool, string, string]).map(([id, label, glyph]) => (
+      {TOOLS.filter(([id]) => !band || id === 'select' || id === 'room' || id === 'box' || (id === 'ufh' && band === 'floor')).map(([id, l, glyph]) => [id, band ? ((band === 'roof' ? { room: 'Roof', box: 'Box roof' } : { room: 'Zone', box: 'Box zone' }) as Record<string, string>)[id] ?? l : l, glyph] as [Tool, string, string]).map(([id, label, glyph]) => (
         <button key={id} type="button" className={tool === id ? 'on' : ''} aria-pressed={tool === id} aria-label={label} title={`${label}. Double-click to keep this tool after each use`}
           onClick={() => { setTool(id); setSticky(false); }} onDoubleClick={() => { setTool(id); setSticky(id !== 'select'); }}>
           <span aria-hidden="true">{glyph}</span>{sticky && tool === id && <i className="lock" aria-hidden="true" />}
@@ -79,33 +85,70 @@ const ZONE_KINDS: BuildupKind[] = ['floor', 'roof'];
  * and under them. A storey is drawn with rooms and walls; a band is drawn with zones (patches with their own build-up) and
  * heated-floor loops. Click a layer to edit it; the open one lists its zones.
  */
-export function LayerTree({ house, res, storey, band, pickStorey, pickBand, zone, pickZone, upd, below, setBelow }: {
-  house: House; res: HouseResult; storey: number; band: number | null; pickStorey: (s: number) => void; pickBand: (b: number) => void;
-  zone?: string; pickZone: (id: string) => void; upd: (fn: (h: House) => void) => void; below: boolean; setBelow: (v: boolean) => void;
+// Short names for the tabs; the full name is in the tooltip.
+const bandTab = (h: House, b: number) => (b > h.storeys.length - 1 ? (h.roofs?.length ? 'Top ceilings' : 'Flat roof') : b === 0 ? (h.storeys[0].below ? 'Basement floor' : 'Ground slab') : 'Floor');
+
+/** The layers of the house as tabs along the bottom of the canvas, ground up from left to right: each storey, the floor between storeys, the roof. */
+export function LayerTabs({ house, storey, band, roof, pickStorey, pickBand, pickRoof, upd, below, setBelow }: {
+  house: House; storey: number; band: number | null; roof: boolean; pickStorey: (s: number) => void; pickBand: (b: number) => void; pickRoof: () => void;
+  upd: (fn: (h: House) => void) => void; below: boolean; setBelow: (v: boolean) => void;
+}) {
+  const last = house.storeys.length - 1;
+  const bandTabEl = (b: number) => {
+    const zs = (house.zones ?? []).filter((z) => z.band === b).length;
+    return <button key={`b${b}`} type="button" role="tab" className={`lt lt-band${band === b ? ' on' : ''}`} aria-selected={band === b} title={`${bandName(house, b)}${zs ? ` · ${zs} zone${zs === 1 ? '' : 's'}` : ''}`} onClick={() => pickBand(b)}>{bandTab(house, b)}</button>;
+  };
+  const tabs: JSX.Element[] = [];
+  for (let s = 0; s <= last; s++) {
+    const n = house.rooms.filter((r) => onStorey(r, s)).length, on = band == null && !roof && storey === s;
+    tabs.push(bandTabEl(s));
+    tabs.push(<button key={`s${s}`} type="button" role="tab" className={`lt${on ? ' on' : ''}`} aria-selected={on} onClick={() => pickStorey(s)}><b>{house.storeys[s].name}</b><span>{n} room{n === 1 ? '' : 's'}</span></button>);
+  }
+  tabs.push(bandTabEl(last + 1));
+  tabs.push(<button key="roof" type="button" role="tab" className={`lt${roof ? ' on' : ''}`} aria-selected={roof} onClick={() => pickRoof()}><b>Roof</b><span>{house.roofs.length ? `${house.roofs.length} section${house.roofs.length === 1 ? '' : 's'}` : 'flat'}</span></button>);
+  return (
+    <div className="layer-tabs">
+      <button type="button" className="lt-add" disabled={!canAddBasement(house)} title={canAddBasement(house) ? 'Add a basement below' : 'There is a basement already'} onClick={() => { upd(addBasement); pickStorey(0); }}>＋ Basement</button>
+      <div className="lt-row" role="tablist" aria-label="Storeys and layers, ground up">{tabs}</div>
+      <button type="button" className="lt-add" onClick={() => { upd(addStoreyAbove); pickStorey(house.storeys.length); }}>＋ Storey</button>
+      <label className="lt-faint small" title="Show the storeys above and below faintly"><input type="checkbox" checked={below} onChange={(e) => setBelow(e.target.checked)} /> Faint above / below</label>
+    </div>
+  );
+}
+
+/** The settings of the layer open in the tabs: a storey's height, a floor's build-up and zones, the roof's sections. */
+export function LayerSettings({ house, res, storey, band, roof, zone, pickZone, pickStorey, pickRoof, upd }: {
+  house: House; res: HouseResult; storey: number; band: number | null; roof: boolean; zone?: string;
+  pickZone: (id: string) => void; pickStorey: (s: number) => void; pickRoof: (id?: string) => void; upd: (fn: (h: House) => void) => void;
 }) {
   const last = house.storeys.length - 1;
   const faces = (rooms: string[], pick: (key: string, kind: string) => boolean) => res.rooms.filter((r) => rooms.includes(r.room.id)).flatMap((r) => r.faces.filter((f) => pick(f.key, f.kind) && !f.key.includes('~')));
-  const bandFaces = (b: number) => (b > last
-    ? faces(house.rooms.filter((r) => r.storey + r.span - 1 === last).map((r) => r.id), (k) => k.startsWith('lc:') || k.startsWith('fr:'))
-    : faces(house.rooms.filter((r) => r.storey === b).map((r) => r.id), (_k, kind) => kind === 'floor'));
-  const rows: JSX.Element[] = [];
-
-  const bandRow = (b: number) => {
-    const on = band === b, fs = bandFaces(b), zs = (house.zones ?? []).filter((z) => z.band === b), kinds: BuildupKind[] = b > last ? ['roof', 'floor'] : ['floor'];
+  if (roof) return (
+    <div className="layer-body">
+          {house.roofs.map((s) => (
+            <div key={s.id} className={`zone-row${zone === s.id ? ' on' : ''}`}>
+              <button type="button" className="btn-link" onClick={() => pickRoof(s.id)}>{s.name} · {s.form === 'custom' ? 'edge by edge' : s.form}{s.form === 'flat' ? '' : ` ${s.pitch}°`}</button>
+              <button type="button" className="btn-link" aria-label={`Delete ${s.name}`} onClick={() => upd((h) => { h.roofs = h.roofs.filter((q) => q.id !== s.id); })}>Delete</button>
+            </div>
+          ))}
+          {!house.roofs.some((s) => !s.poly) && <button type="button" className="btn-secondary" onClick={() => { const r = newRoof(house); r.form = 'gable'; upd((h) => { h.roofs.push(r); }); pickRoof(r.id); }}>＋ Roof over the top storey</button>}
+          <span className="small muted">Or draw one with Roof or Box roof: a lean-to, a wing, a porch.</span>
+          <span className="eyebrow">Loft roof build-up</span>
+          <BuildupSelect label="Loft roof" value={house.defaults.loftRoof} options={ofKind(house, 'roof')} onPick={(id) => upd((h) => { h.defaults.loftRoof = id; })} />
+    </div>
+  );
+  if (band != null) {
+    const b = band, fs = b > last
+      ? faces(house.rooms.filter((r) => r.storey + r.span - 1 === last).map((r) => r.id), (k) => k.startsWith('lc:') || k.startsWith('fr:'))
+      : faces(house.rooms.filter((r) => r.storey === b).map((r) => r.id), (_k, kind) => kind === 'floor');
+    const zs = (house.zones ?? []).filter((z) => z.band === b), kinds: BuildupKind[] = b > last ? ['roof', 'floor'] : ['floor'];
     return (
-      <div key={`b${b}`} className={`layer-band${on ? ' on' : ''}`}>
-        <button type="button" aria-pressed={on} onClick={() => pickBand(b)}><b>{bandName(house, b)}</b><span className="small muted">{zs.length ? `${zs.length} zone${zs.length === 1 ? '' : 's'}` : 'no zones'}</span></button>
-        {on && (
-          <div className="layer-body">
+      <div className="layer-body">
             <span className="eyebrow">Whole layer</span>
             {fs.length
               ? <BuildupSelect label={`${bandName(house, b)} build-up`} value={common(fs.map((f) => f.buildup.id))} options={ofKind(house, ...kinds)} onPick={(id) => upd((h) => { fs.forEach((f) => { h.faceBuildup[f.key] = id; }); })} />
               : <span className="small muted">Nothing drawn here yet.</span>}
-            {b > last && house.loft.present && <>
-              <span className="eyebrow">Loft roof</span>
-              <BuildupSelect label="Loft roof" value={house.defaults.loftRoof} options={ofKind(house, 'roof')} onPick={(id) => upd((h) => { h.defaults.loftRoof = id; })} />
-            </>}
-            {b > 0 && b <= last && <label className="small muted">Thickness <input type="number" className="thk-input" step={0.05} min={0} value={house.storeys[b - 1].zone} aria-label="Floor zone thickness" onChange={(e) => upd((h) => { h.storeys[b - 1].zone = Math.max(0, Number(e.target.value) || 0); })} /> m</label>}
+            {b > 0 && b <= last && <label className="small muted">Thickness <NumInput className="thk-input" step={0.05} min={0} value={house.storeys[b - 1].zone} aria-label="Floor zone thickness" onChange={(e) => upd((h) => { h.storeys[b - 1].zone = Math.max(0, Number(e.target.value) || 0); })} /> m</label>}
             <span className="eyebrow">Zones</span>
             {zs.length === 0 && <span className="small muted">Draw one with Zone or Box zone.</span>}
             {zs.map((z) => (
@@ -115,47 +158,25 @@ export function LayerTree({ house, res, storey, band, pickStorey, pickBand, zone
                 <button type="button" className="btn-link" aria-label={`Delete ${z.name}`} onClick={() => upd((h) => { h.zones = h.zones?.filter((q) => q.id !== z.id); })}>Delete</button>
               </div>
             ))}
-          </div>
-        )}
       </div>
     );
-  };
-
-  rows.push(bandRow(last + 1));
-  for (let s = last; s >= 0; s--) {
-    const st = house.storeys[s], n = house.rooms.filter((r) => onStorey(r, s)).length, on = band == null && storey === s;
-    rows.push(
-      <div key={`s${s}`} className={`layer-storey${on ? ' on' : ''}`}>
-        <button type="button" onClick={() => pickStorey(s)} aria-pressed={on}><b>{st.name}</b><span className="small muted">{n} room{n === 1 ? '' : 's'}{st.below ? ` · ${st.below} m underground` : ''}</span></button>
-        {on && <>
-          <label className="small muted">Height <input type="number" className="thk-input" step={0.05} min={1} value={st.h} aria-label={`${st.name} height`} onChange={(e) => upd((h) => { h.storeys[s].h = Math.max(1, Number(e.target.value) || 1); })} /> m</label>
+  }
+  const s = storey, st = house.storeys[s], n = house.rooms.filter((r) => onStorey(r, s)).length;
+  if (!st) return null;
+  return (
+    <div className="layer-body">
+          <label className="small muted">Height <NumInput className="thk-input" step={0.05} min={1} value={st.h} aria-label={`${st.name} height`} onChange={(e) => upd((h) => { h.storeys[s].h = Math.max(1, Number(e.target.value) || 1); })} /> m</label>
           {n > 0 && <button type="button" className="btn-link" title="Copy this storey's rooms, windows and doors onto the storey above (a new one if this is the top)"
             onClick={() => {
               const above = s < last ? house.rooms.filter((r) => onStorey(r, s + 1)).length : 0;
               if (above && !confirm(`${house.storeys[s + 1].name} already has ${above} room${above === 1 ? '' : 's'}. Copy ${st.name}'s rooms on top of them?`)) return;
               const sfx = uid(''); upd((h) => { if (s === h.storeys.length - 1) addStoreyAbove(h); let k = 0; copyRooms(h, h.rooms.filter((r) => r.storey === s).map((r) => r.id), [0, 0], s + 1, false, (p) => `${p}${sfx}${k++}`); }); pickStorey(s + 1); }}>Copy rooms up ›</button>}
-        </>}
-      </div>,
-    );
-    rows.push(bandRow(s));
-  }
-
-  return (
-    <div className="layers">
-      <button type="button" className="btn-secondary" onClick={() => { upd(addStoreyAbove); pickStorey(house.storeys.length); }}>＋ Add storey above</button>
-      <div className="layer-stack">{rows}</div>
-      <div className="chips">
-        <button type="button" className="btn-secondary" disabled={!canAddBasement(house)} title={canAddBasement(house) ? '' : 'There is a basement already'}
-          onClick={() => { upd(addBasement); pickStorey(0); }}>＋ Add basement below</button>
-        {canRemoveTop(house) && <button type="button" className="btn-link" onClick={() => { upd(removeTop); pickStorey(Math.min(storey, last - 1)); }}>Remove empty top storey</button>}
-        {canRemoveBasement(house) && <button type="button" className="btn-link" onClick={() => { upd(removeBasement); pickStorey(0); }}>Remove empty basement</button>}
-      </div>
-      <label className="small"><input type="checkbox" checked={below} onChange={(e) => setBelow(e.target.checked)} /> Show the storeys above and below faintly</label>
+      {s === last && canRemoveTop(house) && <button type="button" className="btn-link" onClick={() => { upd(removeTop); pickStorey(Math.min(storey, last - 1)); }}>Remove this empty top storey</button>}
+      {s === 0 && canRemoveBasement(house) && <button type="button" className="btn-link" onClick={() => { upd(removeBasement); pickStorey(0); }}>Remove this empty basement</button>}
     </div>
   );
 }
 
-/** What is selected on the canvas: walls (assign build-ups), a window or door, or an emitter. */
 export function Inspector({ house, res, storey, sel, setSel, upd }: {
   house: House; res: HouseResult; storey: number; sel: Sel; setSel: (s: Sel) => void; upd: (fn: (h: House) => void) => void;
 }) {
@@ -173,6 +194,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
     wallPieces(house, r.id, e.idx, storey).filter((p) => (outsideOnly ? !p.other : !p.other || !!only || r.id < p.other!))
       .map((p): WallRef => ({ room: r.id, edge: e.idx, span: p.span, ...(p.other ? { other: p.other, gap: p.gap } : {}) }))));
 
+  if (sel.zone && house.roofs.some((x) => x.id === sel.zone)) return <RoofSectionFields house={house} id={sel.zone} upd={upd} onDeleted={() => setSel(NO_SEL)} />;
   if (sel.zone) {
     const z = house.zones?.find((x) => x.id === sel.zone);
     if (!z) return null;

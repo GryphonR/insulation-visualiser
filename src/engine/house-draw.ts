@@ -1,22 +1,19 @@
 // Edits behind the floor-plan drawing canvas: plain changes to a House copy, no UI.
 import { edges, overlapAreaPoly, pointInPoly, selfIntersects, sharedSpan } from './geom';
 import type { Pt } from './geom';
-import { defaultTemp, fitEdges, maxWallGap, onStorey, pairKey, rectShapeToEdges, roomArea, roomEdges, roomPoly, setOutline } from './house';
+import { defaultTemp, maxWallGap, onStorey, pairKey, roomArea, roomEdges, roomPoly, setOutline } from './house';
 import type { House, Room, Side, WallAlign } from './house';
 import type { Emitter } from './house-heating';
 
 const SIDE_IDX: Record<Side, number> = { N: 0, E: 1, S: 2, W: 3 };
 /** Face keys that number a room's walls (slopes, eaves, dormers) rather than naming a side. */
-const WALL_NO = ['sl', 'ev', 'dw', 'dc', 'dr', 'dg'];
-
 /** Rewrite the wall number in a room's face keys and openings; `f` returns the new number, or null to drop that wall's settings. */
 function renumberWalls(h: House, id: string, f: (i: number) => number | null): void {
   for (const m of [h.faceBuildup, h.faceBoundary, h.wallAlign] as Array<Record<string, string>>) {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(m)) {
-      const w = k.match(/^w:([^:]+):e(\d+):(\d+)$/), n = k.match(/^(\w\w):([^:]+):(\d+)$/);
-      if (w && w[1] === id) { const j = f(+w[2]); if (j != null) out[`w:${id}:e${j}:${w[3]}`] = v; }
-      else if (n && n[2] === id && WALL_NO.includes(n[1])) { const j = f(+n[3]); if (j != null) out[`${n[1]}:${id}:${j}`] = v; }
+      const w = k.match(/^(w|ev):([^:]+):e(\d+)((?::\d+)?)$/);
+      if (w && w[2] === id) { const j = f(+w[3]); if (j != null) out[`${w[1]}:${id}:e${j}${w[4]}`] = v; }
       else out[k] = v;
     }
     for (const k of Object.keys(m)) delete m[k];
@@ -29,15 +26,12 @@ function renumberWalls(h: House, id: string, f: (i: number) => number | null): v
 export function ensurePoly(h: House, id: string): Room | undefined {
   const r = h.rooms.find((x) => x.id === id);
   if (!r || r.poly) return r;
-  const at = r.shape?.axis === 'ns' ? [0, 2] : [3, 1];
-  if (r.shape && !r.shape.edges) r.shape = { ...r.shape, edges: rectShapeToEdges(r.shape) };
   setOutline(r, roomPoly(r));
-  // Rectangle walls N, E, S, W become walls 0–3; slope settings 0 and 1 go to the walls they sat on.
+  // Rectangle walls N, E, S, W become walls 0–3.
   for (const m of [h.faceBuildup, h.faceBoundary, h.wallAlign] as Array<Record<string, string>>) {
     for (const k of Object.keys(m)) {
-      const w = k.match(/^w:([^:]+):([NESW]):(\d+)$/), n = k.match(/^(\w\w):([^:]+):(\d+)$/);
-      if (w && w[1] === id) { m[`w:${id}:e${SIDE_IDX[w[2] as Side]}:${w[3]}`] = m[k]; delete m[k]; }
-      else if (n && n[2] === id && WALL_NO.includes(n[1]) && +n[3] < 2) { m[`${n[1]}:${id}:${at[+n[3]]}`] = m[k]; delete m[k]; }
+      const w = k.match(/^(w|ev):([^:]+):([NESW])((?::\d+)?)$/);
+      if (w && w[2] === id) { m[`${w[1]}:${id}:e${SIDE_IDX[w[3] as Side]}${w[4]}`] = m[k]; delete m[k]; }
     }
   }
   h.openings.forEach((o) => { if (o.room === id) o.edge = SIDE_IDX[o.side]; });
@@ -50,8 +44,7 @@ export function insertCorner(h: House, id: string, i: number, p: Pt): void {
   if (!r?.poly) return;
   const poly = [...r.poly];
   poly.splice(i + 1, 0, p);
-  if (r.shape?.edges) r.shape.edges.splice(i + 1, 0, { ...r.shape.edges[i], dormer: null });
-  const copy = (m: Record<string, string>) => { for (const [k, v] of Object.entries(m)) { const w = k.match(/^w:([^:]+):e(\d+):(\d+)$/); if (w && w[1] === id && +w[2] === i) m[`w:${id}:e${i + 1}:${w[3]}`] = v; } };
+  const copy = (m: Record<string, string>) => { for (const [k, v] of Object.entries(m)) { const w = k.match(/^(w|ev):([^:]+):e(\d+)((?::\d+)?)$/); if (w && w[2] === id && +w[3] === i) m[`${w[1]}:${id}:e${i + 1}${w[4]}`] = v; } };
   renumberWalls(h, id, (j) => (j > i ? j + 1 : j));
   copy(h.faceBuildup); copy(h.faceBoundary); copy(h.wallAlign);
   setOutline(r, poly);
@@ -62,7 +55,6 @@ export function removeCorner(h: House, id: string, i: number): void {
   const r = ensurePoly(h, id);
   if (!r?.poly || r.poly.length <= 3) return;
   const n = r.poly.length, prev = (i + n - 1) % n;
-  if (r.shape?.edges) r.shape.edges.splice(i, 1);
   h.openings.forEach((o) => { if (o.room === id && o.edge === i) { o.edge = prev; delete o.t; } });
   renumberWalls(h, id, (j) => (j === i ? null : j > i ? j - 1 : j));
   setOutline(r, r.poly.filter((_, j) => j !== i));
@@ -221,6 +213,7 @@ export const roomAt = (h: House, storey: number, p: Pt): Room | undefined => h.r
 /** Move every storey number up or down by one (a basement added or removed below the ground floor). */
 function shiftStoreys(h: House, d: 1 | -1): void {
   h.rooms.forEach((r) => { r.storey += d; });
+  (h.roofs ?? []).forEach((s) => { if (s.storey != null) s.storey = Math.max(0, s.storey + d); });
   for (const m of [h.faceBuildup, h.faceBoundary, h.wallAlign] as Array<Record<string, string>>) {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(m)) {
@@ -242,7 +235,11 @@ export function addBasement(h: House): void {
 }
 export const canRemoveTop = (h: House) => h.storeys.length > 1 && !h.rooms.some((r) => r.storey + r.span >= h.storeys.length);
 export const canRemoveBasement = (h: House) => !canAddBasement(h) && h.storeys.length > 1 && !h.rooms.some((r) => onStorey(r, 0));
-export function removeTop(h: House): void { if (canRemoveTop(h)) h.storeys.pop(); }
+export function removeTop(h: House): void {
+  if (!canRemoveTop(h)) return;
+  h.storeys.pop();
+  (h.roofs ?? []).forEach((s) => { if (s.storey != null && s.storey > h.storeys.length - 1) delete s.storey; });
+}
 export function removeBasement(h: House): void {
   if (!canRemoveBasement(h)) return;
   h.storeys.shift();
@@ -415,9 +412,9 @@ export function splitRoom(h: House, id: string, a: Pt, b: Pt, newId: string): bo
   for (const m of [h.faceBuildup, h.faceBoundary, h.wallAlign] as Array<Record<string, string>>) {
     const out: Record<string, string> = {};
     for (const [key, v] of Object.entries(m)) {
-      const w = key.match(/^w:([^:]+):e(\d+):(\d+)$/), x = key.match(/^(\w\w):([^:]+):(\d+)$/), iw = key.match(/^iw:([^:]+):(\d+)$/), one = key.match(/^(gf|xf|lc|fr):(.+)$/);
-      if (w && w[1] === id) { const k = +w[2]; if (inA(k)) out[`w:${id}:e${fA(k)}:${w[3]}`] = v; else out[`w:${newId}:e${fB(k)}:${w[3]}`] = v; }
-      else if (x && x[2] === id && WALL_NO.includes(x[1])) { const k = +x[3]; if (inA(k)) out[`${x[1]}:${id}:${fA(k)}`] = v; else out[`${x[1]}:${newId}:${fB(k)}`] = v; }
+      const w = key.match(/^(w|ev):([^:]+):e(\d+)((?::\d+)?)$/), iw = key.match(/^iw:([^:]+):(\d+)$/), one = key.match(/^(gf|xf|lc|fr|rl):(.+)$/), sl = key.match(/^sl:([^:]+):(.+)$/);
+      if (w && w[2] === id) { const k = +w[3]; if (inA(k)) out[`${w[1]}:${id}:e${fA(k)}${w[4]}`] = v; else out[`${w[1]}:${newId}:e${fB(k)}${w[4]}`] = v; }
+      else if (sl && sl[1] === id) { out[key] = v; out[`sl:${newId}:${sl[2]}`] = v; }
       else if (iw && iw[1].split('|').includes(id)) { out[key] = v; out[`iw:${pairKey(...(iw[1].split('|').map((q) => (q === id ? newId : q)) as [string, string]))}:${iw[2]}`] = v; }
       else if (one && one[2] === id) { out[key] = v; out[`${one[1]}:${newId}`] = v; }
       else out[key] = v;
@@ -430,11 +427,6 @@ export function splitRoom(h: House, id: string, a: Pt, b: Pt, newId: string): bo
     if (o.room !== id || o.edge == null) return;
     if (inA(o.edge)) o.edge = fA(o.edge); else { o.room = newId; o.edge = fB(o.edge); }
   });
-  if (room.shape?.edges) {
-    const es = room.shape.edges;
-    room.shape = { ...room.shape, edges: fitEdges(es.slice(i, j), loopA.length) };
-    second.shape = { ...second.shape!, edges: fitEdges([...es.slice(j), ...es.slice(0, i)], loopB.length) };
-  }
   setOutline(room, loopA);
   setOutline(second, loopB);
   h.rooms.push(second);
@@ -459,9 +451,9 @@ export function copyRooms(h: House, ids: string[], d: Pt, storey: number | undef
     out.push(nid);
     for (const m of [h.faceBuildup, h.faceBoundary, h.wallAlign] as Array<Record<string, string>>) {
       for (const [key, v] of Object.entries(m)) {
-        const w = key.match(/^w:([^:]+):(e\d+):(\d+)$/), x = key.match(/^(\w\w):([^:]+):(\d+)$/), one = key.match(/^(xf|lc|fr|gf):(.+)$/);
+        const w = key.match(/^w:([^:]+):(e\d+):(\d+)$/), x = key.match(/^(ev|sl):([^:]+):(.+)$/), one = key.match(/^(xf|lc|fr|gf|rl):(.+)$/);
         if (w && w[1] === id) m[`w:${nid}:${w[2]}:${+w[3] + ds}`] = v;
-        else if (x && x[2] === id && WALL_NO.includes(x[1])) m[`${x[1]}:${nid}:${x[3]}`] = v;
+        else if (x && x[2] === id) m[`${x[1]}:${nid}:${x[3]}`] = v;
         else if (one && one[2] === id && (ds === 0 || one[1] !== 'gf')) m[`${one[1]}:${nid}`] = v;
       }
     }
@@ -537,13 +529,13 @@ export function problems(h: House, storey: number): Problems {
 /** What a band is: band n is the floor of storey n and the ceiling of storey n - 1. */
 export function bandName(h: House, b: number): string {
   const last = h.storeys.length - 1;
-  if (b > last) return h.loft.present ? 'Ceiling to loft' : 'Roof';
+  if (b > last) return h.roofs?.length ? 'Top ceilings' : 'Roof';
   return b === 0 ? (h.storeys[0].below ? 'Basement floor' : 'Ground floor slab') : `Floor / ceiling: ${h.storeys[b - 1].name} to ${h.storeys[b].name}`;
 }
 
 /** A new floor or ceiling zone in a band, starting with the band's usual build-up so nothing changes until a different one is picked. */
 export function addFloorZone(h: House, id: string, band: number, poly: Pt[], ufh = false): void {
-  const last = h.storeys.length - 1, key = band === 0 ? 'groundFloor' : band > last ? (h.loft.present ? 'loftCeiling' : 'flatRoof') : 'intFloor';
+  const last = h.storeys.length - 1, key = band === 0 ? 'groundFloor' : band > last ? (h.roofs?.length ? 'loftCeiling' : 'flatRoof') : 'intFloor';
   const zs = (h.zones ??= []), name = ufh ? `UFH ${zs.filter((z) => z.ufh).length + 1}` : `Zone ${zs.filter((z) => z.band === band && !z.ufh).length + 1}`;
   zs.push({ id, band, name, poly: poly.map(([x, y]) => [+x.toFixed(3), +y.toFixed(3)] as Pt), buildup: h.defaults[key], ...(ufh ? { ufh: true } : {}) });
 }
