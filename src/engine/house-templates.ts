@@ -40,7 +40,7 @@ export function newHouse(inp: NewHouseInput): House {
   h.storeys = Array.from({ length: n }, (_, i) => ({ name: ['Ground floor', 'First floor', 'Second floor'][i], h: 2.4, zone: 0.25 }));
   if (inp.W && inp.D) h.guide = { w: inp.W, d: inp.D };
 
-  const keep = new Set(['stud', 'jf', 'tiles', 'flat', 'slope', 'knee', 'dwall', 'droof']);
+  const keep = new Set(['stud', 'idoor', 'jf', 'tiles', 'flat', 'slope', 'knee', 'dwall', 'droof']);
   h.buildups = [
     { id: 'wall', name: a.wallName, kind: 'wall', layers: a.wall },
     { id: 'floor', name: a.floorName, kind: 'floor', layers: a.floor, floorType: a.suspended ? 'suspended' : 'solid' },

@@ -1,5 +1,6 @@
 import { MAT, PRESETS, canonId } from './data';
-import { calcHouse, roomEdges, roomFaces } from './house';
+import { sharedSpan } from './geom';
+import { calcHouse, maxWallGap, roomEdges, roomFaces } from './house';
 import type { Buildup, Device, Dormer, House, Opening, Room, RoofSection, Side } from './house';
 
 /** A pitched roof over the top storey that follows the rooms: gable, ridge along the longer side, on the wall plate. */
@@ -25,21 +26,23 @@ export const DEFAULT_BUILDUPS: Buildup[] = [
   { id: 'droof', name: 'Dormer flat roof, 50 mm between joists', kind: 'roof', layers: [['ply', 18], ['cavity', 100], ['mw', 50], ['pb', 12.5]] },
   { id: 'dg', name: 'Double glazed, 2010', kind: 'glazing', layers: [], u: 1.4, g: 0.63, frame: 0.3 },
   { id: 'door', name: 'Composite door', kind: 'door', layers: [], u: 1.6 },
+  // Whole-door U between two rooms, inside films included.
+  { id: 'idoor', name: 'Internal door, hollow core', kind: 'door', layers: [], u: 2.2 },
 ];
 
 const R = (id: string, name: string, type: Room['type'], storey: number, x: number, y: number, w: number, d: number, setpoint: number, extra: Partial<Room> = {}): Room =>
   ({ id, name, type, storey, span: 1, x, y, w, d, heated: true, setpoint, ach: 1, ...extra });
 
 const ROOMS: Room[] = [
-  R('living', 'Living room', 'living', 0, 0, 0, 4.5, 4.2, 21),
+  R('living', 'Living room', 'living', 0, 0, 0, 4.5, 4.5, 21),
   R('kitchen', 'Kitchen', 'kitchen', 0, 4.5, 0, 4.5, 3.6, 21),
-  R('dining', 'Dining', 'dining', 0, 0, 4.2, 4.5, 2.8, 21),
+  R('dining', 'Dining', 'dining', 0, 0, 4.5, 4.5, 2.5, 21),
   R('hall', 'Hall & landing', 'hall', 0, 4.5, 3.6, 1.8, 3.4, 18, { span: 2 }),
   R('wc', 'WC', 'wc', 0, 6.3, 3.6, 2.7, 1.4, 18),
   R('utility', 'Utility', 'utility', 0, 6.3, 5.0, 2.7, 2.0, 18, { heated: false, ach: 2 }),
-  R('bed1', 'Bedroom 1', 'bedroom', 1, 0, 0, 4.5, 4.2, 21),
+  R('bed1', 'Bedroom 1', 'bedroom', 1, 0, 0, 4.5, 4.5, 21),
   R('bed2', 'Bedroom 2', 'bedroom', 1, 4.5, 0, 4.5, 3.6, 21),
-  R('bed3', 'Bedroom 3', 'bedroom', 1, 0, 4.2, 4.5, 2.8, 21),
+  R('bed3', 'Bedroom 3', 'bedroom', 1, 0, 4.5, 4.5, 2.5, 21),
   R('bath', 'Bathroom', 'bathroom', 1, 6.3, 3.6, 2.7, 3.4, 22),
 ];
 
@@ -60,7 +63,28 @@ export const FAN: Array<[string, number]> = [['Fitted', 10], ['None', 0]];
 
 const hours = (on: number[]) => Array.from({ length: 24 }, (_, h) => (on.includes(h) ? 1 : 0));
 
+/** Inside doors, each in the middle of the wall its two rooms share. */
+export function addInnerDoors(h: House, pairs: Array<[string, string]>, w = 0.76, ht = 1.98) {
+  const gap = maxWallGap(h);
+  for (const pair of pairs) {
+    // Owned by the room with fewer storeys: the plan draws a room's doors on every storey it spans.
+    const [r, o] = pair.map((id) => h.rooms.find((x) => x.id === id)!).sort((x, y) => x.span - y.span), a = r.id, b = o.id;
+    const both = r.storey < o.storey + o.span && o.storey < r.storey + r.span;
+    const hit = both ? roomEdges(r).flatMap((e) => roomEdges(o).map((f) => ({ e, s: sharedSpan(e, f, 0.02, gap) }))).find((x) => x.s && x.s[1] - x.s[0] >= w) : undefined;
+    if (!hit?.s) throw new Error(`${a} and ${b} share no wall wide enough for a door`);
+    h.openings.push({ id: `d-${a}-${b}`, room: a, to: b, side: hit.e.side, edge: hit.e.idx, name: `Door to ${o.name.toLowerCase()}`, w, h: ht, buildup: 'idoor', t: (hit.s[0] + hit.s[1]) / 2 });
+  }
+}
+
 export function defaultHouse(): House {
+  const h = baseHouse();
+  // Through lounge: the living room opens to the hall and to the dining room.
+  addInnerDoors(h, [['hall', 'living'], ['hall', 'dining'], ['hall', 'kitchen'], ['hall', 'wc'], ['hall', 'utility'], ['living', 'dining'],
+    ['hall', 'bed1'], ['hall', 'bed2'], ['hall', 'bed3'], ['hall', 'bath']]);
+  return h;
+}
+
+function baseHouse(): House {
   return {
     v: 1,
     name: 'Demo house, 1950–66',

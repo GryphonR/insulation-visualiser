@@ -2,7 +2,7 @@
 // Each starts from the age-band template (newHouse) and adds rooms, windows, party walls and its own build-ups.
 import { calcHouse } from './house';
 import type { Buildup, Device, House, Opening, Room } from './house';
-import { CHIMNEY, FAN, defaultHouse, mainRoof } from './house-default';
+import { CHIMNEY, FAN, addInnerDoors, defaultHouse, mainRoof } from './house-default';
 import { autoEmitters } from './house-heating';
 import { newProject } from './house-scenarios';
 import type { Project, Scenario } from './house-scenarios';
@@ -49,9 +49,11 @@ function upgrade(base: House, name: string, flow: number, edit: (h: House) => vo
   return { id: 's1', name, kind: 'plan', parent: 'base', house: h };
 }
 
-function finish(h: House, rooms: Room[], openings: Array<Omit<Opening, 'id'>>): House {
+/** Rooms, outside openings, then an inside door between each pair in `doors`. */
+function finish(h: House, rooms: Room[], openings: Array<Omit<Opening, 'id'>>, doors: Array<[string, string]>, w?: number, ht?: number): House {
   h.rooms = rooms;
   h.openings = openings.map((o, i) => ({ ...o, id: `o${i + 1}` }));
+  addInnerDoors(h, doors, w, ht);
   return h;
 }
 
@@ -80,17 +82,17 @@ export function stoneCottage(): Project {
   finish(h, [
     room('living', 'Living room', 'living', 0, 0, 0, 4.4, 5.0, 21),
     room('kitchen', 'Kitchen', 'kitchen', 0, 4.4, 0, 3.6, 3.0, 21),
-    room('hall', 'Hall & landing', 'hall', 0, 4.4, 3.0, 1.4, 2.0, 18, { span: 2 }),
-    room('wc', 'WC', 'wc', 0, 5.8, 3.0, 2.2, 2.0, 18),
-    room('bed1', 'Bedroom 1', 'bedroom', 1, 0, 0, 4.4, 3.0, 18),
+    room('hall', 'Hall & landing', 'hall', 0, 4.4, 3.0, 1.8, 2.0, 18, { span: 2 }),
+    room('wc', 'WC', 'wc', 0, 6.2, 3.0, 1.8, 2.0, 18),
+    room('bed1', 'Bedroom 1', 'bedroom', 1, 0, 0, 5.3, 3.0, 18),
     room('bed2', 'Bedroom 2', 'bedroom', 1, 0, 3.0, 4.4, 2.0, 18),
-    room('bed3', 'Bedroom 3', 'bedroom', 1, 4.4, 0, 3.6, 3.0, 18),
-    room('bath', 'Bathroom', 'bathroom', 1, 5.8, 3.0, 2.2, 2.0, 22),
+    room('bed3', 'Bedroom 3', 'bedroom', 1, 5.3, 0, 2.7, 3.0, 18),
+    room('bath', 'Bathroom', 'bathroom', 1, 6.2, 3.0, 1.8, 2.0, 22),
   ], [
     win('living', 'S', 1.0, 1.1), win('living', 'W', 0.8, 1.0), win('living', 'N', 0.8, 1.0), win('kitchen', 'N', 1.0, 1.0), win('kitchen', 'E', 0.85, 1.95, 'door', 'Back door'),
     win('hall', 'S', 0.9, 1.95, 'door', 'Front door'), win('wc', 'S', 0.5, 0.6), win('bed1', 'N', 0.8, 0.9), win('bed2', 'S', 0.8, 0.9),
     win('bed3', 'N', 0.8, 0.9), win('bed3', 'E', 0.6, 0.8), win('bath', 'S', 0.6, 0.7),
-  ]);
+  ], [['hall', 'living'], ['hall', 'kitchen'], ['hall', 'wc'], ['living', 'kitchen'], ['hall', 'bed1'], ['hall', 'bed2'], ['hall', 'bed3'], ['hall', 'bath']], 0.7, 1.83);
   onGas(h);
   return project(h, upgrade(h, 'IWI, loft wool, bigger rads, heat pump', 50, (s) => {
     setBuildups(s, [
@@ -114,10 +116,10 @@ export function victorianTerrace(): Project {
   ]);
   h.climate = { ...h.climate, postcode: 'LS6', auto: true, altitude: 70 };
   h.faceBuildup = { 'gf:kitchen': 'kfloor' };
-  // Neighbours on both sides; the kitchen and bathroom outrigger has a side return to the east.
+  // Neighbours on both sides; the kitchen and bathroom outrigger is on the hall side, with a side return to the west.
   h.faceBoundary = Object.fromEntries([
-    'w:front:W:0', 'w:dining:W:0', 'w:kitchen:W:0', 'w:bed1:W:1', 'w:bed2:W:1', 'w:bath:W:1',
-    'w:hall:E:0', 'w:hall:E:1', 'w:dining:E:0', 'w:bed2:E:1',
+    'w:front:W:0', 'w:dining:W:0', 'w:bed1:W:1', 'w:bed2:W:1',
+    'w:hall:E:0', 'w:hall:E:1', 'w:dining:E:0', 'w:landing:E:1', 'w:kitchen:E:0', 'w:bath:E:1',
   ].map((k) => [k, 'party' as const]));
   h.vent.devices = [
     dev('chim1', 'front', 'Chimney', false, CHIMNEY, 1), dev('chim2', 'dining', 'Chimney', false, CHIMNEY, 1),
@@ -128,15 +130,16 @@ export function victorianTerrace(): Project {
     room('front', 'Front room', 'living', 0, 0, 0, 3.6, 4.2, 21),
     room('hall', 'Hall & landing', 'hall', 0, 3.6, 0, 1.0, 4.2, 18, { span: 2 }),
     room('dining', 'Back room', 'dining', 0, 0, 4.2, 4.6, 3.6, 21),
-    room('kitchen', 'Kitchen', 'kitchen', 0, 0, 7.8, 2.8, 3.0, 18),
+    room('kitchen', 'Kitchen', 'kitchen', 0, 1.8, 7.8, 2.8, 3.0, 18),
     room('bed1', 'Front bedroom', 'bedroom', 1, 0, 0, 3.6, 4.2, 18),
-    room('bed2', 'Back bedroom', 'bedroom', 1, 0, 4.2, 4.6, 3.6, 18),
-    room('bath', 'Bathroom', 'bathroom', 1, 0, 7.8, 2.8, 3.0, 22),
+    room('bed2', 'Back bedroom', 'bedroom', 1, 0, 4.2, 3.6, 3.6, 18),
+    room('landing', 'Back landing', 'landing', 1, 3.6, 4.2, 1.0, 3.6, 18),
+    room('bath', 'Bathroom', 'bathroom', 1, 1.8, 7.8, 2.8, 3.0, 22),
   ], [
     win('front', 'N', 1.6, 1.8, 'win', 'Bay window'), win('hall', 'N', 0.9, 2.1, 'door', 'Front door'), win('dining', 'S', 1.2, 1.6),
-    win('kitchen', 'E', 1.0, 1.1), win('kitchen', 'S', 0.9, 2.0, 'door', 'Back door'),
-    win('bed1', 'N', 1.0, 1.5), win('bed1', 'N', 0.6, 1.5), win('bed2', 'S', 1.0, 1.4), win('bath', 'E', 0.6, 0.9), win('bath', 'S', 0.6, 0.9),
-  ]);
+    win('kitchen', 'W', 1.0, 1.1), win('kitchen', 'S', 0.9, 2.0, 'door', 'Back door'),
+    win('bed1', 'N', 1.0, 1.5), win('bed1', 'N', 0.6, 1.5), win('bed2', 'S', 1.0, 1.4), win('bath', 'W', 0.6, 0.9), win('bath', 'S', 0.6, 0.9),
+  ], [['hall', 'front'], ['hall', 'dining'], ['dining', 'kitchen'], ['hall', 'bed1'], ['landing', 'bed2'], ['landing', 'bath']]);
   onGas(h);
   return project(h, upgrade(h, 'IWI, loft, floor, draughts, bigger rads, heat pump', 50, (s) => {
     setBuildups(s, [
@@ -156,21 +159,23 @@ export function newBuildSemi(): Project {
   const h = newHouse({ template: 'semi', age: '1996-2006', storeys: 2 });
   h.name = 'Early-2000s semi';
   h.climate = { ...h.climate, postcode: 'MK10', auto: true, altitude: 80 };
-  h.faceBoundary = Object.fromEntries(['w:hall:E:0', 'w:hall:E:1', 'w:wc:E:0', 'w:kitchen:E:0', 'w:bath:E:1', 'w:bed3:E:1'].map((k) => [k, 'party' as const]));
+  h.faceBoundary = Object.fromEntries(['w:stair:E:0', 'w:stair:E:1', 'w:wc:E:0', 'w:kitchen:E:0', 'w:landing:E:1', 'w:bed2:E:1'].map((k) => [k, 'party' as const]));
   h.vent.devices = [dev('kfan', 'kitchen', 'Extract fan', true, FAN, 0), dev('bfan', 'bath', 'Extract fan', true, FAN, 0), dev('wfan', 'wc', 'Extract fan', true, FAN, 0)];
   finish(h, [
-    room('living', 'Living room', 'living', 0, 0, 0, 3.6, 4.6, 21),
-    room('hall', 'Hall & landing', 'hall', 0, 3.6, 0, 1.6, 2.6, 18, { span: 2 }),
-    room('wc', 'WC', 'wc', 0, 3.6, 2.6, 1.6, 2.0, 18),
+    room('living', 'Living room', 'living', 0, 0, 0, 3.4, 4.6, 21),
+    room('hall', 'Hall', 'hall', 0, 3.4, 0, 0.9, 4.6, 18),
+    room('stair', 'Stairs', 'hall', 0, 4.3, 0, 0.9, 3.0, 18, { span: 2 }),
+    room('wc', 'WC', 'wc', 0, 4.3, 3.0, 0.9, 1.6, 18),
     room('kitchen', 'Kitchen / diner', 'kitchen', 0, 0, 4.6, 5.2, 3.6, 21),
-    room('bed1', 'Bedroom 1', 'bedroom', 1, 0, 0, 3.6, 4.6, 18),
-    room('bath', 'Bathroom', 'bathroom', 1, 3.6, 2.6, 1.6, 2.0, 22),
-    room('bed2', 'Bedroom 2', 'bedroom', 1, 0, 4.6, 2.8, 3.6, 18),
-    room('bed3', 'Bedroom 3', 'bedroom', 1, 2.8, 4.6, 2.4, 3.6, 18),
+    room('bed3', 'Bedroom 3', 'bedroom', 1, 0, 0, 2.6, 3.0, 18),
+    room('bath', 'Bathroom', 'bathroom', 1, 2.6, 0, 1.7, 3.0, 22),
+    room('landing', 'Landing', 'landing', 1, 0, 3.0, 5.2, 1.0, 18),
+    room('bed1', 'Bedroom 1', 'bedroom', 1, 0, 4.0, 2.8, 4.2, 18),
+    room('bed2', 'Bedroom 2', 'bedroom', 1, 2.8, 4.0, 2.4, 4.2, 18),
   ], [
-    win('living', 'N', 1.8, 1.3), win('hall', 'N', 0.9, 2.1, 'door', 'Front door'), win('kitchen', 'S', 1.2, 1.1), win('kitchen', 'S', 1.6, 2.1, 'win', 'Patio doors'),
-    win('kitchen', 'W', 0.9, 1.1), win('bed1', 'N', 1.4, 1.2), win('bed2', 'S', 1.2, 1.2), win('bed3', 'S', 1.0, 1.2), win('wc', 'N', 0.5, 0.6),
-  ]);
+    win('living', 'N', 1.8, 1.3), win('hall', 'N', 0.84, 2.1, 'door', 'Front door'), win('kitchen', 'S', 1.2, 1.1), win('kitchen', 'S', 1.6, 2.1, 'win', 'Patio doors'),
+    win('kitchen', 'W', 0.9, 1.1), win('bed1', 'S', 1.2, 1.2), win('bed2', 'S', 1.0, 1.2), win('bed3', 'N', 1.0, 1.2), win('bath', 'N', 0.6, 0.9), win('landing', 'W', 0.6, 0.9),
+  ], [['hall', 'living'], ['hall', 'kitchen'], ['hall', 'wc'], ['landing', 'bed1'], ['landing', 'bed2'], ['landing', 'bed3'], ['landing', 'bath']]);
   onGas(h);
   return project(h, upgrade(h, 'Heat pump, bigger rads, loft top-up, draught-stripping', 45, (s) => {
     setBuildups(s, [{ id: 'loft300', name: 'Loft, 300 mm mineral wool', kind: 'roof', layers: [['mw', 300], ['pb', 12.5]] }]);
@@ -208,17 +213,18 @@ export function passivhaus(): Project {
     win('hall', 'N', 1.0, 2.1, 'door', 'Front door'), win('study', 'N', 0.8, 1.0), win('plant', 'N', 0.6, 0.6),
     win('living', 'S', 2.4, 2.2, 'win', 'Sliding doors'), win('living', 'S', 1.6, 1.4), win('living', 'W', 1.2, 1.4), win('living', 'E', 1.2, 1.4),
     win('bath', 'N', 0.6, 0.8), win('bed3', 'N', 0.8, 1.0), win('bed1', 'S', 1.6, 1.4), win('bed1', 'W', 0.8, 1.2), win('bed2', 'S', 1.6, 1.4),
-  ]);
+  ], [['hall', 'plant'], ['hall', 'study'], ['hall', 'living'], ['hall', 'bath'], ['hall', 'bed1'], ['hall', 'bed2'], ['hall', 'bed3']]);
   h.hp = { ...h.hp, maxFlow: 35 };
   h.heating = { ...h.heating, control: 'ideal', dT: 5 };
   size(h);
   return newProject(h);
 }
 
+// Oldest first, as listed on the start screen.
 export const DEMOS: Array<{ id: string; label: string; make: () => Project }> = [
-  { id: '1950s', label: '1950s semi', make: () => newProject(defaultHouse()) },
   { id: 'cottage', label: 'Stone cottage', make: stoneCottage },
   { id: 'victorian', label: 'Victorian terrace', make: victorianTerrace },
+  { id: '1950s', label: '1950s semi', make: () => newProject(defaultHouse()) },
   { id: 'semi2000', label: 'Early-2000s semi', make: newBuildSemi },
   { id: 'passivhaus', label: 'Passivhaus-type', make: passivhaus },
 ];
