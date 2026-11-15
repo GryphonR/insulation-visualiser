@@ -1,9 +1,11 @@
 // Demo projects for the start screen: a whole house as found, plus an upgrade scenario where it has one.
 // Each starts from the age-band template (newHouse) and adds rooms, windows, party walls and its own build-ups.
-import { calcHouse } from './house';
+import { calcHouse, roomPoly } from './house';
 import type { Buildup, Device, House, Opening, Room } from './house';
 import { CHIMNEY, FAN, addInnerDoors, defaultHouse, mainRoof } from './house-default';
 import { autoEmitters } from './house-heating';
+import type { Plant } from './house-heating';
+import { autoPipes, combineRuns, runLength } from './house-pipes';
 import { newProject } from './house-scenarios';
 import type { Project, Scenario } from './house-scenarios';
 import { newHouse } from './house-templates';
@@ -29,12 +31,33 @@ function size(h: House) {
   h.hp.capacity = HP_SIZES.find((k) => k * 1000 >= res.peakW * 1.05) ?? HP_SIZES[HP_SIZES.length - 1];
 }
 
+const at = (x: number, y: number, storey = 0): Plant => ({ at: [x, y], storey });
+
+/**
+ * Pipework from the placed source (and cylinder): tries a riser in each corner of every room on the source's floor, keeps the one
+ * that needs the least pipe, then lets overlapping runs share one pipe.
+ */
+function plumb(h: House) {
+  const res = calcHouse(h), src = h.heating.source!;
+  const lay = (q: [number, number]) => {
+    h.heating.risers = [{ id: 'rs1', at: q }]; h.heating.pipes = autoPipes(h); combineRuns(h, res);
+    return h.heating.pipes!.reduce((t, p) => t + runLength(h, p), 0);
+  };
+  const spots = h.rooms.filter((r) => r.storey === src.storey).flatMap((r) => {
+    const cx = r.x + r.w / 2, cy = r.y + r.d / 2;
+    // 10 cm in from the corner, inside the room.
+    return roomPoly(r).map(([x, y]): [number, number] => [+(x + 0.1 * Math.sign(cx - x)).toFixed(2), +(y + 0.1 * Math.sign(cy - y)).toFixed(2)]);
+  });
+  lay(spots.reduce((b, q) => { const m = lay(q); return m < b.m ? { q, m } : b; }, { q: spots[0], m: Infinity }).q);
+}
+
 /** As found on a 24 kW condensing gas combi: fixed 70 °C flow, 10 K drop, radiators sized for that. */
 function onGas(h: House) {
   h.hp = { ...h.hp, source: 'condensing', fuel: 'gas', maxFlow: 70, boilerEff: 84 };
   h.heating = { ...h.heating, control: 'fixed', dT: 10 };
   size(h);
   h.hp.capacity = 24;
+  plumb(h);
 }
 
 /** A copy of the base with the upgrades applied, then radiators resized for a heat pump at `flow` °C on weather compensation. */
@@ -46,6 +69,7 @@ function upgrade(base: House, name: string, flow: number, edit: (h: House) => vo
   size(h);
   // Upsize only: a radiator already big enough stays as it is.
   h.heating.emitters = h.heating.emitters.map((e) => ({ ...e, len: Math.max(e.len, base.heating.emitters.find((b) => b.room === e.room)?.len ?? 0) }));
+  plumb(h);
   return { id: 's1', name, kind: 'plan', parent: 'base', house: h };
 }
 
@@ -93,6 +117,8 @@ export function stoneCottage(): Project {
     win('hall', 'S', 0.9, 1.95, 'door', 'Front door'), win('wc', 'S', 0.5, 0.6), win('bed1', 'N', 0.8, 0.9), win('bed2', 'S', 0.8, 0.9),
     win('bed3', 'N', 0.8, 0.9), win('bed3', 'E', 0.6, 0.8), win('bath', 'S', 0.6, 0.7),
   ], [['hall', 'living'], ['hall', 'kitchen'], ['hall', 'wc'], ['living', 'kitchen'], ['hall', 'bed1'], ['hall', 'bed2'], ['hall', 'bed3'], ['hall', 'bath']], 0.7, 1.83);
+  // Combi on the kitchen's north wall: no cylinder.
+  h.heating.source = at(6.0, 0.2);
   onGas(h);
   return project(h, upgrade(h, 'IWI, loft wool, bigger rads, heat pump', 50, (s) => {
     setBuildups(s, [
@@ -101,6 +127,8 @@ export function stoneCottage(): Project {
       { id: 'loftw', name: "Lath and plaster + 250 mm sheep's wool", kind: 'roof', layers: [['h_sheep_wool', 250], ['h_lime_hair_plaster', 25]] },
     ]);
     s.defaults = { ...s.defaults, extWall: 'iwi', loftCeiling: 'loftw' };
+    // Outdoor unit on the east gable by the back door; the cylinder takes the kitchen's corner behind it.
+    s.heating.source = at(8.5, 1.5); s.heating.cylinder = at(7.7, 0.3);
   }));
 }
 
@@ -140,6 +168,8 @@ export function victorianTerrace(): Project {
     win('kitchen', 'W', 1.0, 1.1), win('kitchen', 'S', 0.9, 2.0, 'door', 'Back door'),
     win('bed1', 'N', 1.0, 1.5), win('bed1', 'N', 0.6, 1.5), win('bed2', 'S', 1.0, 1.4), win('bath', 'W', 0.6, 0.9), win('bath', 'S', 0.6, 0.9),
   ], [['hall', 'front'], ['hall', 'dining'], ['dining', 'kitchen'], ['hall', 'bed1'], ['landing', 'bed2'], ['landing', 'bath']]);
+  // Combi on the kitchen's party wall: no cylinder.
+  h.heating.source = at(4.4, 9.0);
   onGas(h);
   return project(h, upgrade(h, 'IWI, loft, floor, draughts, bigger rads, heat pump', 50, (s) => {
     setBuildups(s, [
@@ -151,6 +181,8 @@ export function victorianTerrace(): Project {
     s.defaults = { ...s.defaults, extWall: 'iwi', loftCeiling: 'loft300', groundFloor: 'floorins' };
     s.vent.factors = s.vent.factors.map((f) => ({ ...f, on: true }));
     s.vent.devices = s.vent.devices.map((d) => (d.id === 'front' ? { ...d, pick: 1 } : d));
+    // Outdoor unit in the side return off the kitchen; the cylinder in an airing cupboard in the bathroom above.
+    s.heating.source = at(1.3, 9.3); s.heating.cylinder = at(2.1, 8.1, 1);
   }));
 }
 
@@ -176,12 +208,28 @@ export function newBuildSemi(): Project {
     win('living', 'N', 1.8, 1.3), win('hall', 'N', 0.84, 2.1, 'door', 'Front door'), win('kitchen', 'S', 1.2, 1.1), win('kitchen', 'S', 1.6, 2.1, 'win', 'Patio doors'),
     win('kitchen', 'W', 0.9, 1.1), win('bed1', 'S', 1.2, 1.2), win('bed2', 'S', 1.0, 1.2), win('bed3', 'N', 1.0, 1.2), win('bath', 'N', 0.6, 0.9), win('landing', 'W', 0.6, 0.9),
   ], [['hall', 'living'], ['hall', 'kitchen'], ['hall', 'wc'], ['landing', 'bed1'], ['landing', 'bed2'], ['landing', 'bed3'], ['landing', 'bath']]);
+  // Combi in a kitchen wall unit on the party wall: no cylinder.
+  h.heating.source = at(5.0, 5.0);
   onGas(h);
   return project(h, upgrade(h, 'Heat pump, bigger rads, loft top-up, draught-stripping', 45, (s) => {
     setBuildups(s, [{ id: 'loft300', name: 'Loft, 300 mm mineral wool', kind: 'roof', layers: [['mw', 300], ['pb', 12.5]] }]);
     s.defaults = { ...s.defaults, loftCeiling: 'loft300' };
     s.vent.factors = s.vent.factors.map((f) => (f.id === 'strip' ? { ...f, on: true } : f));
+    // Outdoor unit on the west gable by the kitchen; the cylinder in the landing's airing cupboard over the stairs.
+    s.heating.source = at(-0.5, 6.5); s.heating.cylinder = at(4.9, 3.3, 1);
   }));
+}
+
+/** The 1950–66 default house as a semi: the neighbour is on the west, so the west windows go and the side door and WC window stay on the east gable. */
+export function fiftiesSemi(): Project {
+  const h = defaultHouse();
+  h.name = '1950s semi';
+  h.faceBoundary = Object.fromEntries(['w:living:W:0', 'w:dining:W:0', 'w:bed1:W:1', 'w:bed3:W:1'].map((k) => [k, 'party' as const]));
+  h.openings = h.openings.filter((o) => o.to || o.side !== 'W');
+  // Heat pump outside the utility on the east gable, the cylinder in the utility.
+  h.heating.source = at(9.5, 6.0); h.heating.cylinder = at(8.6, 6.6);
+  plumb(h);
+  return newProject(h);
 }
 
 /** A Passivhaus-standard detached house: super-insulated, triple glazed, airtight with MVHR, small heat pump. No upgrade. */
@@ -217,6 +265,9 @@ export function passivhaus(): Project {
   h.hp = { ...h.hp, maxFlow: 35 };
   h.heating = { ...h.heating, control: 'ideal', dT: 5 };
   size(h);
+  // Outdoor unit by the plant room's north wall, the cylinder inside it.
+  h.heating.source = at(1.2, -0.5); h.heating.cylinder = at(0.4, 0.4);
+  plumb(h);
   return newProject(h);
 }
 
@@ -224,7 +275,7 @@ export function passivhaus(): Project {
 export const DEMOS: Array<{ id: string; label: string; make: () => Project }> = [
   { id: 'cottage', label: 'Stone cottage', make: stoneCottage },
   { id: 'victorian', label: 'Victorian terrace', make: victorianTerrace },
-  { id: '1950s', label: '1950s semi', make: () => newProject(defaultHouse()) },
+  { id: '1950s', label: '1950s semi', make: fiftiesSemi },
   { id: 'semi2000', label: 'Early-2000s semi', make: newBuildSemi },
   { id: 'passivhaus', label: 'Passivhaus-type', make: passivhaus },
 ];

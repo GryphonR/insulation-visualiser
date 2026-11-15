@@ -5,6 +5,7 @@ import { calcHouse, maxWallGap, onStorey, roomEdges } from './house';
 import { innerDoorAt, partyKeys } from './house-draw';
 import { DEMOS } from './house-demos';
 import { flowNeeded } from './house-heating';
+import { sizePipes } from './house-pipes';
 import { runMoisture } from './moisture';
 
 describe('demo projects', () => {
@@ -52,6 +53,24 @@ describe('demo projects', () => {
       }
     }
     expect(h.rooms.filter((r) => !seen.has(r.id)).map((r) => r.name)).toEqual([]);
+  });
+
+  it.each(DEMOS.map((d) => [d.label, d] as const))('%s: a semi or terrace has party walls, with no outside window or door on them', (_, d) => {
+    const h = d.make().scenarios[0].house, party = Object.keys(h.faceBoundary).filter((k) => h.faceBoundary[k] === 'party');
+    if (/semi|terrace/i.test(d.label)) expect(party.length).toBeGreaterThan(0);
+    for (const o of h.openings.filter((x) => !x.to)) expect(party.some((k) => k.startsWith(`w:${o.room}:${o.side}:`)), `${o.room} ${o.name} ${o.side}`).toBe(false);
+  });
+
+  it.each(DEMOS.map((d) => [d.label, d] as const))('%s: every scenario has a placed source, a cylinder with a heat pump, and pipework the pump can drive to every heater', (_, d) => {
+    for (const s of d.make().scenarios) {
+      const h = s.house, r = sizePipes(h, calcHouse(h));
+      expect(h.heating.source, s.name).toBeTruthy();
+      if (h.hp.source === 'ashp' || h.hp.source === 'gshp') expect(h.heating.cylinder, s.name).toBeTruthy();
+      expect(r.unpiped, s.name).toEqual([]);
+      expect(r.headOk, s.name).toBe(true);
+      // The first stub off the source (to its first tee) is the only run with no route on the plan.
+      for (const p of h.heating.pipes!.filter((x) => x.id !== 'P1')) expect(p.leg, `${s.name}: ${p.name}`).toBeTruthy();
+    }
   });
 
   it('the breathable IWI on stone and on brick passes the WTA 6-5 checks in moderate rain, with no rot and no build-up', () => {
