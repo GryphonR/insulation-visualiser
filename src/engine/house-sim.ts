@@ -4,7 +4,8 @@ import { COLOURS, DAYS, DOY, MEAN, ORIENTS, SWING } from './data';
 import { solarAt, solarFromData } from './solar';
 import type { Tmy } from './weather-tmy';
 import { calcHouse, sourceEff, tariff } from './house';
-import type { Face, House, HouseResult, RoomType } from './house';
+import type { Face, House, HouseResult, RoomResult, RoomType } from './house';
+import { roomKappa } from './heat-capacity';
 import type { Orient } from './data';
 import { roomOut, roomSchedule, systemFlow } from './house-heating';
 
@@ -16,9 +17,9 @@ export function faceOrient(f: Pick<Face, 'az' | 'tilt' | 'side'>): Orient {
 
 export type CaseId = 'design' | 'summer' | 'snap' | 'year';
 export const CASES: Array<{ id: CaseId; q: string; name: string; use: string }> = [
-  { id: 'design', q: 'Can the heating keep up on the coldest day?', name: 'Winter design day', use: 'Peak heating with the schedule and setback, overcast, at the design temperature.' },
+  { id: 'design', q: 'Can the heating keep up on the coldest day?', name: 'Winter design day', use: 'Peak heating with the schedule and setback, overcast, at the design temperature, starting from rooms at their setpoints.' },
   { id: 'year', q: 'What will a year of heating cost?', name: 'Typical year', use: 'Annual energy, monthly use and comfort hours.' },
-  { id: 'summer', q: 'Will rooms overheat in a heatwave?', name: 'Summer peak day', use: 'Clear sky, 15–29 °C outside, no heating.' },
+  { id: 'summer', q: 'Will rooms overheat in a heatwave?', name: 'Summer peak day', use: 'Clear sky, 15–29 °C outside, no heating. Windows are opened while someone is home, once a room passes 22 °C and it is cooler outside.' },
   { id: 'snap', q: 'How long does the house stay warm without heating?', name: 'Cold snap, 5 days', use: 'A power cut or breakdown: heating off from a house held at its setpoints, near the design temperature.' },
 ];
 
@@ -59,8 +60,10 @@ function weather(id: CaseId, res: HouseResult, regionMean: number, tmy?: Tmy): W
     };
   }
   const sine = (t: number, mean: number, amp: number) => mean + amp * Math.sin(((t % 24) - 9) / 24 * 2 * Math.PI);
-  if (id === 'design') return { T: (t) => sine(t, res.Tout + 2.5, 2.5), c: () => 0.15, doy: () => 21, hours: 24, warmup: 24 * 6 };
-  if (id === 'summer') return { T: (t) => sine(t, 22, 7), c: () => 0.9, doy: () => 202, hours: 24, warmup: 24 * 6 };
+  // The design day starts from rooms at their setpoints (no warm-up run), so it tests the heating, not a house left to settle.
+  if (id === 'design') return { T: (t) => sine(t, res.Tout + 2.5, 2.5), c: () => 0.15, doy: () => 21, hours: 24, warmup: 0 };
+  // The heatwave starts from winter temperatures; heavy, well-insulated houses need about a month of repeats to settle.
+  if (id === 'summer') return { T: (t) => sine(t, 22, 7), c: () => 0.9, doy: () => 202, hours: 24, warmup: 24 * 30 };
   if (id === 'snap') return { T: (t) => sine(t, res.Tout + 2, 2), c: () => 0.3, doy: () => 21, hours: 24 * 5, warmup: 24 * 3 };
   // Typical year: monthly means shifted to the region, a daily swing, and day-to-day spells.
   const off = regionMean - UK_MEAN;
@@ -88,7 +91,28 @@ export interface SimResult {
   comfort: Array<{ id: string; cold: number; late: number; warm: number; min: number; max: number; below16: number | null }>;
 }
 
+/**
+ * An empty room's thermal mass from its build-ups (ISO 13790 from ISO 13786 κ per face): Cm, J/K, and the
+ * effective mass area Am = Cm² / Σκ²A, m². A face shared with another room or the neighbour counts only this room's half.
+ */
+export function roomMass(r: RoomResult): { Cm: number; Am: number } {
+  let Cm = 0, k2 = 0;
+  for (const f of r.faces) {
+    if (!f.buildup.layers.length) continue;
+    // Build-ups run outside → room; a ceiling under another room is that room's floor, seen from below.
+    const layers = f.kind === 'ceiling' && f.to.k === 'room' ? [...f.buildup.layers].reverse() : f.buildup.layers;
+    // shortcut: an internal wall is seen from its listed room side by both rooms; fine while partitions are symmetric.
+    const k = roomKappa(layers, { half: f.to.k === 'room' || f.to.k === 'party' }) * 1000;
+    Cm += k * f.area; k2 += k * k * f.area;
+  }
+  return { Cm, Am: k2 > 0 ? (Cm * Cm) / k2 : 0 };
+}
+
 const DT = 600; // s
+/** Room temperature at which occupants open windows in the heatwave test, °C (CIBSE TM59). */
+const OPEN_AT = 22;
+// shortcut: a fifth of each window's area taken as free opening (a partly opened casement); use real openable areas if openings gain them.
+const OPEN_SHARE = 0.2;
 /** Hours a room may take to warm up after its heating comes on before it counts as falling short. */
 const WARMUP_H = 2;
 
@@ -104,11 +128,10 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
   // An applied bills calibration: rooms run warmer or cooler by dt, and only a share hf of the heat is used.
   const dt = h.calib?.dt ?? 0, hf = h.calib?.hf ?? 1;
 
-  // Node capacity: contents mass by floor area plus air.
-  // Two parts per room (ISO 13790 simple hourly idea): air that settles within minutes, and the fabric and
-  // contents mass (kJ/m²K of floor) tied to it by 9.1 W/m²K over 2.5 × the floor area.
+  // Two parts per room (ISO 13790 simple hourly idea): air that settles within minutes, and the fabric mass
+  // tied to it by 9.1 W/m²K over the effective mass area. The mass is the empty room's own build-ups (roomMass).
   const Cm = new Float64Array(N), Hms = new Float64Array(N);
-  rooms.forEach((r, i) => { const A = r.area * r.room.span; Cm[i] = A * g.mass * 1000; Hms[i] = 9.1 * 2.5 * A; });
+  rooms.forEach((r, i) => { const m = roomMass(r); Cm[i] = m.Cm; Hms[i] = 9.1 * m.Am; });
   if (base.loft) { Cm[LOFT] = base.loft.area * 15 * 1000; Hms[LOFT] = 9.1 * 2 * base.loft.area; }
 
   // Links between nodes (each shared face once) and conductances to fixed temperatures.
@@ -117,6 +140,8 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
   // Sun on glass (area × g), and on roofs as sol-air: U·A × α·Rse of the absorbed sun, less a clear-night sky loss.
   const solar: Array<{ node: number; area: number; g: number; orient: (typeof ORIENTS)[number] }> = [];
   const sky: Array<{ node: number; UA: number; f: number }> = [];
+  // Opened windows (heatwave only): Cd/3 · free area · √height per room, for single-sided stack flow.
+  const openW = new Float64Array(N);
   const alpha = (COLOURS.find((c) => c.id === h.roofColour) ?? COLOURS[1]).a, RSE = 0.04;
   const roofSun = (node: number, UA: number, orient: Orient) => {
     solar.push({ node, area: UA, g: alpha * RSE, orient });
@@ -128,7 +153,8 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
       const UA = f.U * f.area;
       if (f.to.k === 'out') Hout[i] += UA;
       else if (f.to.k === 'ground') Hg[i] += UA;
-      else if (f.to.k === 'party') Hp[i] += UA;
+      // The neighbour's set temperature is a design-day allowance; in the other runs next door is lived in like this house, so no net heat crosses.
+      else if (f.to.k === 'party') { if (id === 'design') Hp[i] += UA; }
       else if (f.to.k === 'loft') { if (base.loft) links.push([i, LOFT, UA]); else Hout[i] += UA; }
       else {
         // Both rooms list every face they share; take it from the lower-numbered one only.
@@ -136,6 +162,10 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
         if (j !== undefined && j > i) links.push([i, j, UA]);
       }
       if (f.kind === 'window') solar.push({ node: i, area: f.area, g: f.gEff ?? g.g, orient: faceOrient(f) });
+      if (f.kind === 'window' && f.to.k === 'out') {
+        const ht = h.openings.find((o) => `op:${o.id}` === f.key)?.h ?? Math.sqrt(f.area);
+        openW[i] += (0.61 / 3) * OPEN_SHARE * f.area * Math.sqrt(ht);
+      }
       else if (f.kind === 'ceiling' && f.to.k === 'out') roofSun(i, UA, faceOrient({ ...f, tilt: f.tilt ?? 0 }));
     }
     Hout[i] += 0.33 * r.n * r.V;
@@ -214,9 +244,14 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
     });
     const cap = h.hp.capacity * 1000;
     if (Ptot > cap) { for (let i = 0; i < N; i++) P[i] *= cap / Ptot; Ptot = cap; }
+    // Heatwave: someone home opens a room's windows once it passes 22 °C and it is cooler outside (CIBSE TM59).
+    // Single-sided stack flow (BS 5925): Q = Cd·A/3·√(g·h·ΔT/T), on the last step's ΔT; heating is off, so no setpoint uses Hsum.
+    const opening = id === 'summer' && PATTERNS[g.pattern](hr, weekend);
     for (let i = 0; i < N; i++) {
-      T[i] = (rhs[i] + P[i]) / Hsum[i];
-      Tm[i] += (Hms[i] * (T[i] - Tm[i]) * DT) / Cm[i];
+      const dT = T[i] - To, Hw = opening && openW[i] > 0 && T[i] > OPEN_AT && dT > 0 ? 1200 * openW[i] * Math.sqrt((9.81 * dT) / (273 + (T[i] + To) / 2)) : 0;
+      T[i] = (rhs[i] + P[i] + Hw * To) / (Hsum[i] + Hw);
+      // Exact decay towards the air over the step, stable however light the mass.
+      if (Cm[i] > 0) Tm[i] += (T[i] - Tm[i]) * (1 - Math.exp((-Hms[i] * DT) / Cm[i]));
     }
 
     if (tAbs >= wx.warmup) {

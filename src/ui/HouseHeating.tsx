@@ -6,7 +6,7 @@ import { COVERS, RAD_LABEL, UFH_SPACINGS, autoEmitters, emitterOut, loopLength, 
 import type { Emitter, RadType, Zone } from '../engine/house-heating';
 import { Chip } from './controls';
 import { HouseUfh } from './HouseUfh';
-import { MAX_PA_M, MAX_V, PIPE_SIZES, autoPipes, sizePipes } from '../engine/house-pipes';
+import { MAX_PA_M, MAX_V, PIPE_SIZES, autoPipes, combineRuns, removeRun, runLength, sizePipes } from '../engine/house-pipes';
 import { addEmitter } from '../engine/house-draw';
 import { Why, fmt, uid, NumInput } from './hform';
 import { WHY, sourceWhy } from './assumptions';
@@ -55,8 +55,10 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
 
   const add = (room: string, kind: Emitter['kind']) => upd((h) => addEmitter(h, room, kind, uid('e')));
 
+  // One sub-tab at a time: wide tables (emitters, zones, pipework) take the full width; the system cards flow across two columns.
+  const layout = !section ? 'house-grid' : section === 'system' ? 'house-grid house-flow' : 'house-stack';
   return (
-    <div className="house-grid">
+    <div className={layout}>
       <div className="house-col">
         {show('system') && <HeatSourceCard />}
         {show('system') && (
@@ -233,9 +235,10 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
         {show('pipes') && (
         <section className="card panel">
           <div className="section-head">
-            <div><h2>Pipework</h2><p className="muted small">Pipe runs from the heat pump. Each run carries the design flow of every emitter beyond it ({c.dT} K flow − return). Limits: about 1 m/s (0.8 in microbore) and {MAX_PA_M} Pa/m.</p></div>
+            <div><h2>Pipework</h2><p className="muted small">Pipe runs from the {isHeatPump(house.hp.source) ? 'heat pump' : 'boiler'}. Each run carries the design flow of every emitter beyond it ({c.dT} K flow − return). Limits: about 1 m/s (0.8 in microbore), and {fmt(pipesRes.paMax)} Pa/m: {pipesRes.paMax < pipesRes.paPump ? 'the cap set below' : `the pump head shared along the ${fmt(pipesRes.longest, 1)} m longest circuit`}.</p>
+              <p className="muted small">{c.source ? 'Runs laid out from the plan are measured along their routes, which you can drag into place on the plan; lengths follow as radiators, risers and the source move. Where runs overlap, or you drag one onto another, they share one pipe, sized for their combined flow, which tees off to each heater. A typed length overrides the route. Laying out again replaces every run.' : <>Place the boiler or heat pump, and any cylinder and pipe risers, on the <a href={href('plan')}>plan</a> to measure the runs instead of guessing them.</>}</p></div>
             <div className="chips">
-              <button type="button" className="btn-secondary" onClick={() => { if (!c.pipes?.length || confirm('Replace the pipe runs with a typical layout?')) upd((h) => { h.heating.pipes = autoPipes(h); }); }}>Lay out typical pipework</button>
+              <button type="button" className="btn-secondary" onClick={() => { if (!c.pipes?.length || confirm('Replace the pipe runs with a typical layout?')) upd((h) => { h.heating.pipes = autoPipes(h); if (h.heating.source) combineRuns(h, res); }); }}>{c.source ? 'Lay out pipework from the plan' : 'Lay out typical pipework'}</button>
               <button type="button" className="btn-secondary" onClick={() => upd((h) => { const ps = h.heating.pipes ?? []; h.heating.pipes = [...ps, { id: uid('p'), name: 'New run', parent: ps[0]?.id ?? null, size: 'Cu 15 mm', length: 3 }]; })}>+ Run</button>
             </div>
           </div>
@@ -251,18 +254,20 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                       <tr key={p.id} className={r.index ? 'idx' : ''} title={r.why.join('; ')}>
                         <td><input className="h-text" value={p.name} aria-label="Run name" onChange={(e) => setP({ name: e.target.value })} /></td>
                         <td><select className="h-sel" value={p.parent ?? ''} aria-label="Upstream run" onChange={(e) => setP({ parent: e.target.value || null })}>
-                          <option value="">Heat pump</option>{(c.pipes ?? []).filter((x) => x.id !== p.id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                          <option value="">{isHeatPump(house.hp.source) ? 'Heat pump' : 'Boiler'}</option>{(c.pipes ?? []).filter((x) => x.id !== p.id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
                         </select></td>
                         <td><select className="h-sel" value={p.size} aria-label="Pipe size" onChange={(e) => setP({ size: e.target.value })}>{Object.keys(PIPE_SIZES).map((k) => <option key={k}>{k}</option>)}</select></td>
-                        <td className="n"><NumInput className="thk-input" step={0.5} min={0} value={p.length} aria-label="Length m" onChange={(e) => setP({ length: Math.max(0, Number(e.target.value) || 0) })} /></td>
+                        <td className="n"><NumInput className="thk-input" step={0.5} min={0} value={runLength(house, p)} aria-label="Length m" title={p.leg && !p.typed ? 'Measured along its route on the plan; typing a length overrides it' : undefined}
+                          onChange={(e) => setP({ length: Math.max(0, Number(e.target.value) || 0), typed: true })} />
+                          {p.leg && p.typed && <button type="button" className="btn-link small" title="Measure along the route on the plan again" onClick={() => setP({ typed: undefined })}>plan</button>}</td>
                         <td><select className="h-sel" value={p.emitter ?? ''} aria-label="Emitter at the end" onChange={(e) => setP({ emitter: e.target.value || undefined })}>
                           <option value="">— (branch)</option>{c.emitters.map((e) => <option key={e.id} value={e.id}>{roomName(e.room)} {e.kind === 'ufh' ? 'UFH' : e.kind === 'towel' ? 'towel rail' : e.id}</option>)}
                         </select></td>
                         <td className="n mono">{fmt(r.loadW)}</td>
                         <td className="n mono">{fmt(r.flowLpm, 1)}</td>
                         <td className={`n mono ${r.v > MAX_V(PIPE_SIZES[p.size] ?? 13.6) ? 'bad' : ''}`}>{fmt(r.v, 2)}</td>
-                        <td className={`n mono ${r.paM > MAX_PA_M ? 'bad' : ''}`}>{fmt(r.paM)}</td>
-                        <td><button type="button" className="btn-link" onClick={() => upd((h) => { h.heating.pipes = (h.heating.pipes ?? []).filter((x) => x.id !== p.id).map((x) => (x.parent === p.id ? { ...x, parent: p.parent } : x)); })}>Remove</button></td>
+                        <td className={`n mono ${r.paM > pipesRes.paMax ? 'bad' : ''}`}>{fmt(r.paM)}</td>
+                        <td><button type="button" className="btn-link" onClick={() => upd((h) => removeRun(h, p.id))}>Remove</button></td>
                       </tr>
                     );
                   })}
@@ -271,6 +276,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
             </div>
             <div className="hf-row">
               <label className="hf"><span className="eyebrow">Pump head available</span><span className="hf-in"><NumInput className="thk-input" step={1} value={c.pumpHead ?? 40} onChange={(e) => upd((h) => { h.heating.pumpHead = Number(e.target.value) || 0; })} /><span className="small muted">kPa at the design flow</span></span></label>
+              <label className="hf"><span className="eyebrow">Pa/m cap</span><span className="hf-in"><NumInput className="thk-input" step={10} value={c.paCap ?? MAX_PA_M} onChange={(e) => upd((h) => { h.heating.paCap = Math.max(10, Number(e.target.value) || MAX_PA_M); })} /><span className="small muted">even with head to spare</span></span></label>
             </div>
             <p className={pipesRes.headOk ? 'small' : 'small warn'}>Index circuit (highlighted): {fmt(pipesRes.indexDp / 1000, 1)} kPa through {pipesRes.indexPath.length} runs, flow and return, with {Math.round((1.3 - 1) * 100)}% for fittings and 5 kPa for the emitter and valves.{' '}
               {pipesRes.headOk ? `Within the pump's ${fmt(pipesRes.head / 1000)} kPa.` : `More than the pump's ${fmt(pipesRes.head / 1000)} kPa: upsize the highlighted runs.`}</p>

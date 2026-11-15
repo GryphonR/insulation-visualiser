@@ -101,8 +101,10 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
-      if (!(e.ctrlKey || e.metaKey) || t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA') return;
-      if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); } else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
+      // Text fields keep the browser's own typing undo; everywhere else (checkboxes, sliders, number fields, the canvas) undoes the project.
+      if (!(e.ctrlKey || e.metaKey) || t?.matches('textarea, input:not([type]), input[type=text], input[type=search], [contenteditable]')) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); } else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

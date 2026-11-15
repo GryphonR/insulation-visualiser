@@ -6,7 +6,7 @@ import { MCS_STATIONS } from '../engine/climate-mcs';
 import { loadTmy } from '../engine/weather-tmy';
 import type { Tmy } from '../engine/weather-tmy';
 import type { Project, Scenario } from '../engine/house-scenarios';
-import { CASES, hourGains, simulate, verdict, yearTotals } from '../engine/house-sim';
+import { CASES, hourGains, roomMass, simulate, verdict, yearTotals } from '../engine/house-sim';
 import type { CaseId } from '../engine/house-sim';
 import { roomSchedule, scheduleSource } from '../engine/house-heating';
 import { useYearSim } from './useYearSim';
@@ -15,16 +15,19 @@ import { Chip } from './controls';
 import { Why, fmt, NumInput } from './hform';
 import { WHY, sourceWhy } from './assumptions';
 
-const MASS: Array<[number, string]> = [[80, 'Light (timber frame, 80 kJ/m²K)'], [165, 'Medium (masonry, 165)'], [260, 'Heavy (solid, 260)']];
 const PATTERN: Record<House['gains']['pattern'], string> = { work: 'Out at work', home: 'Home all day', shift: 'Shift work' };
 
 /** The test conditions' view of the occupancy card: what the runs assume, edited in one place. */
 function UseSummary({ house }: { house: House }) {
   const g = house.gains, unheated = house.rooms.filter((r) => r.heated && ['none', 'off'].includes(scheduleSource(house, r).kind));
+  const mass = useMemo(() => {
+    const rooms = calcHouse(house).rooms, A = rooms.reduce((t, r) => t + r.area * r.room.span, 0);
+    return A > 0 ? rooms.reduce((t, r) => t + roomMass(r).Cm, 0) / A / 1000 : 0;
+  }, [house]);
   return (
     <section className="card panel">
       <h2>How the house is used</h2>
-      <p className="small">{g.people} {g.people === 1 ? 'person' : 'people'}, {PATTERN[g.pattern].toLowerCase()}. Heating off: rooms held at {g.setback} °C. Heat stored: {MASS.find(([v]) => v === g.mass)?.[1] ?? `${g.mass} kJ/m²K`}. Windows let in {Math.round(g.g * 100)}% of the sun.</p>
+      <p className="small">{g.people} {g.people === 1 ? 'person' : 'people'}, {PATTERN[g.pattern].toLowerCase()}. Heating off: rooms held at {g.setback} °C. Heat stored by the walls and floors: about {fmt(mass)} kJ/m²K of floor<Why label="How is this worked out?">{WHY.mass}</Why>. Windows let in {Math.round(g.g * 100)}% of the sun.</p>
       {unheated.length > 0 && <p className="small bad">Not heated in these runs: {unheated.map((r) => r.name).join(', ')}.</p>}
       <a className="btn-secondary as-btn" href={href('gains')}>Occupancy, heating times and gains ›</a>
     </section>
@@ -200,12 +203,13 @@ export function HouseRuns({ house, setHouse, project, ordered, initialCase, init
           <h2>Rooms</h2>
           <div className="h-table-wrap">
             <table className="h-table">
-              <thead><tr><th>Room</th><th className="n">Min °C</th><th className="n">Max °C</th>
+              <thead><tr><th>Room</th><th className="n">Target °C</th><th className="n">Min °C</th><th className="n">Max °C</th>
                 {caseId === 'snap' ? <th className="n">Below 16 °C after</th> : <><th className="n">Too cold, h</th><th className="n">Too warm, h</th></>}</tr></thead>
               <tbody>
                 {sim.comfort.map((c, i) => (
                   <tr key={c.id} className={i === ri ? 'on' : ''} onClick={() => setRoom(c.id)}>
                     <td>{sim.rooms[i].name}{sim.rooms[i].heated ? '' : ' (unheated)'}</td>
+                    <td className="n mono">{sim.rooms[i].heated ? fmt(sim.rooms[i].setpoint, 1) : '—'}</td>
                     <td className="n mono">{fmt(c.min, 1)}</td><td className="n mono">{fmt(c.max, 1)}</td>
                     {caseId === 'snap'
                       ? <td className="n mono">{c.below16 == null ? 'stays above' : `${c.below16} h`}</td>
@@ -275,9 +279,6 @@ export function GainsCard({ house, upd }: { house: House; upd: (fn: (h: House) =
     <div className="hf-row">
       <label className="hf"><span className="hf-lab"><span className="eyebrow">Heating off: rooms held at</span><Why label="What is this?">{WHY.setback}</Why></span>
         <span className="hf-in"><NumInput className="thk-input" step={0.5} value={g.setback} onChange={(e) => upd((h) => { h.gains.setback = Number(e.target.value); })} /><span className="small muted">°C</span></span>
-      </label>
-      <label className="hf"><span className="hf-lab"><span className="eyebrow">Heat stored in the house</span><Why label="What is this?">{WHY.mass}</Why></span>
-        <select className="select" value={g.mass} onChange={(e) => upd((h) => { h.gains.mass = Number(e.target.value); })}>{MASS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
       </label>
       <label className="hf"><span className="hf-lab"><span className="eyebrow">Sun let in by windows (g-value)</span><Why label="What is this?">{WHY.gValue}</Why></span>
         <NumInput className="thk-input" step={0.05} min={0} max={0.9} value={g.g} onChange={(e) => upd((h) => { h.gains.g = Number(e.target.value); })} />

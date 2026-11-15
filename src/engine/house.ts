@@ -248,8 +248,8 @@ export interface House {
   ageBand?: 'AJ' | 'K';
   /** The user's own default temperature for each room type, overriding the table. */
   roomTemps?: Partial<Record<RoomType, number>>;
-  /** A dashed footprint (metres) to draw within, from the new-project dialog; not a room. */
-  guide?: { w: number; d: number };
+  /** A dashed footprint (metres) to draw within, from the new-project dialog or, with `poly`, an OpenStreetMap outline; not a room. */
+  guide?: { w: number; d: number; poly?: Pt[] };
 }
 
 /** A floor-plan image placed under one storey's plan: top-left corner and width in plan metres. */
@@ -278,8 +278,6 @@ export interface Gains {
   living: number[];
   bedrooms: number[];
   setback: number;
-  /** Thermal mass of rooms and their contents, kJ/m²K of floor (SAP TMP style). */
-  mass: number;
   /** Solar transmittance of glazing including frame and curtains. */
   g: number;
 }
@@ -862,6 +860,8 @@ export interface HouseResult {
   q50: number; n50: number; envelope: number; heatedV: number; heatedA: number;
   peakW: number; paths: Array<{ label: string; W: number }>;
   htc: number; hlp: number; annualKWh: number;
+  /** HTC for the year, W/K: party walls left out, since next door is lived in (the neighbour temperature is a design-day allowance). */
+  htcYear: number;
   /** Set by yearRes: annualKWh, months and running costs come from a typical-year run, or are a scaled estimate while it runs. Unset: degree days. */
   annualFrom?: 'estimate' | 'year';
   /** By month: heat, outside and flow temperature, heat per kWh bought (COP or boiler efficiency), kWh bought. */
@@ -1076,11 +1076,13 @@ export function calcHouse(h: House): HouseResult {
 
   const Tin = heatedV > EPS ? hr.reduce((t, x) => t + x.T * x.V, 0) / heatedV : 21;
   const htc = Tin - Tout > EPS ? peakW / (Tin - Tout) : 0;
-  // Degree-day estimate of the whole design loss, ground loss included: a quick stand-in until the typical-year run (yearRes) is in.
+  // Degree-day estimate of the design loss, ground loss included: a quick stand-in until the typical-year run (yearRes) is in.
+  // Party walls left out, as in the year run: next door is lived in, so the neighbour temperature is a design-day allowance only.
+  const htcYear = Tin - Tout > EPS ? (peakW - sum((x) => !!x.party)) / (Tin - Tout) : 0;
   const wts = MEAN.map((m, i) => Math.max(0, 15.5 + (h.calib?.dt ?? 0) - m) * DAYS[i]), wsum = wts.reduce((a, b) => a + b, 0) || 1;
   // Calibration: warmer rooms raise the degree-day base; part-heated houses use a share of it.
   const ddRatio = h.calib ? wsum / (MEAN.reduce((a, m, i) => a + Math.max(0, 15.5 - m) * DAYS[i], 0) || 1) : 1;
-  const annualKWh = ((htc * hdd * 24) / 1000) * ddRatio * (h.calib?.hf ?? 1);
+  const annualKWh = ((htcYear * hdd * 24) / 1000) * ddRatio * (h.calib?.hf ?? 1);
   const needs = hr.map((x) => ({ room: x.room, need: x.totalW }));
   const flowAt = (Te: number) => systemFlow(h, needs, Tout, Te);
   const effAt = (Te: number, m: number) => sourceEff(h, flowAt(Te), Te, Tg, m);
@@ -1157,7 +1159,7 @@ export function calcHouse(h: House): HouseResult {
   return {
     junctions, junctionPsi, Tout, ToutMcs, Tg, hdd, hddKnown, station: MCS_STATIONS[cl.station]?.[0] ?? '?', region: reg[0], climate: cl,
     rooms, loft: hasLoft ? { T: T.loft, area: loftA, V: loftV, U: roofU, slopes } : null,
-    q50, n50, envelope, heatedV, heatedA, peakW, paths, htc, hlp: heatedA > EPS ? htc / heatedA : 0, annualKWh, months, hp, checks,
+    q50, n50, envelope, heatedV, heatedA, peakW, paths, htc, htcYear, hlp: heatedA > EPS ? htc / heatedA : 0, annualKWh, months, hp, checks,
     heat: { designFlow, rooms: emitRooms, gov: gov ? { id: gov.id, req: gov.req } : null },
   };
 }

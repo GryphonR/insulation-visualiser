@@ -1,6 +1,7 @@
 import { clamp } from '../lib/util';
 import { MAT } from './data';
 import type { Material, Orient } from './data';
+import { roomKappa } from './heat-capacity';
 import { solarAt } from './solar';
 
 export interface LayerInput {
@@ -366,24 +367,8 @@ export function simulate(P: SimParams) {
     }
   }
 
-  // Thermal mass inside the main insulation (top 100 mm), kJ/m²K.
-  let iIns = 0;
-  let best = -1;
-  lay.forEach((l, i) => {
-    if (l.R > best) {
-      best = l.R;
-      iIns = i;
-    }
-  });
-  let kin = 0;
-  let depth = 0;
-  for (let i = lay.length - 1; i > iIns; i--) {
-    const thick = lay[i].x1 - lay[i].x0;
-    const use = Math.min(thick, 100 - depth);
-    if (use <= 0) break;
-    kin += (lay[i].C * use) / thick / 1000;
-    depth += use;
-  }
+  // Thermal mass the room sees over a daily cycle (ISO 13786), kJ/m²K.
+  const kin = roomKappa(P.layers.map((L) => [L.mat, L.t]), { rse: Rse });
   const ktot = lay.reduce((s, l) => s + l.C, 0) / 1000;
 
   // Heat flow through each face (N+1 faces), W/m², positive towards the room.

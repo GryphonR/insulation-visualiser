@@ -48,7 +48,7 @@ export function SitePage() {
                   {MCS_MEAN_TEMPS.map((s, i) => <option key={i} value={i}>{s[0]} ({s[4]} °C)</option>)}
                 </select>
               </label>
-              <Num label="Neighbour (party walls)" unit="°C" step={0.5} value={house.neighbourT} onChange={(v) => upd((h) => { h.neighbourT = v; })} />
+              <Num label="Neighbour (party walls)" unit="°C" step={0.5} why="The temperature next door on the design day, for the heat loss and the coldest-day test; 10 °C is the usual allowance for a neighbour who may be away. The other tests treat next door as lived in like this house, so no net heat crosses a party wall." value={house.neighbourT} onChange={(v) => upd((h) => { h.neighbourT = v; })} />
             </div>
             <div className="hf-row">
               <label className="small"><input type="checkbox" checked={Number.isFinite(house.climate.designT)}

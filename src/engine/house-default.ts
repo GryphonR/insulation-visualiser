@@ -131,7 +131,7 @@ function baseHouse(): House {
       co2: { elec: 0.136, gas: 0.21, oil: 0.298, lpg: 0.241 },
     },
     gains: {
-      people: 3, pattern: 'work', setback: 16, mass: 165, g: 0.45,
+      people: 3, pattern: 'work', setback: 16, g: 0.45,
       living: hours([6, 7, 8, 16, 17, 18, 19, 20, 21, 22]),
       bedrooms: hours([6, 7, 21, 22]),
     },

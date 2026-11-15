@@ -37,7 +37,8 @@ export function calibrate(res: HouseResult, bills: Bills, eff: number, k: Knobs)
   const kDD = res.hdd / typ;
   const vent = res.paths.find((p) => p.label === 'Ventilation')?.W ?? 0;
   const dT = res.peakW / Math.max(1, res.htc);
-  const Hv = vent / dT, Hf = res.htc - Hv, H = Hf + Hv * k.q;
+  // Party walls left out: a neighbour at a steady temperature adds nothing to the slope against outside temperature.
+  const Hv = vent / dT, Hf = res.htcYear - Hv, H = Hf + Hv * k.q;
   const meas = bills.gas;
   const summer = [5, 6, 7].map((m) => meas[m]).filter(Number.isFinite);
   const base = Number.isFinite(bills.base) ? bills.base : summer.length ? Math.min(...summer) : 0;

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { calcHouse, setOutline } from './house';
 import type { House } from './house';
 import { defaultHouse, withHeating } from './house-default';
+import { DEMOS } from './house-demos';
 import { applyChanges, describe as describeChange, diff, groupChanges, steps } from './house-scenarios';
 import { simulate, yearTotals } from './house-sim';
 import { TMY_FILES, loadTmy } from './weather-tmy';
@@ -98,6 +99,27 @@ describe('hour-by-hour runs', () => {
     expect(avg(r.T[i])).toBeGreaterThan(avg(r.out));
   });
 
+  it('heatwave: opened windows keep an airtight, well-insulated house from cooking, but never cool a room below the outside air', () => {
+    // Without window opening the Passivhaus-type demo peaked at 40–47 °C.
+    const r = simulate(DEMOS.find((d) => d.id === 'passivhaus')!.make().scenarios[0].house, 'summer');
+    const lo = Math.min(...r.out);
+    for (const c of r.comfort) { expect(c.max).toBeLessThan(32); expect(c.min).toBeGreaterThan(lo); }
+  });
+
+  it('party walls: the neighbour temperature sets the design day only; the other runs take next door as lived in', () => {
+    const vic = DEMOS.find((d) => d.id === 'victorian')!.make().scenarios[0].house, warm = { ...vic, neighbourT: 20 };
+    expect(simulate(warm, 'design').peakW).toBeLessThan(simulate(vic, 'design').peakW);
+    const a = simulate(vic, 'summer'), b = simulate(warm, 'summer');
+    a.comfort.forEach((c, i) => expect(b.comfort[i].max).toBeCloseTo(c.max, 6));
+    // A terrace on a 22 °C-average day is no longer cooled by neighbours held at 10 °C.
+    for (const c of a.comfort) expect(c.max).toBeGreaterThan(22);
+    // The quick annual estimate agrees: the neighbour temperature moves the design loss, not the year.
+    const ra = calcHouse(vic), rb = calcHouse(warm);
+    expect(rb.peakW).toBeLessThan(ra.peakW);
+    expect(rb.annualKWh).toBeCloseTo(ra.annualKWh, 6);
+    expect(ra.htcYear).toBeLessThan(ra.htc);
+  });
+
   it('typical year from the bundled PVGIS weather: loads for every station and gives a sensible year', async () => {
     const tmy = await loadTmy(7);
     expect(tmy.T.length).toBe(8760);
@@ -132,8 +154,9 @@ describe('hour-by-hour runs', () => {
     hh.gains.people = 0;
     hh.gains.living = Array(24).fill(1);
     const ready = withHeating({ ...hh, heating: undefined as unknown as House['heating'] });
-    const base = calcHouse(ready), r = simulate(ready, 'design', base);
-    // Over a settled day B (no gains, no sun) sits at the U·A-weighted mean of what is around it, ventilation included.
+    // Over a whole year the rooms' mass gives back what it took in (a single day may still be settling).
+    const base = calcHouse(ready), r = simulate(ready, 'year', base);
+    // Over that year B (no gains, no sun) sits at the U·A-weighted mean of what is around it, ventilation included.
     const avg = (a: Float32Array) => a.reduce((s, v) => s + v, 0) / a.length;
     const rb = base.rooms.find((x) => x.room.id === 'B')!;
     const near = (to: (typeof rb.faces)[number]['to']) => (to.k === 'out' ? avg(r.out) : to.k === 'ground' ? base.Tg : to.k === 'loft' ? avg(r.loftT!)

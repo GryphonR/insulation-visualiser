@@ -1,6 +1,10 @@
 // Pipe sizing (board 3): a tree of pipe runs from the heat pump, flows from the emitters each run serves,
 // velocity and pressure drop per run, and the index circuit against the pump's available head.
 import type { House, HouseResult } from './house';
+import { pointInPoly } from './geom';
+import type { Pt } from './geom';
+import { calcHouse, onStorey, roomPoly } from './house';
+import { emitterPose } from './house-draw';
 import { emitterOut, lpm } from './house-heating';
 
 /** Pipe sizes: label → internal diameter, mm. */
@@ -10,6 +14,7 @@ export const PIPE_SIZES: Record<string, number> = {
 };
 /** Design limits: velocity (m/s, lower for small bores to keep noise down) and pressure drop per metre (Pa/m). */
 export const MAX_V = (id: number) => (id <= 8 ? 0.8 : id <= 14 ? 1.0 : 1.5);
+/** Default cap on Pa/m, a common design limit for balancing and noise. */
 export const MAX_PA_M = 300;
 /** Allowance for fittings (bends, tees, valves) on top of the straight-pipe loss. */
 const FITTINGS = 1.3;
@@ -23,13 +28,42 @@ export interface Pipe {
   size: string; length: number;
   /** Emitter at the end of this run, if any. */
   emitter?: string;
+  /** Its route on the plan, what its two ends are attached to ('source', 'cylinder', a riser id, or 'e:' + emitter id), and its climb between floors, m. */
+  leg?: PipeLeg; ends?: [string, string]; rise?: number;
+  /** The length was typed in, so it no longer follows the route. */
+  typed?: boolean;
+  /** Laid in the floor or the ceiling of its storey; unset, it follows the run it comes off on the same floor (else the floor). */
+  via?: 'floor' | 'ceiling';
 }
 
 export interface PipeRow {
   pipe: Pipe; loadW: number; flowLpm: number; v: number; paM: number; dp: number;
   ok: boolean; why: string[]; index: boolean;
 }
-export interface PipeResult { rows: PipeRow[]; indexDp: number; indexPath: string[]; head: number; headOk: boolean; unpiped: string[] }
+export interface PipeResult {
+  rows: PipeRow[]; indexDp: number; indexPath: string[]; head: number; headOk: boolean; unpiped: string[];
+  /** Each emitter's design load, W. */ emitterW: Map<string, number>;
+  /** Pa/m each run may lose: the pump head shared along the longest circuit, or the cap if lower. */ paMax: number; longest: number;
+  /** The pump's share alone (Infinity before there are runs), and the cap. */ paPump: number; paCap: number;
+}
+
+/**
+ * Pressure budget per metre: the pump head, less the drop across the emitter and its valves, spread over the longest circuit
+ * (flow and return, with the fittings allowance). A run within it keeps the circuit within the pump.
+ */
+export function paBudget(h: House): { paMax: number; longest: number; paPump: number; paCap: number } {
+  const pipes = h.heating.pipes ?? [], byId = new Map(pipes.map((p) => [p.id, p]));
+  let longest = 0;
+  for (const p of pipes) {
+    if (!p.emitter) continue;
+    let L = 0, n = 0;
+    for (let cur: Pipe | undefined = p; cur && n < 50; cur = cur.parent ? byId.get(cur.parent) : undefined, n++) L += runLength(h, cur);
+    longest = Math.max(longest, L);
+  }
+  const head = (h.heating.pumpHead ?? 40) * 1000;
+  const paCap = h.heating.paCap ?? MAX_PA_M, paPump = longest > 0 ? Math.max(1, (head - EMITTER_DP) / (2 * FITTINGS * longest)) : Infinity;
+  return { paMax: Math.min(paCap, paPump), longest, paPump, paCap };
+}
 
 const RHO = 992, NU = 0.66e-6; // water at about 40 °C
 
@@ -43,7 +77,7 @@ export function pipeFlow(flowLpm: number, idMM: number): { v: number; paM: numbe
 }
 
 export function sizePipes(h: House, res: HouseResult): PipeResult {
-  const pipes = h.heating.pipes ?? [];
+  const pipes = h.heating.pipes ?? [], { paMax, longest, paPump, paCap } = paBudget(h);
   const flow = res.heat.designFlow;
   // Each emitter carries its share of its room's design loss (by output at the design flow).
   const load = new Map<string, number>();
@@ -67,8 +101,8 @@ export function sizePipes(h: House, res: HouseResult): PipeResult {
     const { v, paM } = pipeFlow(flowLpm, id);
     const why: string[] = [];
     if (v > MAX_V(id)) why.push(`${v.toFixed(2)} m/s is over ${MAX_V(id)} m/s: noisy`);
-    if (paM > MAX_PA_M) why.push(`${Math.round(paM)} Pa/m is over ${MAX_PA_M} Pa/m`);
-    return { pipe: p, loadW, flowLpm, v, paM, dp: paM * p.length * FITTINGS, ok: !why.length, why, index: false };
+    if (paM > paMax) why.push(`${Math.round(paM)} Pa/m is over the ${paMax < paCap ? "pump's" : ''} ${Math.round(paMax)} Pa/m limit`);
+    return { pipe: p, loadW, flowLpm, v, paM, dp: paM * runLength(h, p) * FITTINGS, ok: !why.length, why, index: false };
   });
   // Index circuit: the path from the heat pump to an emitter with the highest total pressure drop.
   const byId = new Map(rows.map((r) => [r.pipe.id, r]));
@@ -83,11 +117,59 @@ export function sizePipes(h: House, res: HouseResult): PipeResult {
   for (const id of indexPath) byId.get(id)!.index = true;
   const head = (h.heating.pumpHead ?? 40) * 1000;
   const piped = new Set(pipes.map((p) => p.emitter).filter(Boolean));
-  return { rows, indexDp, indexPath, head, headOk: indexDp <= head, unpiped: h.heating.emitters.filter((e) => !piped.has(e.id)).map((e) => e.id) };
+  return { rows, indexDp, indexPath, head, headOk: indexDp <= head, unpiped: h.heating.emitters.filter((e) => !piped.has(e.id)).map((e) => e.id), emitterW: load, paMax, longest, paPump, paCap };
 }
 
-/** Typical pipework to start from: 28 mm primary, 22 mm to each storey, 15 mm (10 mm upstairs) tails, PEX to UFH loops. */
+/** A pipe drawn on one storey's plan, as a path of points (m). */
+export interface PipeLeg { storey: number; pts: Pt[] }
+/** One storey's feed: where it comes up (the source itself, or a riser), the legs that get it there, and its rise between floors. */
+interface Feed { hub: Pt; legs: PipeLeg[]; run: number; rise: number; riser?: string }
+/** Every routed pipe: the storey feeds, and a tail from the feed to each emitter and to the cylinder. */
+export interface PipeRoute { feeds: Map<number, Feed>; tails: Array<{ emitter?: string; cylinder?: true; storey: number; leg: PipeLeg; run: number }> }
+
+// Pipes follow the walls and joists: along one axis then the other, turning inside the house where that is possible.
+const ell = (h: House, s: number, a: Pt, b: Pt): Pt[] => {
+  const c: Pt = [b[0], a[1]], inside = h.rooms.some((r) => onStorey(r, s) && pointInPoly(c, roomPoly(r)));
+  return tidy([a, inside ? c : [a[0], b[1]], b]);
+};
+const runOf = (a: Pt, b: Pt) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]);
+/** Height between two storeys' floors, m: room height plus floor zone of each storey crossed. */
+const rise = (h: House, a: number, b: number) => { let t = 0; for (let k = Math.min(a, b); k < Math.max(a, b); k++) t += (h.storeys[k]?.h ?? 2.5) + (h.storeys[k + 1]?.zone ?? 0.25); return t; };
+
+/** Lay pipes on the plan from the placed heat source: on its own storey straight to each emitter; to other storeys up whichever riser makes the runs shortest (straight up from the source if there are none). */
+export function routePipes(h: House): PipeRoute | null {
+  const src = h.heating.source;
+  if (!src) return null;
+  const risers = h.heating.risers ?? [];
+  const ends = h.heating.emitters.flatMap((e) => {
+    const r = h.rooms.find((x) => x.id === e.room), at = emitterPose(h, e)?.at;
+    return r && at ? [{ emitter: e.id as string | undefined, storey: r.storey, at }] : [];
+  });
+  const cyl = h.heating.cylinder;
+  const all = cyl ? [...ends, { emitter: undefined, storey: cyl.storey, at: cyl.at }] : ends;
+  const feeds = new Map<number, Feed>();
+  for (const s of new Set(all.map((x) => x.storey))) {
+    if (s === src.storey) { feeds.set(s, { hub: src.at, legs: [], run: 0, rise: 0 }); continue; }
+    const here = all.filter((x) => x.storey === s);
+    const cost = (p: Pt) => runOf(src.at, p) + here.reduce((t, x) => t + runOf(p, x.at), 0);
+    // A placed riser is where pipes can pass the floors, so one is always used; with none, they go straight up from the source.
+    const best = risers.length ? risers.reduce((b, r) => (cost(r.at) < cost(b.at) ? r : b)) : { id: undefined, at: src.at };
+    const v = rise(h, src.storey, s);
+    feeds.set(s, { hub: best.at, riser: best.id, run: runOf(src.at, best.at) + v, rise: v, legs: best.id ? [{ storey: src.storey, pts: ell(h, src.storey, src.at, best.at) }] : [] });
+  }
+  const tails = all.map((x) => {
+    const hub = feeds.get(x.storey)!.hub;
+    return { emitter: x.emitter, cylinder: x.emitter ? undefined : (true as const), storey: x.storey, leg: { storey: x.storey, pts: ell(h, x.storey, hub, x.at) }, run: runOf(hub, x.at) };
+  });
+  return { feeds, tails };
+}
+
+const m1 = (v: number) => Math.max(0.5, Math.round(v * 10) / 10);
+
+/** Typical pipework to start from: 28 mm primary, 22 mm to each storey, 15 mm (10 mm upstairs) tails, PEX to UFH loops. Measured from the plan when the heat source is placed. */
 export function autoPipes(h: House): Pipe[] {
+  const route = routePipes(h);
+  if (route) return planPipes(h, route);
   const out: Pipe[] = [{ id: 'P1', name: 'Heat pump → manifold / tee', parent: null, size: 'Cu 28 mm', length: 8 }];
   let n = 1;
   h.storeys.forEach((s, si) => {
@@ -102,4 +184,279 @@ export function autoPipes(h: House): Pipe[] {
     }
   });
   return out;
+}
+
+/** The pipe tree from a routed plan: lengths are the measured runs, sizes as in the typical layout. */
+function planPipes(h: House, route: PipeRoute): Pipe[] {
+  const src = h.heating.source!;
+  const out: Pipe[] = [{ id: 'P1', name: `${h.hp.source === 'ashp' || h.hp.source === 'gshp' ? 'Heat pump' : 'Boiler'} → first tee`, parent: null, size: 'Cu 28 mm', length: 1 }];
+  let n = 1;
+  for (const [si, f] of [...route.feeds].sort((a, b) => a[0] - b[0])) {
+    const s = h.storeys[si], hub = f.riser ?? 'source', other = si !== src.storey;
+    // Runs on the source's own floor leave from the first tee; another floor's come off its branch.
+    const branch = other ? `P${++n}` : 'P1';
+    if (other) out.push({ id: branch, name: `To ${s?.name.toLowerCase() ?? `storey ${si}`}${f.riser ? ' (up the riser)' : other ? ' (through the floor)' : ''}`, parent: 'P1', size: 'Cu 22 mm', length: m1(f.run),
+      ends: ['source', hub], rise: f.rise, ...(f.legs[0] ? { leg: f.legs[0] } : {}) });
+    for (const t of route.tails.filter((x) => x.storey === si)) {
+      const e = h.heating.emitters.find((x) => x.id === t.emitter), at = { leg: t.leg, ends: [hub, e ? `e:${e.id}` : 'cylinder'] as [string, string] };
+      if (!e) { out.push({ id: `P${++n}`, name: 'Hot water cylinder coil', parent: branch, size: 'Cu 22 mm', length: m1(t.run), ...at }); continue; }
+      const room = h.rooms.find((r) => r.id === e.room)?.name ?? e.room;
+      out.push({ id: `P${++n}`, name: `${room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.id}`, parent: branch,
+        size: e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : si === src.storey || si === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)', length: m1(t.run), emitter: e.id, ...at });
+    }
+  }
+  return out;
+}
+
+// --- Editing routes on the plan ------------------------------------------------------------------
+
+/** Where a run's end is attached now: the source, the cylinder, a riser, 'e:' + an emitter, or 'tee:' + the run it branches off (its far end). */
+export function endPoint(h: House, id: string): Pt | null {
+  if (id === 'source' || id === 'cylinder') return h.heating[id]?.at ?? null;
+  if (id.startsWith('tee:')) { const p = h.heating.pipes?.find((x) => x.id === id.slice(4)), pts = p && livePath(h, p); return pts ? pts[pts.length - 1] : null; }
+  if (id.startsWith('e:')) { const e = h.heating.emitters.find((x) => x.id === id.slice(2)); return (e && emitterPose(h, e)?.at) ?? null; }
+  return h.heating.risers?.find((r) => r.id === id)?.at ?? null;
+}
+
+const same = (a: Pt, b: Pt) => Math.abs(a[0] - b[0]) < 1e-3 && Math.abs(a[1] - b[1]) < 1e-3;
+/** Drop repeated points and corners that lie on a straight line. */
+export function tidy(pts: Pt[]): Pt[] {
+  const out = pts.filter((q, i) => i === 0 || !same(q, pts[i - 1]));
+  for (let i = out.length - 2; i >= 1; i--) {
+    const [a, b, c] = [out[i - 1], out[i], out[i + 1]];
+    const cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]), dot = (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]);
+    if (Math.abs(cross) < 1e-6 && dot >= 0) out.splice(i, 1);
+  }
+  return out;
+}
+
+/** A run's route with its ends moved to where they are attached now. The corner next to a moved end follows, so the run stays square. */
+export function livePath(h: House, p: Pipe): Pt[] | null {
+  if (!p.leg) return null;
+  const orig = p.leg.pts, pts = orig.map((q) => [q[0], q[1]] as Pt);
+  const [a, b] = (p.ends ?? ['', '']).map((id) => endPoint(h, id));
+  if (pts.length === 2) {
+    const s0 = a ?? pts[0], s1 = b ?? pts[1];
+    return Math.abs(s0[0] - s1[0]) < 1e-6 || Math.abs(s0[1] - s1[1]) < 1e-6 ? [s0, s1] : ell(h, p.leg.storey, s0, s1);
+  }
+  const follow = (end: number, nb: number, to: Pt | null) => {
+    if (!to) return;
+    if (Math.abs(orig[nb][1] - orig[end][1]) < 1e-6) pts[nb][1] = to[1];
+    else if (Math.abs(orig[nb][0] - orig[end][0]) < 1e-6) pts[nb][0] = to[0];
+    pts[end] = to;
+  };
+  follow(0, 1, a);
+  follow(pts.length - 1, pts.length - 2, b);
+  return pts;
+}
+
+const pathLen = (pts: Pt[]) => pts.slice(1).reduce((t, q, i) => t + Math.hypot(q[0] - pts[i][0], q[1] - pts[i][1]), 0);
+/** A run's length, m: along its route plus its climb, unless it was typed in. */
+export function runLength(h: House, p: Pipe): number {
+  const pts = p.typed ? null : livePath(h, p);
+  if (!pts) return p.length;
+  const e = p.emitter ? h.heating.emitters.find((x) => x.id === p.emitter) : undefined;
+  return Math.round((pathLen(pts) + (p.rise ?? 0) + (e ? valveTail(h, p.leg!.storey, viaOf(h, p), e.kind) : 0)) * 10) / 10;
+}
+
+/** Height of radiator valves above the floor, m. */
+const VALVE = 0.15;
+/** Where a run is laid: as set, else as the run it comes off on the same floor, else in the floor. */
+export function viaOf(h: House, p: Pipe): 'floor' | 'ceiling' {
+  for (let cur: Pipe | undefined = p, n = 0; cur?.leg && cur.leg.storey === p.leg?.storey && n < 50; n++) {
+    if (cur.via) return cur.via;
+    const up: string | null = cur.parent;
+    cur = up ? h.heating.pipes?.find((x) => x.id === up) : undefined;
+  }
+  return 'floor';
+}
+/** The void a run lies in: void s is under storey s, so a storey's ceiling and the floor of the one above are the same void. -1 with no route. */
+export const voidOf = (h: House, p: Pipe): number => (p.leg ? p.leg.storey + (viaOf(h, p) === 'ceiling' ? 1 : 0) : -1);
+/** A void described by the storeys either side of it. */
+export function voidName(h: House, v: number): string {
+  const below = h.storeys[v - 1]?.name.toLowerCase(), above = h.storeys[v]?.name.toLowerCase();
+  return !below ? `under the ${above}` : !above ? `above the ${below}, in the roof space` : `between the ${below} and ${above}`;
+}
+
+/**
+ * The pipe from the void to a radiator's valves, m: from the middle of the floor void up to the valves, or from the middle of the
+ * ceiling void (the floor zone above, or 0.2 m under a roof) down the wall to them. UFH is fed at floor level either way.
+ */
+export function valveTail(h: House, storey: number, via: 'floor' | 'ceiling', kind: string): number {
+  if (kind === 'ufh') return 0;
+  const s = h.storeys[storey];
+  if (!s) return 0;
+  return via === 'ceiling' ? s.h - VALVE + (h.storeys[storey + 1]?.zone ?? 0.2) / 2 : VALVE + s.zone / 2;
+}
+
+/** Slide segment i of a route sideways by d (the part along it is ignored). A segment at either end leaves its end where it is attached and gains a bend. */
+export function dragSegment(pts: Pt[], i: number, d: Pt): Pt[] {
+  const a = pts[i], b = pts[i + 1], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  const n: Pt = [-(b[1] - a[1]) / L, (b[0] - a[0]) / L], m = d[0] * n[0] + d[1] * n[1];
+  const mv = (q: Pt): Pt => [+(q[0] + n[0] * m).toFixed(3), +(q[1] + n[1] * m).toFixed(3)];
+  return tidy([...pts.slice(0, i), ...(i === 0 ? [a] : []), mv(a), mv(b), ...(i + 1 === pts.length - 1 ? [b] : []), ...pts.slice(i + 2)]);
+}
+
+/** Cut segment i at the point nearest `at`, so either half can then be dragged on its own. */
+export function splitSegment(pts: Pt[], i: number, at: Pt): Pt[] {
+  const a = pts[i], b = pts[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((at[0] - a[0]) * dx + (at[1] - a[1]) * dy) / L2)), q: Pt = [+(a[0] + dx * t).toFixed(3), +(a[1] + dy * t).toFixed(3)];
+  return [...pts.slice(0, i + 1), q, [q[0], q[1]], ...pts.slice(i + 1)];
+}
+
+/** Take a run out; the runs coming off it then come off the run it came off (edits h in place). */
+export function removeRun(h: House, id: string): void {
+  const p = h.heating.pipes?.find((x) => x.id === id);
+  if (p) h.heating.pipes = h.heating.pipes!.filter((x) => x !== p).map((x) => (x.parent === id ? { ...x, parent: p.parent } : x));
+}
+
+/** Put a run back to a plain square route between its two ends (edits h in place). */
+export function resetRun(h: House, id: string): void {
+  const p = h.heating.pipes?.find((x) => x.id === id), [a, b] = (p?.ends ?? ['', '']).map((e) => endPoint(h, e));
+  if (p?.leg && a && b) { p.leg = { storey: p.leg.storey, pts: ell(h, p.leg.storey, a, b) }; delete p.typed; }
+}
+
+/** Feed a floor's branch up a riser, or straight up from the source ('source'); its runs on that floor now start there (edits h in place). */
+export function setBranchRiser(h: House, branchId: string, riser: string): void {
+  const p = h.heating.pipes?.find((x) => x.id === branchId), src = h.heating.source, at = endPoint(h, riser);
+  if (!p?.ends || !src || !at) return;
+  p.ends = ['source', riser];
+  if (riser === 'source') { delete p.leg; p.length = Math.round((p.rise ?? 0) * 10) / 10; }
+  else p.leg = { storey: src.storey, pts: ell(h, src.storey, src.at, at) };
+  delete p.typed;
+  for (const c of h.heating.pipes!) if (c.parent === branchId && c.ends) { c.ends = [riser, c.ends[1]]; resetRun(h, c.id); }
+}
+
+const CU_UP = ['Cu 15 mm', 'Cu 22 mm', 'Cu 28 mm', 'Cu 35 mm'], PEX_UP = ['PEX 16 mm', 'PEX 20 mm', 'PEX 25 mm', 'PEX 32 mm'];
+/** The most a pipe of internal diameter id (mm) can carry within the velocity and Pa/m limits, l/min. */
+export function maxFlow(idMM: number, paMax = MAX_PA_M): number {
+  let lo = 0, hi = 500;
+  for (let k = 0; k < 40; k++) { const m = (lo + hi) / 2, { v, paM } = pipeFlow(m, idMM); if (v <= MAX_V(idMM) && paM <= paMax) lo = m; else hi = m; }
+  return lo;
+}
+
+/** The smallest pipe within the velocity and Pa/m limits for a flow, and no smaller than any pipe it feeds. */
+export function fitSize(flowLpm: number, feeds: string[], paMax = MAX_PA_M): string {
+  const list = feeds.some((f) => f.startsWith('PEX')) ? PEX_UP : CU_UP, min = Math.max(0, ...feeds.map((f) => PIPE_SIZES[f] ?? 0));
+  return list.find((k) => { const id = PIPE_SIZES[k]; if (id < min) return false; const { v, paM } = pipeFlow(flowLpm, id); return v <= MAX_V(id) && paM <= paMax; }) ?? list[list.length - 1];
+}
+
+/**
+ * Runs that leave the same point in the same direction share a pipe: the shared stretch becomes one run, sized for the flow of
+ * everything beyond it, and the runs branch off its far end (a tee). Repeats down the tree. Returns how many shared runs were made (edits h in place).
+ */
+export function combineRuns(h: House, res: HouseResult = calcHouse(h)): number {
+  const pipes = h.heating.pipes ?? [], made: Pipe[] = [];
+  const nextId = () => { let n = pipes.length + 1; while (pipes.some((p) => p.id === `P${n}`)) n++; return `P${n}`; };
+  const short = (p: Pipe): string[] => (p.leg && pipes.some((c) => c.parent === p.id) ? pipes.filter((c) => c.parent === p.id).flatMap(short) : [p.name.replace(/ e\d+$/, '')]);
+  const group = (parent: string | null) => {
+    const buckets = new Map<string, Array<{ p: Pipe; pts: Pt[]; first: number }>>();
+    for (const p of pipes) {
+      if (p.parent !== parent || !p.leg || !p.ends) continue;
+      const pts = livePath(h, p);
+      if (!pts || pts.length < 2) continue;
+      const dx = pts[1][0] - pts[0][0], dy = pts[1][1] - pts[0][1], first = Math.hypot(dx, dy);
+      if (first < 1e-3) continue;
+      const key = `${p.leg.storey}|${p.ends[0]}|${Math.round((dx / first) * 1000)}|${Math.round((dy / first) * 1000)}`;
+      buckets.set(key, [...(buckets.get(key) ?? []), { p, pts, first }]);
+    }
+    for (const g of buckets.values()) {
+      if (g.length < 2) continue;
+      const P = g[0].pts[0], d = Math.min(...g.map((x) => x.first));
+      // A few centimetres together is a tee at the start, not a shared pipe.
+      if (d < 0.15) continue;
+      const u: Pt = [(g[0].pts[1][0] - P[0]) / g[0].first, (g[0].pts[1][1] - P[1]) / g[0].first];
+      const Q: Pt = [+(P[0] + u[0] * d).toFixed(3), +(P[1] + u[1] * d).toFixed(3)], storey = g[0].p.leg!.storey;
+      const t: Pipe = { id: nextId(), name: sharedName(g.flatMap((x) => short(x.p))), parent, size: g[0].p.size, length: m1(d), leg: { storey, pts: [P, Q] }, ends: [g[0].p.ends![0], ''], ...(g[0].p.via ? { via: g[0].p.via } : {}) };
+      pipes.push(t); made.push(t);
+      for (const x of g) {
+        const rest = x.first - d < 1e-3 ? x.pts.slice(1) : [Q, ...x.pts.slice(1)];
+        x.p.leg = { storey, pts: rest.length > 1 ? rest : [Q, [Q[0], Q[1]]] };
+        x.p.ends = [`tee:${t.id}`, x.p.ends![1]]; x.p.parent = t.id; delete x.p.typed;
+      }
+      group(t.id);
+    }
+  };
+  for (const parent of [null, ...pipes.map((p) => p.id)]) group(parent);
+  if (!made.length) return 0;
+  h.heating.pipes = pipes;
+  // Innermost shared runs first, so each one is at least as big as the shared runs it feeds.
+  const sized = sizePipes(h, res), flows = new Map(sized.rows.map((r) => [r.pipe.id, r.flowLpm]));
+  for (const t of [...made].reverse()) t.size = fitSize(flows.get(t.id) ?? 0, pipes.filter((c) => c.parent === t.id).map((c) => c.size), sized.paMax);
+  return made.length;
+}
+
+/** A shared run's name: what it feeds, each once ("Shared: Front room, Kitchen"). */
+const sharedName = (names: string[]) => `Shared: ${[...new Set(names.flatMap((n) => n.replace(/^Shared: /, '').split(', ')).map((n) => n.replace(/ e\d+$/, '')))].join(', ')}`;
+
+/** Shared runs left with nothing beyond them are removed; one left feeding a single run is folded into that run (edits h in place). */
+function foldTrunks(h: House): void {
+  for (let again = true; again; ) {
+    again = false;
+    const pipes = h.heating.pipes ?? [];
+    for (const t of pipes) {
+      if (!t.leg || t.ends?.[1] !== '') continue;
+      const kids = pipes.filter((c) => c.parent === t.id);
+      if (kids.length > 1) continue;
+      const k = kids[0], tp = livePath(h, t), kp = k && livePath(h, k);
+      if (k && (!kp || !tp || k.leg!.storey !== t.leg.storey)) continue;
+      if (k && tp && kp) { k.leg = { storey: t.leg.storey, pts: tidy([...tp, ...kp.slice(1)]) }; k.parent = t.parent; k.ends = [t.ends[0], k.ends![1]]; delete k.typed; }
+      h.heating.pipes = pipes.filter((x) => x !== t);
+      again = true;
+      break;
+    }
+  }
+}
+
+/**
+ * A run dropped along another tees off it: the stretch they share becomes one run (sized for both) from the other run's start,
+ * and both carry on from where the dropped run leaves it. Returns false when it lies along no other run on its floor (edits h in place).
+ */
+export function joinRun(h: House, id: string, res?: HouseResult): boolean {
+  const pipes = h.heating.pipes ?? [], X = pipes.find((p) => p.id === id), xp = X && livePath(h, X);
+  if (!X?.leg || !X.ends || !xp) return false;
+  // Never onto a run fed through this one: that would loop.
+  const below = new Set([id]);
+  for (let grew = true; grew; ) { grew = false; for (const p of pipes) if (p.parent && below.has(p.parent) && !below.has(p.id)) { below.add(p.id); grew = true; } }
+  let best: { Y: Pipe; yp: Pt[]; T: Pt; i: number; j: number; len: number } | null = null;
+  // Runs in the same void can share a pipe, whichever floor's plan they were drawn on.
+  const xv = voidOf(h, X);
+  for (const Y of pipes) {
+    const yp = Y.leg && Y.ends && Y.id !== X.id && voidOf(h, Y) === xv && !below.has(Y.id) ? livePath(h, Y) : null;
+    if (!yp) continue;
+    for (let i = 0; i + 1 < xp.length; i++) for (let j = 0; j + 1 < yp.length; j++) {
+      const a = xp[i], b = xp[i + 1], c = yp[j], d = yp[j + 1], Lx = Math.hypot(b[0] - a[0], b[1] - a[1]), Ly = Math.hypot(d[0] - c[0], d[1] - c[1]);
+      if (Lx < 1e-3 || Ly < 1e-3) continue;
+      const u: Pt = [(b[0] - a[0]) / Lx, (b[1] - a[1]) / Lx];
+      // Parallel and on the same line, within 2 cm.
+      if (Math.abs(u[0] * (d[1] - c[1]) - u[1] * (d[0] - c[0])) / Ly > 1e-3 || Math.abs(u[0] * (c[1] - a[1]) - u[1] * (c[0] - a[0])) > 0.02) continue;
+      const tc = (c[0] - a[0]) * u[0] + (c[1] - a[1]) * u[1], td = (d[0] - a[0]) * u[0] + (d[1] - a[1]) * u[1];
+      const lo = Math.max(0, Math.min(tc, td)), hi = Math.min(Lx, Math.max(tc, td));
+      if (hi - lo > (best?.len ?? 0.15)) best = { Y, yp, i, j, len: hi - lo, T: [+(a[0] + u[0] * hi).toFixed(3), +(a[1] + u[1] * hi).toFixed(3)] };
+    }
+  }
+  if (!best) return false;
+  const { Y, yp, T, i, j } = best, storey = Y.leg!.storey, xs = X.leg.storey;
+  // Their floor or ceiling is fixed before they change parents: following a run upstream stops at a change of floor.
+  X.via = viaOf(h, X); Y.via = viaOf(h, Y);
+  const two = (pts: Pt[]): Pt[] => (pts.length > 1 ? pts : [T, [T[0], T[1]]]);
+  const up = tidy([...yp.slice(0, j + 1), T]), down = two(tidy([T, ...yp.slice(j + 1)])), rest = two(tidy([T, ...xp.slice(i + 1)]));
+  if (pathLen(up) < 0.15) {
+    // They meet at the other run's start: the dropped run just leaves from there too.
+    X.parent = Y.parent; X.ends = [Y.ends![0], X.ends[1]]; X.leg = { storey: xs, pts: rest };
+  } else {
+    let n = pipes.length + 1;
+    while (pipes.some((p) => p.id === `P${n}`)) n++;
+    const S: Pipe = { id: `P${n}`, name: sharedName([Y.name, X.name]), parent: Y.parent, size: Y.size, length: m1(pathLen(up)), leg: { storey, pts: up }, ends: [Y.ends![0], ''], via: Y.via };
+    pipes.push(S);
+    Y.parent = S.id; Y.ends = [`tee:${S.id}`, Y.ends![1]]; Y.leg = { storey, pts: down }; delete Y.typed;
+    X.parent = S.id; X.ends = [`tee:${S.id}`, X.ends[1]]; X.leg = { storey: xs, pts: rest };
+    h.heating.pipes = pipes;
+    const sized = sizePipes(h, res ?? calcHouse(h));
+    S.size = fitSize(sized.rows.find((r) => r.pipe.id === S.id)?.flowLpm ?? 0, [Y.size, X.size], sized.paMax);
+  }
+  delete X.typed;
+  h.heating.pipes = pipes;
+  foldTrunks(h);
+  return true;
 }

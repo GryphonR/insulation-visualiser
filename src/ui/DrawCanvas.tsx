@@ -6,21 +6,33 @@ import { roofLines } from '../engine/house-roof';
 import { freezeOutline, newRoof } from './HouseRoof';
 import { centroid, dropSpikes, pointInPoly, polyArea, selfIntersects, sharedSpan } from '../engine/geom';
 import type { Pt } from '../engine/geom';
-import { addEmitter, addFloorZone, addRoomAt, cutPlan, deleteRoom, emitterPose, flushDelta, innerDoorAt, innerWallThickness, insertCorner, isOutside, joinedCorners, moveCorners, nearestWall, openingCentre, pieceAlign, pieceGap, pieceSeg, pieceThickness, problems, removeCorner, roomAt, splitRoom, stretchAtWall, wallIndex, wallPieces } from '../engine/house-draw';
+import { OPEN_DOORWAY, addEmitter, addFloorZone, ensureOpenDoorway, joinRooms, addRoomAt, cutPlan, deleteRoom, emitterPose, flushDelta, innerDoorAt, innerWallThickness, insertCorner, isOutside, joinedCorners, moveCorners, nearestWall, openingCentre, pieceAlign, pieceGap, pieceSeg, pieceThickness, problems, removeCorner, roomAt, splitRoom, stretchAtWall, wallIndex, wallPieces } from '../engine/house-draw';
 import type { WallPiece } from '../engine/house-draw';
 import { planBounds } from './HousePlan';
+import { dragSegment, joinRun, livePath, removeRun, routePipes, splitSegment, voidName, voidOf } from '../engine/house-pipes';
+import type { Heating, Plant } from '../engine/house-heating';
 import { uid } from './hform';
 import { href } from './route';
 
-export type Tool = 'select' | 'box' | 'room' | 'split' | 'corner' | 'window' | 'door' | 'radiator' | 'ufh';
+/** What the canvas is for: the rooms and what is in them, or the pipework. Each has its own tools and its own things to pick. */
+export type Lens = 'plan' | 'pipes';
+/** The window and door build-ups the tools place (unset: the first of each). */
+export interface OpPick { glazing?: string; door?: string }
+export type Tool = 'select' | 'box' | 'room' | 'split' | 'join' | 'corner' | 'window' | 'door' | 'radiator' | 'ufh' | 'source' | 'cylinder' | 'riser';
 /** A wall of a room; with `span`, just the piece of it between two metre marks along the wall (`other` is the room it is shared with, if any). */
 export interface WallRef { room: string; edge: number; span?: [number, number]; other?: string; /** Gap to the other room's line, metres (inside walls). */ gap?: number }
-export interface Sel { room: string; walls: WallRef[]; item: { k: 'op' | 'em'; id: string } | null; /** A floor or ceiling zone. */ zone?: string; /** Several rooms picked with the selection box or Shift-click. */ group?: string[]; /** Arrows on the selected inside wall pick which side of the plan stretches to fit its build-up. */ stretch?: boolean }
+export interface Sel { room: string; walls: WallRef[]; item: { k: 'op' | 'em' | 'plant' | 'pipe'; id: string } | null; /** A floor or ceiling zone. */ zone?: string; /** Several rooms picked with the selection box or Shift-click. */ group?: string[]; /** Arrows on the selected inside wall pick which side of the plan stretches to fit its build-up. */ stretch?: boolean }
 export const NO_SEL: Sel = { room: '', walls: [], item: null };
+/** The heat source, the cylinder, or a riser, by its selection id. */
+export const plantOf = (h: { heating: Heating }, id: string): Pick<Plant, 'at'> | undefined =>
+  id === 'source' || id === 'cylinder' ? h.heating[id] : h.heating.risers?.find((r) => r.id === id);
+export const removePlant = (h: { heating: Heating }, id: string) => {
+  if (id === 'source' || id === 'cylinder') delete h.heating[id]; else h.heating.risers = h.heating.risers?.filter((r) => r.id !== id);
+};
 /** What a right-click menu is for. */
-type MenuFor = { k: 'wall'; wall: WallRef } | { k: 'room'; id: string } | { k: 'corner'; room: string; idx: number } | { k: 'op' | 'em'; id: string };
+type MenuFor = { k: 'wall'; wall: WallRef } | { k: 'room'; id: string } | { k: 'corner'; room: string; idx: number } | { k: 'op' | 'em'; id: string } | { k: 'pipe'; id: string; seg: number };
 /** A field of the selection that the side panel can be opened on: its dropdown (build-up, glazing or radiator type), its first size, or a room's name. */
-export type EditField = 'type' | 'size' | 'name';
+export type EditField = 'type' | 'size' | 'name' | 'via';
 
 export const GRID = 0.05;
 const S = 48, MAGNET = 0.15, ALIGN = 0.15, FLUSH = 0.2;
@@ -39,6 +51,10 @@ type Drag =
   /** Corners (room, corner number) move together; `normal` slides a wall along its normal only. */
   | { k: 'move'; start: Pt; cur: Pt; verts: Array<[string, number]>; base: Pt; normal?: Pt; free: boolean; room?: boolean; moved: boolean }
   | { k: 'op' | 'em'; id: string; start: Pt; cur: Pt; moved: boolean }
+  /** The heat source, the cylinder, or a riser (by id). */
+  | { k: 'plant'; id: string; start: Pt; cur: Pt; moved: boolean }
+  /** One segment of a pipe run's route, slid sideways; `base` is the route when the drag began. */
+  | { k: 'pipe'; id: string; seg: number; base: Pt[]; start: Pt; cur: Pt; moved: boolean }
   /** A floor or ceiling zone (all of it, or one corner `idx`). */
   | { k: 'zone'; id: string; idx?: number; start: Pt; cur: Pt; moved: boolean }
   | { k: 'box'; a: Pt; cur: Pt }
@@ -48,8 +64,10 @@ type Drag =
  * The drawing canvas for one storey: rooms of any shape whose corners and walls drag, with windows, doors and heat emitters
  * placed on them. Every edit is one `upd` on a copy of the house; nothing is written while a drag is under way.
  */
-export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fill, label, below, sticky, grid, snapOn, band, roof, underlay, overlay, onEdit }: {
-  house: House; storey: number; tool: Tool; setTool: (t: Tool) => void;
+export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fill, label, below, sticky, grid, snapOn, band, roof, underlay, overlay, onEdit, lens = 'plan', zoomStart, opPick = {} }: {
+  house: House; storey: number; tool: Tool; setTool: (t: Tool) => void; lens?: Lens; opPick?: OpPick;
+  /** Shown before the zoom buttons, in the same group (the grid size). */
+  zoomStart?: ReactNode;
   sel: Sel; setSel: (s: Sel) => void; upd: (fn: (h: House) => void) => void;
   fill: (r: Room) => string; label: (r: Room) => string;
   /** Show the storeys above and below faintly, to line walls up. */
@@ -68,6 +86,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const snap = (v: number) => Math.round(v / grid) * grid;
+  // Selecting picks what the lens is for: rooms, walls and openings on the plan; heaters, underfloor zones, pipe runs and plant on heating and cooling.
+  const planSel = tool === 'select' && lens !== 'pipes', pipeSel = tool === 'select' && lens === 'pipes';
   const [size, setSize] = useState({ w: 900, h: 560 });
   const cw = size.w, ratio = size.h / size.w;
   const [view, setView] = useState<View>(() => fit(house, 0.62));
@@ -106,12 +126,11 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     ro.observe(el);
     return () => ro.disconnect();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // Ctrl + wheel zooms about the pointer (a plain wheel still scrolls the page).
+  // The wheel zooms about the pointer.
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
     const on = (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
       const m = svg.getScreenCTM();
       if (!m) return;
@@ -135,6 +154,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     if (on.k === 'wall') setSel({ room: on.wall.room, walls: [on.wall], item: null });
     else if (on.k === 'room') setSel({ ...NO_SEL, room: on.id });
     else if (on.k === 'corner') setSel({ ...NO_SEL, room: on.room });
+    else if (on.k === 'pipe') setSel({ ...NO_SEL, item: { k: 'pipe', id: on.id } });
     else setSel({ ...NO_SEL, room: (on.k === 'op' ? house.openings : house.heating.emitters).find((x) => x.id === on.id)?.room ?? '', item: { k: on.k, id: on.id } });
     setMenuTip('');
     setMenu({ x: clientX - box.left, y: clientY - box.top, at, on });
@@ -281,12 +301,13 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   };
   /** A window or door at a pointer position (on room `only`'s walls, if given), selected once placed. */
   const placeOpening = (p: Pt, door: boolean, only?: string) => {
-    const w = door ? 0.9 : 1.2, at = openingAt(p, w, door, only);
-    const b = house.buildups.find((x) => x.kind === (door ? 'door' : 'glazing'));
+    const w = door ? 0.9 : 1.2, at = openingAt(p, w, door, only), want = door ? opPick.door : opPick.glazing, gap = door && want === OPEN_DOORWAY;
+    const b = gap ? undefined : house.buildups.find((x) => x.id === want && x.kind === (door ? 'door' : 'glazing')) ?? house.buildups.find((x) => x.kind === (door ? 'door' : 'glazing') && x.id !== OPEN_DOORWAY);
     if (!at) { setNote(door ? 'Doors go on outside walls, or on a wall shared with another room, in a clear stretch wide enough.' : 'Windows go on outside walls, in a clear stretch wide enough for them.'); return; }
-    if (!b) { setNote(`Add a ${door ? 'door' : 'glazing'} build-up first.`); return; }
+    if (gap && !at.to) { setNote('An opening goes on a wall between two rooms.'); return; }
+    if (!gap && !b) { setNote(`Add a ${door ? 'door' : 'glazing'} build-up first.`); return; }
     const id = uid('o'), side = roomEdges(at.room)[at.edge].side;
-    upd((h) => { h.openings.push({ id, room: at.room.id, side, name: door ? 'Door' : 'Window', w, h: door ? 2.0 : 1.2, buildup: b.id, edge: at.edge, t: at.t, ...(at.to ? { to: at.to } : {}) }); });
+    upd((h) => { const bid = gap ? ensureOpenDoorway(h) : b!.id; h.openings.push({ id, room: at.room.id, side, name: gap ? 'Opening' : door ? 'Door' : 'Window', w, h: door ? 2.0 : 1.2, buildup: bid, edge: at.edge, t: at.t, ...(at.to ? { to: at.to } : {}) }); });
     setSel({ room: at.room.id, walls: [], item: { k: 'op', id } });
   };
   /** A corner on wall `edge` of a room, at the grid point nearest `q`. */
@@ -294,6 +315,10 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     const hit = nearestWall(house, storey, q, 0.5, { room });
     if (hit && hit.edge === edge) upd((h) => insertCorner(h, room, edge, [snap(hit.at[0]), snap(hit.at[1])]));
   };
+
+  /** A corner in segment `seg` of a pipe run's route `pts`, at the point nearest `at`. */
+  const addPipeCorner = (id: string, pts: Pt[], seg: number, at: Pt) =>
+    upd((h) => { const y = h.heating.pipes?.find((r) => r.id === id); if (y?.leg) y.leg = { storey: y.leg.storey, pts: splitSegment(pts, seg, at) }; });
 
   /** A new room (or, on a floor or ceiling layer, a zone; with the UFH tool, an underfloor heating zone in this floor) with this outline. */
   const create = (pts: Pt[]) => {
@@ -329,6 +354,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   const trackDown = (e: React.PointerEvent) => {
     // The right button only opens the wall menu (on contextmenu): it never drags, pans, draws or clears the selection.
     if (e.button === 2) { e.stopPropagation(); return; }
+    // The middle button always pans, whatever is under it, and never clears the selection (preventDefault stops the browser's autoscroll).
+    if (e.button === 1) { e.preventDefault(); begin(e, { k: 'pan', x0: e.clientX, y0: e.clientY, v: view, moved: true }); return; }
     pointers.current.set(e.pointerId, [e.clientX, e.clientY]);
     if (pointers.current.size !== 2) return;
     e.stopPropagation();
@@ -342,7 +369,18 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     const p = raw(e);
     svgRef.current?.focus({ preventScroll: true });
     if (tool === 'select' && e.shiftKey && e.button === 0) { begin(e, { k: 'marq', a: p, cur: p }); return; }
-    if (tool === 'select' || e.button === 1) { begin(e, { k: 'pan', x0: e.clientX, y0: e.clientY, v: view, moved: false }); return; }
+    if (tool === 'select') { begin(e, { k: 'pan', x0: e.clientX, y0: e.clientY, v: view, moved: false }); return; }
+    if (tool === 'join') {
+      // Take out the wall between two rooms: the clicked room keeps its name and settings.
+      const hit = nearestWall(house, storey, p, 0.4);
+      const pc = hit && wallPieces(house, hit.room, hit.edge, storey).find((q) => q.other && hit.t >= q.span[0] - 0.05 && hit.t <= q.span[1] + 0.05);
+      if (!hit || !pc?.other) { setNote('Click a wall between two rooms to take it out.'); return; }
+      if (!joinRooms(structuredClone(house), hit.room, pc.other)) { setNote('Those two rooms cannot be joined: they must be on the same storeys and join into one outline without a hole.'); return; }
+      upd((h) => { joinRooms(h, hit.room, pc.other!); });
+      setNote(''); setSel({ ...NO_SEL, room: hit.room });
+      if (!sticky) setTool('select');
+      return;
+    }
     if (tool === 'split') {
       const q = magnet(p, undefined, cut ? [cut] : []);
       if (!cut) { setCut(q); setNote(''); return; }
@@ -382,6 +420,14 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       return;
     }
     if (tool === 'window' || tool === 'door') { placeOpening(p, tool === 'door'); return; }
+    if (tool === 'source' || tool === 'cylinder' || tool === 'riser') {
+      const q: Pt = [snap(p[0]), snap(p[1])], id = tool === 'riser' ? uid('rs') : tool;
+      // One heat source and one cylinder: placing again moves it.
+      upd((h) => { if (tool === 'riser') (h.heating.risers ??= []).push({ id, at: q }); else h.heating[tool] = { at: q, storey }; });
+      setSel({ ...NO_SEL, item: { k: 'plant', id } });
+      if (!sticky) setTool('select');
+      return;
+    }
     placeEmitter(p);
   };
   /** A radiator in the heated room at a pointer position, on the nearest wall if one is close. */
@@ -451,6 +497,13 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     } else if (d.k === 'op') {
       const o = house.openings.find((x) => x.id === d.id), at = o && openingAt(d.cur, o.w, isDoorOp(o));
       if (o && at) upd((h) => { const x = h.openings.find((q) => q.id === d.id)!; x.room = at.room.id; x.edge = at.edge; x.side = roomEdges(at.room)[at.edge].side; x.t = at.t; if (at.to) x.to = at.to; else delete x.to; });
+    } else if (d.k === 'pipe') {
+      const pts = dragSegment(d.base, d.seg, loopShift(d));
+      // Dropping a run along another joins them into one shared pipe, in the same undo step.
+      upd((h) => { const x = h.heating.pipes?.find((q) => q.id === d.id); if (x?.leg) { x.leg = { storey: x.leg.storey, pts }; delete x.typed; joinRun(h, d.id); } });
+    } else if (d.k === 'plant') {
+      const dl = loopShift(d);
+      upd((h) => { const x = plantOf(h, d.id); if (x) x.at = [+(x.at[0] + dl[0]).toFixed(3), +(x.at[1] + dl[1]).toFixed(3)]; });
     } else {
       const e = house.heating.emitters.find((x) => x.id === d.id), at = e && emitterAt(d.cur, e.kind, e.room);
       if (e?.rect) { const dl = loopShift(d); upd((h) => { const x = h.heating.emitters.find((q) => q.id === d.id); if (x?.rect) x.rect = { ...x.rect, x: +(x.rect.x + dl[0]).toFixed(3), y: +(x.rect.y + dl[1]).toFixed(3) }; }); return; }
@@ -470,10 +523,16 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   /** Tools that take an outline corner by corner. */
   const outline = tool === 'room' || tool === 'ufh';
   const key = (e: React.KeyboardEvent) => {
-    if (tool === 'select' && !zoneMode && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) {
+    if ((planSel || (pipeSel && sel.item?.k === 'pipe')) && !zoneMode && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) {
       // The keyboard way to the menu: for the selected wall, window, door, emitter or room, opened at its middle.
       e.preventDefault();
       const t = ((): { on: MenuFor; at: Pt } | null => {
+        if (sel.item?.k === 'pipe') {
+          const p = house.heating.pipes?.find((x) => x.id === sel.item!.id), pts = p?.leg && (livePath(house, p) ?? p.leg.pts);
+          if (!p || !pts || pts.length < 2) return null;
+          const seg = Math.floor((pts.length - 2) / 2), a = pts[seg], b = pts[seg + 1];
+          return { on: { k: 'pipe', id: p.id, seg }, at: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
+        }
         if (sel.walls.length === 1) {
           const w = sel.walls[0], seg = pieceSeg(house, w.room, w.edge, w.span ?? [0, roomEdges(house.rooms.find((r) => r.id === w.room)!)[w.edge].len]);
           return seg && { on: { k: 'wall', wall: w }, at: [(seg[0][0] + seg[1][0]) / 2, (seg[0][1] + seg[1][1]) / 2] };
@@ -517,6 +576,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     else if (tool === 'select' && (e.key === 'Delete' || e.key === 'Backspace')) {
       if (sel.item?.k === 'op') upd((h) => { h.openings = h.openings.filter((o) => o.id !== sel.item!.id); });
       else if (sel.item?.k === 'em') upd((h) => { h.heating.emitters = h.heating.emitters.filter((x) => x.id !== sel.item!.id); });
+      else if (sel.item?.k === 'plant') upd((h) => removePlant(h, sel.item!.id));
       else if (sel.zone) upd((h) => { h.zones = h.zones?.filter((z) => z.id !== sel.zone); h.roofs = h.roofs.filter((z) => z.id !== sel.zone); });
       else if (!sel.walls.length && sel.room) { const ids = sel.group?.length ? sel.group : [sel.room]; upd((h) => ids.forEach((id) => deleteRoom(h, id))); setSel(NO_SEL); return; }
       else return;
@@ -594,7 +654,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     const ops = house.openings.filter((o) => o.room === room.id && (isPoly ? (o.edge ?? es.findIndex((x) => x.side === o.side)) === e.idx : o.side === e.side));
     return ops.map((o, i) => {
       const half = Math.min(o.w, e.len) / 2, c = o.t != null ? Math.max(half, Math.min(e.len - half, o.t)) : (e.len * (i + 0.5)) / ops.length;
-      return { room, door: house.buildups.find((x) => x.id === o.buildup)?.kind === 'door', p: [e.a[0] + e.d[0] * (c - half), e.a[1] + e.d[1] * (c - half)] as Pt, q: [e.a[0] + e.d[0] * (c + half), e.a[1] + e.d[1] * (c + half)] as Pt };
+      return { room, door: o.buildup === OPEN_DOORWAY ? ('open' as const) : house.buildups.find((x) => x.id === o.buildup)?.kind === 'door', p: [e.a[0] + e.d[0] * (c - half), e.a[1] + e.d[1] * (c - half)] as Pt, q: [e.a[0] + e.d[0] * (c + half), e.a[1] + e.d[1] * (c + half)] as Pt };
     });
   };
   const wallItems = (r: Room, moving: boolean) => {
@@ -614,11 +674,11 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         const q = (t: number, o: number) => to([e.a[0] + e.d[0] * t + e.n[0] * o, e.a[1] + e.d[1] * t + e.n[1] * o]).join(',');
         const owns = th > 0 && (!pc.other || r.id < pc.other);
         const hit = owns ? [q(pc.span[0] - x0, lo), q(pc.span[1] + x1, lo), q(pc.span[1] + x1, hi), q(pc.span[0] - x0, hi)].join(' ') : null;
-        const bands: string[] = [], strips: Array<{ pts: string; door: boolean }> = [], cuts: Array<{ pts: string; color: string }> = [];
+        const bands: string[] = [], strips: Array<{ pts: string; door: boolean | 'open' }> = [], cuts: Array<{ pts: string; color: string }> = [];
         if (owns) {
           // Windows and doors cut the wall: where one sits, only a thin strip is left.
-          const holes: Array<[number, number, boolean, Room]> = [];
-          const take = (o: { room: Room; door: boolean; p: Pt; q: Pt }) => {
+          const holes: Array<[number, number, boolean | 'open', Room]> = [];
+          const take = (o: { room: Room; door: boolean | 'open'; p: Pt; q: Pt }) => {
             const t = (v: Pt) => (v[0] - e.a[0]) * e.d[0] + (v[1] - e.a[1]) * e.d[1], n = (v: Pt) => (v[0] - e.a[0]) * e.n[0] + (v[1] - e.a[1]) * e.n[1];
             const t0 = Math.max(pc.span[0], Math.min(t(o.p), t(o.q))), t1 = Math.min(pc.span[1], Math.max(t(o.p), t(o.q)));
             if (t1 - t0 > 0.02 && Math.abs(n(o.p)) <= gapMax && Math.abs(n(o.q)) <= gapMax) holes.push([t0, t1, o.door, o.room]);
@@ -654,7 +714,9 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
             }
           }
         }
-        return { key: `${r.id}-${e.idx}-${k}`, r, e, pc, s, th, hit, bands, strips, cuts, a: to(p0), b: to(p1), out: !pc.other };
+        // Outside pieces of an edge share one face key; the canvas edges are renumbered, so take the id from the room itself.
+        const party = !pc.other && !moving && house.faceBoundary[`w:${r.id}:${roomEdges(r)[e.idx]?.id}:${storey}`] === 'party';
+        return { key: `${r.id}-${e.idx}-${k}`, r, e, pc, s, th, hit, bands, strips, cuts, a: to(p0), b: to(p1), out: !pc.other, party };
       });
     });
   };
@@ -673,18 +735,94 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
           {items.filter((i) => !i.s).flatMap((i) => i.bands.map((pts, n) => <polygon key={`b${i.key}-${n}`} points={pts} fill="#26343f" pointerEvents="none" />))}
         </g>
         {items.flatMap((i) => i.cuts.map((c, n) => <polygon key={`c${i.key}-${n}`} points={c.pts} fill={c.color} fillOpacity={0.92} pointerEvents="none" />))}
+        {items.filter((i) => i.party && !i.s).flatMap((i) => i.bands.map((pts, n) => <polygon key={`p${i.key}-${n}`} points={pts} fill="url(#party-hatch)" pointerEvents="none"><title>Party wall (neighbour at {house.neighbourT} °C)</title></polygon>))}
         {items.filter((i) => i.s).flatMap((i) => i.bands.map((pts, n) => <polygon key={`s${i.key}-${n}`} points={pts} fill="#c2410c" pointerEvents="none" />))}
-        {items.flatMap((i) => i.strips.map((t, n) => <polygon key={`t${i.key}-${n}`} points={t.pts} fill={t.door ? '#8a5a2b' : '#1f6fb5'} pointerEvents="none" />))}
+        {items.flatMap((i) => i.strips.map((t, n) => <polygon key={`t${i.key}-${n}`} points={t.pts} fill={t.door === 'open' ? '#e7d8c2' : t.door ? '#8a5a2b' : '#1f6fb5'} pointerEvents="none" />))}
         {items.map((i) => (
           <g key={i.key}>
-            <line x1={i.a[0]} y1={i.a[1]} x2={i.b[0]} y2={i.b[1]} stroke={i.th > 0 ? (i.s ? '#fff' : '#9fb0bc') : i.s ? '#c2410c' : '#14212b'} strokeWidth={i.th > 0 ? z(1) : z(i.s ? 5 : i.out ? 4 : 2)} strokeDasharray={i.th > 0 ? `${z(5)} ${z(3)}` : undefined} strokeLinecap={i.th > 0 || i.pc.span[0] > 1e-6 || i.pc.span[1] < i.e.len - 1e-6 ? 'butt' : 'round'} pointerEvents="none" />
-            {tool === 'select' && !zoneMode && i.hit && <polygon points={i.hit} fill="transparent" className="wall-hit" {...wallEvents(i.r, i.e.idx, i.pc)} />}
-            {tool === 'select' && !zoneMode && <line x1={i.a[0]} y1={i.a[1]} x2={i.b[0]} y2={i.b[1]} stroke="transparent" strokeWidth={z(14 * hs)} className="wall-hit" {...wallEvents(i.r, i.e.idx, i.pc)} />}
+            <line x1={i.a[0]} y1={i.a[1]} x2={i.b[0]} y2={i.b[1]} stroke={i.th > 0 ? (i.s ? '#fff' : '#9fb0bc') : i.s ? '#c2410c' : i.party ? '#7a4fb0' : '#14212b'} strokeWidth={i.th > 0 ? z(1) : z(i.s ? 5 : i.out ? 4 : 2)} strokeDasharray={i.th > 0 ? `${z(5)} ${z(3)}` : i.party ? `${z(8)} ${z(4)}` : undefined} strokeLinecap={i.th > 0 || i.pc.span[0] > 1e-6 || i.pc.span[1] < i.e.len - 1e-6 ? 'butt' : 'round'} pointerEvents="none" />
+            {planSel && !zoneMode && i.hit && <polygon points={i.hit} fill="transparent" className="wall-hit" {...wallEvents(i.r, i.e.idx, i.pc)} />}
+            {planSel && !zoneMode && <line x1={i.a[0]} y1={i.a[1]} x2={i.b[0]} y2={i.b[1]} stroke="transparent" strokeWidth={z(14 * hs)} className="wall-hit" {...wallEvents(i.r, i.e.idx, i.pc)} />}
           </g>
         ))}
       </>
     );
-  }, [still, house, storey, zoneMode, fill, u, sel, tool, hs, grid, moveDrag]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [still, house, storey, zoneMode, fill, u, sel, tool, hs, grid, moveDrag, lens]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const plantDrag = drag?.k === 'plant' && drag.moved ? drag : null;
+  const plantLayer = useMemo(() => {
+    const hs0 = house.heating, route = routePipes(house);
+    const shift = (id: string, q: Pt): Pt => (plantDrag?.id === id ? [q[0] + loopShift(plantDrag)[0], q[1] + loopShift(plantDrag)[1]] : q);
+    // Once pipework is laid out, its saved routes are drawn and can be edited; before that, a preview of where it would go.
+    const runs = (hs0.pipes ?? []).filter((x) => x.leg);
+    const legs = runs.length || !route ? [] : [...[...route.feeds.values()].flatMap((f) => f.legs), ...route.tails.map((t) => t.leg)].filter((l) => l.storey === storey);
+    const pipeDrag = drag?.k === 'pipe' && drag.moved ? drag : null;
+    // A storey shows the runs in its floor void and in its ceiling void, which is the floor void of the storey above, whichever floor they serve.
+    const runLines = runs.filter((x) => { const v = voidOf(house, x); return v === storey || v === storey + 1; }).map((x) => {
+      const pts = pipeDrag?.id === x.id ? dragSegment(pipeDrag.base, pipeDrag.seg, loopShift(pipeDrag)) : livePath(house, x) ?? x.leg!.pts;
+      const onR = sel.item?.k === 'pipe' && sel.item.id === x.id, v = voidOf(house, x), other = x.leg!.storey !== storey;
+      const end = to(pts[pts.length - 1]);
+      return (
+        <g key={`run${x.id}`}>
+          <title>{x.name} · {x.size} · in the void {voidName(house, v)}{other ? ` · serves the ${house.storeys[x.leg!.storey]?.name.toLowerCase()}` : ''}</title>
+          {/* In this floor's ceiling void: long dashes with dots; in its floor void: solid. Runs serving the other floor are fainter. */}
+          <polyline points={pts.map((q) => to(q).join(',')).join(' ')} fill="none" stroke={onR ? '#c2410c' : '#c0392b'} strokeOpacity={onR ? 1 : other ? 0.45 : 0.8} strokeWidth={z(onR ? 3.5 : 2)} strokeLinejoin="round" pointerEvents="none"
+            strokeDasharray={v === storey + 1 ? `${z(9)} ${z(3)} ${z(2)} ${z(3)}` : undefined} />
+          {/* Where a run from the void goes through to a heater on the other floor. */}
+          {other && x.emitter && <circle cx={end[0]} cy={end[1]} r={z(3.5)} fill="#fff" stroke="#c0392b" strokeOpacity={0.6} strokeWidth={z(1.5)} pointerEvents="none" />}
+          {onR && pts.slice(1, -1).map((q, i) => <circle key={i} cx={to(q)[0]} cy={to(q)[1]} r={z(3.5)} fill="#fff" stroke="#c2410c" strokeWidth={z(1.5)} pointerEvents="none" />)}
+          {pipeSel && pts.slice(1).map((q, i) => (
+            <line key={`h${i}`} x1={to(pts[i])[0]} y1={to(pts[i])[1]} x2={to(q)[0]} y2={to(q)[1]} stroke="transparent" strokeWidth={z(10 * hs)}
+              style={{ cursor: Math.abs(q[0] - pts[i][0]) < 1e-6 ? 'ew-resize' : Math.abs(q[1] - pts[i][1]) < 1e-6 ? 'ns-resize' : 'move' }}
+              onPointerDown={(ev) => { ev.stopPropagation(); setSel({ ...NO_SEL, item: { k: 'pipe', id: x.id } }); begin(ev, { k: 'pipe', id: x.id, seg: i, base: pts, start: raw(ev), cur: raw(ev), moved: false }); }}
+              onDoubleClick={(ev) => { ev.stopPropagation(); addPipeCorner(x.id, pts, i, raw(ev)); }} onContextMenu={menuOn({ k: 'pipe', id: x.id, seg: i })} />
+          ))}
+        </g>
+      );
+    });
+    const grab = (id: string) => pipeSel ? {
+      onPointerDown: (ev: React.PointerEvent) => { setSel({ ...NO_SEL, item: { k: 'plant', id } }); begin(ev, { k: 'plant', id, start: raw(ev), cur: raw(ev), moved: false }); },
+      style: { cursor: 'grab' } } : { pointerEvents: 'none' as const };
+    const on = (id: string) => sel.item?.k === 'plant' && sel.item.id === id;
+    const box = (id: string, at: Pt, label: string, fillC: string, title: string) => {
+      const c = to(shift(id, at)), r = z(11);
+      return (
+        <g key={id} {...grab(id)}>
+          <title>{title}</title>
+          <rect x={c[0] - r} y={c[1] - r} width={2 * r} height={2 * r} rx={z(id === 'cylinder' ? 11 : 2)} fill={fillC} stroke={on(id) ? '#c2410c' : '#14212b'} strokeWidth={z(on(id) ? 3 : 1.5)} />
+          <text x={c[0]} y={c[1] + z(4)} textAnchor="middle" fill="#fff" style={{ fontSize: z(10), fontWeight: 700 }}>{label}</text>
+        </g>
+      );
+    };
+    const hp = house.hp.source === 'ashp' || house.hp.source === 'gshp';
+    const src = hs0.source;
+    return (
+      <g>
+        {/* Routes are measured from the saved positions, so they are hidden while something is dragged. */}
+        {!plantDrag && legs.map((l, i) => <polyline key={`pl${i}`} points={pts(l.pts)} fill="none" stroke="#c0392b" strokeOpacity={0.75} strokeWidth={z(2)} strokeDasharray={`${z(6)} ${z(3)}`} strokeLinejoin="round" pointerEvents="none" />)}
+        {!plantDrag && runLines}
+        {(hs0.risers ?? []).map((r) => {
+          const c = to(shift(r.id, r.at));
+          return (
+            <g key={r.id} {...grab(r.id)}>
+              <title>Pipe riser: pipes pass through the floors here</title>
+              <circle cx={c[0]} cy={c[1]} r={z(8)} fill="#fff" stroke={on(r.id) ? '#c2410c' : '#c0392b'} strokeWidth={z(on(r.id) ? 3 : 2)} />
+              <text x={c[0]} y={c[1] + z(4)} textAnchor="middle" fill="#c0392b" style={{ fontSize: z(11), fontWeight: 700 }}>↕</text>
+            </g>
+          );
+        })}
+        {hs0.cylinder?.storey === storey && box('cylinder', hs0.cylinder.at, 'HW', '#1f6fb5', 'Hot water cylinder')}
+        {src?.storey === storey && box('source', src.at, hp ? 'HP' : 'B', '#c2410c', hp ? 'Heat pump' : 'Boiler')}
+        {src && src.storey !== storey && (
+          // The source on another floor, faint, so the pipes coming through the floor make sense.
+          <g pointerEvents="none" opacity={0.35}>
+            <title>{hp ? 'Heat pump' : 'Boiler'} on {house.storeys[src.storey]?.name}</title>
+            <rect x={to(src.at)[0] - z(9)} y={to(src.at)[1] - z(9)} width={z(18)} height={z(18)} rx={z(2)} fill="none" stroke="#c2410c" strokeWidth={z(1.5)} strokeDasharray={`${z(3)} ${z(2)}`} />
+          </g>
+        )}
+      </g>
+    );
+  }, [house, storey, tool, sel, plantDrag, drag?.k === 'pipe' ? drag : null, u, hs, lens]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const opDrag = drag?.k === 'op' ? drag : null;
   const opLayer = useMemo(() => zoneMode ? null : onThis.flatMap((r) => {
@@ -701,15 +839,15 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
               return (
                 <g key={o.id}>
                   {on && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="#c2410c" strokeWidth={z(12)} strokeLinecap="round" opacity={0.35} pointerEvents="none" />}
-                  {!wallIsThick(r.id, e.idx, c) && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={door ? '#8a5a2b' : '#1f6fb5'} strokeWidth={z(6)} pointerEvents="none" />}
-                  {tool === 'select' && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="transparent" strokeWidth={z(16 * hs)} style={{ cursor: 'grab' }}
+                  {!wallIsThick(r.id, e.idx, c) && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={o.buildup === OPEN_DOORWAY ? '#d6c2a4' : door ? '#8a5a2b' : '#1f6fb5'} strokeWidth={z(6)} pointerEvents="none" />}
+                  {planSel && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="transparent" strokeWidth={z(16 * hs)} style={{ cursor: 'grab' }}
                     onPointerDown={(ev) => { setSel({ room: r.id, walls: [], item: { k: 'op', id: o.id } }); begin(ev, { k: 'op', id: o.id, start: raw(ev), cur: raw(ev), moved: false }); }}
                     onContextMenu={menuOn({ k: 'op', id: o.id })} />}
                 </g>
               );
             });
           });
-  }), [house, storey, zoneMode, u, sel, tool, hs, opDrag]); // eslint-disable-line react-hooks/exhaustive-deps
+  }), [house, storey, zoneMode, u, sel, tool, hs, opDrag, lens]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="draw-wrap">
@@ -727,12 +865,20 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
           <pattern id="ufh-hatch" width={z(9)} height={z(9)} patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
             <rect width={z(9)} height={z(9)} fill="#b45309" fillOpacity={0.1} /><line x1={0} y1={0} x2={0} y2={z(9)} stroke="#b45309" strokeWidth={z(2)} strokeOpacity={0.5} />
           </pattern>
+          <pattern id="party-hatch" width={z(7)} height={z(7)} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1={0} y1={0} x2={0} y2={z(7)} stroke="#c9b3ea" strokeWidth={z(2.5)} />
+          </pattern>
           <pattern id="draw-grid" width={S} height={S} patternUnits="userSpaceOnUse"><path d={`M ${S} 0 L 0 0 0 ${S}`} fill="none" stroke="#d7dde2" strokeWidth={z(1)} /></pattern>
         </defs>
         <rect x={view.x} y={view.y} width={view.w} height={view.w * ratio} fill="#fff" />
         <rect x={view.x} y={view.y} width={view.w} height={view.w * ratio} fill="url(#draw-grid)" pointerEvents="none" />
         <line x1={view.x} x2={view.x + view.w} y1={0} y2={0} stroke="#b9c4cc" strokeWidth={z(1)} strokeDasharray={`${z(6)} ${z(4)}`} pointerEvents="none" />
-        {house.guide && <g pointerEvents="none"><rect x={0} y={0} width={house.guide.w * S} height={house.guide.d * S} fill="none" stroke="#8a99a6" strokeWidth={z(1.5)} strokeDasharray={`${z(8)} ${z(5)}`} /><text x={z(6)} y={-z(6)} className="draw-dim" style={{ fontSize: z(11), strokeWidth: z(3) }}>{house.guide.w} × {house.guide.d} m footprint</text></g>}
+        {house.guide && <g pointerEvents="none">
+          {house.guide.poly
+            ? <polygon points={pts(house.guide.poly)} fill="none" stroke="#8a99a6" strokeWidth={z(1.5)} strokeDasharray={`${z(8)} ${z(5)}`} />
+            : <rect x={0} y={0} width={house.guide.w * S} height={house.guide.d * S} fill="none" stroke="#8a99a6" strokeWidth={z(1.5)} strokeDasharray={`${z(8)} ${z(5)}`} />}
+          <text x={z(6)} y={-z(6)} className="draw-dim" style={{ fontSize: z(11), strokeWidth: z(3) }}>{house.guide.w} × {house.guide.d} m footprint{house.guide.poly ? ' © OpenStreetMap contributors' : ''}</text>
+        </g>}
         <line y1={view.y} y2={view.y + view.w * ratio} x1={0} x2={0} stroke="#b9c4cc" strokeWidth={z(1)} strokeDasharray={`${z(6)} ${z(4)}`} pointerEvents="none" />
         <text x={view.x + view.w / 2} y={view.y + z(18)} textAnchor="middle" className="plan-n" style={{ fontSize: z(13) }}>N ↑</text>
         {underlay?.(to, S)}
@@ -742,8 +888,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
           const p = polyOf(r), c = to(centroid(p)), on = sel.room === r.id || grp.includes(r.id);
           return (
             <g key={r.id}>
-              <polygon points={pts(p)} fill={zoneMode ? '#f7f7f4' : fill(r)} fillOpacity={0.92} stroke="none" style={{ cursor: tool === 'select' && !zoneMode ? 'move' : undefined }} pointerEvents={zoneMode ? 'none' : undefined}
-                onPointerDown={tool === 'select' && !zoneMode ? (e) => {
+              <polygon points={pts(p)} fill={zoneMode ? '#f7f7f4' : fill(r)} fillOpacity={0.92} stroke="none" style={{ cursor: planSel && !zoneMode ? 'move' : undefined }} pointerEvents={zoneMode ? 'none' : undefined}
+                onPointerDown={planSel && !zoneMode ? (e) => {
                   if (e.shiftKey) {
                     // Shift-click adds the room to, or takes it from, the group.
                     e.stopPropagation();
@@ -755,8 +901,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
                   setSel({ room: r.id, walls: [], item: null, group: moving.length > 1 ? moving : [] });
                   begin(e, { k: 'move', start: raw(e), cur: raw(e), verts: moving.flatMap((id) => roomPoly(house.rooms.find((x) => x.id === id)!).map((_, i): [string, number] => [id, i])), base: roomPoly(r)[0], free: false, room: true, moved: false });
                 } : undefined}
-                onDoubleClick={tool === 'select' && !zoneMode ? () => { location.hash = href('room', r.id); } : undefined}
-                onContextMenu={tool === 'select' && !zoneMode ? menuOn({ k: 'room', id: r.id }) : undefined} />
+                onDoubleClick={planSel && !zoneMode ? () => { location.hash = href('room', r.id); } : undefined}
+                onContextMenu={planSel && !zoneMode ? menuOn({ k: 'room', id: r.id }) : undefined} />
               <text x={c[0]} y={c[1] - z(3)} textAnchor="middle" className="plan-t" style={{ fontSize: z(13) }}>{r.name}</text>
               <text x={c[0]} y={c[1] + z(12)} textAnchor="middle" className="plan-s" style={{ fontSize: z(12) }}>{zoneMode ? '' : label(r)}</text>
               <text x={c[0]} y={c[1] + z(26)} textAnchor="middle" className="plan-s" style={{ fontSize: z(11) }}>{polyArea(p).toFixed(1)} m²</text>
@@ -821,7 +967,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
                 // A tag below the room labels: click to select the zone, drag to move it.
                 const t = `${zn.name} · ${polyArea(pz).toFixed(1)} m²`, w = z(t.length * 6.6 + 14), y = c[1] + z(44);
                 return (
-                  <g style={{ cursor: tool === 'select' ? 'move' : undefined }} pointerEvents={tool === 'select' ? undefined : 'none'}
+                  <g style={{ cursor: pipeSel ? 'move' : undefined }} pointerEvents={pipeSel ? undefined : 'none'}
                     onPointerDown={(e) => { setSel({ ...NO_SEL, zone: zn.id }); begin(e, { k: 'zone', id: zn.id, start: raw(e), cur: raw(e), moved: false }); }}>
                     <rect x={c[0] - w / 2} y={y - z(10)} width={w} height={z(18)} rx={z(9)} fill={on ? '#c2410c' : '#b45309'} />
                     <text x={c[0]} y={y + z(3.5)} textAnchor="middle" className="ufh-tag" style={{ fontSize: z(11) }}>{t}</text>
@@ -851,6 +997,9 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         {/* Windows and doors */}
         {opLayer}
 
+        {/* Heat source, cylinder, risers and the pipe routes between them (under the emitters, so a radiator can still be picked up) */}
+        {!zoneMode && <g opacity={lens === 'pipes' ? 1 : 0.4}>{plantLayer}</g>}
+
         {/* Heat emitters */}
         {house.heating.emitters.filter((e) => { const r = house.rooms.find((x) => x.id === e.room); return r && r.storey === storey && !e.fromZone && (!zoneMode || (e.kind === 'ufh' && !!e.rect && band! <= house.storeys.length - 1)); }).map((e) => {
           if (e.kind === 'ufh' && e.rect) {
@@ -871,9 +1020,9 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
           const len = (e.kind === 'ufh' ? 0.9 : e.kind === 'towel' ? 0.5 : e.len / 1000) * S, th = (e.kind === 'ufh' ? 0.9 : 0.1) * S;
           return (
             <g key={e.id} transform={`translate(${c[0]} ${c[1]}) rotate(${e.kind === 'ufh' ? 0 : ps.ang})`}
-              onPointerDown={tool === 'select' ? (ev) => { setSel({ room: e.room, walls: [], item: { k: 'em', id: e.id } }); begin(ev, { k: 'em', id: e.id, start: raw(ev), cur: raw(ev), moved: false }); } : undefined}
-              onContextMenu={tool === 'select' ? menuOn({ k: 'em', id: e.id }) : undefined}
-              style={{ cursor: tool === 'select' ? 'grab' : undefined }} pointerEvents={tool === 'select' ? undefined : 'none'}>
+              onPointerDown={pipeSel ? (ev) => { setSel({ room: e.room, walls: [], item: { k: 'em', id: e.id } }); begin(ev, { k: 'em', id: e.id, start: raw(ev), cur: raw(ev), moved: false }); } : undefined}
+              onContextMenu={pipeSel ? menuOn({ k: 'em', id: e.id }) : undefined}
+              style={{ cursor: pipeSel ? 'grab' : undefined }} pointerEvents={pipeSel ? undefined : 'none'}>
               <rect x={-len / 2 - z(4)} y={-th / 2 - z(4)} width={len + z(8)} height={th + z(8)} fill="transparent" />
               {e.kind === 'ufh'
                 ? <><rect x={-len / 2} y={-th / 2} width={len} height={th} fill="#f3c9a2" fillOpacity={0.55} stroke={on ? '#c2410c' : '#9a3412'} strokeWidth={z(on ? 2.5 : 1.5)} strokeDasharray={`${z(4)} ${z(3)}`} /><text textAnchor="middle" y={z(4)} className="plan-s" style={{ fontSize: z(11) }}>UFH</text></>
@@ -888,7 +1037,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         )))}
 
         {/* Corners: every one drags; double-click or the right-click menu removes it. */}
-        {tool === 'select' && !zoneMode && onThis.flatMap((r) => polyOf(r).map((q, i) => {
+        {planSel && !zoneMode && onThis.flatMap((r) => polyOf(r).map((q, i) => {
           const v = to(q), on = sel.room === r.id, moving = drag?.k === 'move' && drag.verts.some(([id, j]) => id === r.id && j === i);
           return <circle key={`${r.id}-v${i}`} cx={v[0]} cy={v[1]} r={z((on ? 6.5 : 4.5) * hs)} className={`vx${on ? ' on' : ''}${moving ? ' moving' : ''}`} strokeWidth={z(2)} aria-label={`${r.name} corner ${i + 1}`}
             onPointerDown={(e) => { if (e.button === 2) { e.stopPropagation(); return; } setSel({ room: r.id, walls: [], item: null }); begin(e, { k: 'move', start: raw(e), cur: raw(e), verts: together(r.id, [i], e.altKey), base: roomPoly(r)[i], free: true, moved: false }); }}
@@ -933,6 +1082,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       </svg>
       {/* Stop the buttons taking focus, so typed lengths and Enter still reach the canvas. */}
       <div className="draw-zoom" role="group" aria-label="Zoom" onMouseDown={(e) => e.preventDefault()}>
+        {zoomStart}
         <button type="button" className="btn-secondary" aria-label="Zoom in" onClick={() => setView((v) => ({ x: v.x + v.w * 0.1, y: v.y + v.w * ratio * 0.1, w: v.w * 0.8 }))}>+</button>
         <button type="button" className="btn-secondary" aria-label="Zoom out" onClick={() => setView((v) => ({ x: v.x - v.w * 0.125, y: v.y - v.w * ratio * 0.125, w: v.w * 1.25 }))}>−</button>
         <button type="button" className="btn-secondary" onClick={() => setView(fit(house, ratio))}>Fit</button>
@@ -978,6 +1128,15 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
               edit('Width and height', '↔', 'size'),
               edit(door ? 'Door type' : 'Glazing', '◧', 'type'),
               { label: 'Delete', glyph: '✕', run: () => { upd((h) => { h.openings = h.openings.filter((x) => x.id !== on.id); }); setSel(NO_SEL); } },
+            ] };
+          }
+          if (on.k === 'pipe') {
+            const p = house.heating.pipes?.find((x) => x.id === on.id), pts = p?.leg && (livePath(house, p) ?? p.leg.pts);
+            if (!p || !pts) return { title: '', tip: '', items: [] };
+            return { title: 'Pipe run actions', tip: `${p.name} · ${p.size} · in the void ${voidName(house, voidOf(house, p))}`, items: [
+              { label: 'Add a corner', glyph: '＋', run: () => addPipeCorner(p.id, pts, on.seg, at) },
+              edit('Where it runs', '⇅', 'via'),
+              { label: 'Delete run', glyph: '✕', run: () => { upd((h) => removeRun(h, p.id)); setSel(NO_SEL); } },
             ] };
           }
           const em = house.heating.emitters.find((x) => x.id === on.id), name = em?.kind === 'ufh' ? 'Underfloor loop' : em?.kind === 'towel' ? 'Towel rail' : 'Radiator';

@@ -1,29 +1,44 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { CIBSE_ACH, SHADING, defaultTemp, onStorey, roomEdges, roomHeight } from '../engine/house';
 import type { Buildup, BuildupKind, House, HouseResult, Room, RoomType } from '../engine/house';
 import { RAD_LABEL, UFH_PIPES, UFH_SPACINGS, loopLength, loopMax } from '../engine/house-heating';
 import type { RadType } from '../engine/house-heating';
-import { addBasement, addStoreyAbove, bandName, canAddBasement, canRemoveBasement, canRemoveTop, copyRooms, deleteRoom, flipRooms, innerDoorAt, isOutside, narrowAtWall, openingCentre, pieceAlign, pieceGap, pieceKeys, pieceThickness, removeBasement, setPieceAlign, removeTop, rotateRooms, setWallLength, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
+import { OPEN_DOORWAY, addBasement, addStoreyAbove, bandName, canAddBasement, canRemoveBasement, canRemoveTop, copyRooms, deleteRoom, flipRooms, innerDoorAt, isOutside, narrowAtWall, openingCentre, partyKeys, pieceAlign, pieceGap, pieceKeys, pieceThickness, removeBasement, setPieceAlign, removeTop, rotateRooms, setWallLength, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
 import { polyArea } from '../engine/geom';
 import { Num, fmt, uid, NumInput } from './hform';
-import { NO_SEL } from './DrawCanvas';
-import type { Sel, Tool, WallRef } from './DrawCanvas';
+import { NO_SEL, plantOf, removePlant } from './DrawCanvas';
+import { MAX_PA_M, MAX_V, PIPE_SIZES, maxFlow, resetRun, runLength, setBranchRiser, sizePipes, valveTail, viaOf, voidName } from '../engine/house-pipes';
+import type { Lens, OpPick, Sel, Tool, WallRef } from './DrawCanvas';
 import { href } from './route';
 import { RoofSectionFields, newRoof } from './HouseRoof';
 
-const TOOLS: Array<[Tool, string, string]> = [
-  ['select', 'Select', '↖'], ['room', 'Room', '⬠'], ['box', 'Box room', '▭'], ['split', 'Split room', '✂'], ['corner', 'Add corner', '＋'],
-  ['window', 'Window', '▬'], ['door', 'Door', '▯'], ['radiator', 'Radiator', '≣'], ['ufh', 'UFH zone', '▦'],
+type ToolDef = [Tool, string, string];
+/** The tool bar, in groups: a group of more than one tool opens to the right on hover. Windows and doors open a list of the project's types. */
+const GROUPS: Array<{ id: string; label: string; tools: ToolDef[]; list?: 'glazing' | 'door' }> = [
+  { id: 'select', label: 'Select', tools: [['select', 'Select', '↖']] },
+  { id: 'room', label: 'Draw a room', tools: [['box', 'Box room', '▭'], ['room', 'Polygon room', '⬠']] },
+  { id: 'cut', label: 'Cut', tools: [['split', 'Split room', '✂'], ['join', 'Delete wall section', '⌫']] },
+  { id: 'window', label: 'Window', tools: [['window', 'Window', '▬']], list: 'glazing' },
+  { id: 'door', label: 'Door', tools: [['door', 'Door', '▯']], list: 'door' },
+  { id: 'heat', label: 'Heating', tools: [['radiator', 'Radiator', '≣'], ['ufh', 'UFH zone', '▦']] },
+  { id: 'source', label: 'Boiler / heat pump', tools: [['source', 'Boiler / heat pump', '♨']] },
+  { id: 'cylinder', label: 'Hot water cylinder', tools: [['cylinder', 'Hot water cylinder', '◍']] },
+  { id: 'riser', label: 'Pipe riser', tools: [['riser', 'Pipe riser', '↕']] },
 ];
 const HINT: Record<Tool, string> = {
   select: 'Drag a wall or a corner to reshape; drag a room to move it and it snaps flush to its neighbours. Shift-drag on empty canvas boxes several rooms; Shift-click a room adds it; Shift-click walls selects several. Arrow keys nudge. Double-click a wall to add a corner, a corner to remove it, a room to open it. Alt stops neighbours following; hold Shift while drawing for free (no snapping). Double-click a tool to keep it.',
   room: 'Click each corner; lines snap square and 45° and sit flush on other rooms (Shift: free). Type a length and press Enter to set the next wall exactly. Click the first corner, double-click or press Enter to finish; Backspace undoes, Esc cancels.',
   box: 'Drag out a rectangular room, or click one corner then the opposite corner.',
   split: 'Click two points to draw a line across a room; it is cut in two along the line, with its windows, walls and emitters shared out.',
+  join: 'Click a wall between two rooms to take it out: they become one room, keeping the first room\'s name and settings. Doors between them go; windows, heaters and wall build-ups carry over.',
   corner: 'Click a wall to add a corner there, then drag it.',
   window: 'Click an outside wall to place a window, then drag it along the wall or to another wall.',
-  door: 'Click an outside wall to place a door, or a wall between two rooms for an inside door. Drag it along or to another wall.',
+  door: 'Click an outside wall to place a door, or a wall between two rooms for an inside door; an open doorway goes between two rooms only. Pick the type from the list beside the button. Drag it along or to another wall.',
   radiator: 'Click inside a heated room. A radiator snaps to the nearest wall; drag it to move it.',
+  source: 'Click where the boiler or heat pump goes (on this floor). There is one: clicking again moves it. Pipes are laid from here to every radiator, along the walls.',
+  cylinder: 'Click where the hot water cylinder goes, if there is one. Clicking again moves it.',
+  riser: 'Click where pipes pass up or down through the floors, such as a cupboard or boxing in a corner. Pipes to other floors go up whichever riser makes the runs shortest; with no riser they go straight up from the boiler.',
   ufh: "Drag out a rectangle, or click corners for any shape, to draw an underfloor heating zone. Every heated room it covers gets UFH for its part of the zone; set each room's covering and pipe spacing under Emitters. Drag the zone by its tag.",
 };
 
@@ -40,29 +55,83 @@ const HINT_ROOF: Partial<Record<Tool, string>> = {
   room: 'Click each corner of the roof at its eaves (outside the walls); click the first corner, double-click or press Enter to finish. It sits on the storey shown.',
   box: 'Drag out a rectangular roof at its eaves, or click one corner then the opposite one.',
 };
-export const drawHint = (band: boolean | 'roof', tool: Tool) => (band === 'roof' ? HINT_ROOF[tool] ?? HINT[tool] : band ? HINT_BAND[tool] ?? HINT[tool] : HINT[tool]);
+export const drawHint = (band: boolean | 'roof', tool: Tool, lens: Lens = 'plan') => (lens === 'pipes' && tool === 'select' ? PIPE_SELECT_HINT : band === 'roof' ? HINT_ROOF[tool] ?? HINT[tool] : band ? HINT_BAND[tool] ?? HINT[tool] : HINT[tool]);
+const PIPE_SELECT_HINT = 'Click an emitter, an underfloor zone tag or a pipe run to edit it; drag an emitter to move it. A pipe run shows what it serves and its size. Drag a stretch sideways to move it; double-click to add a bend; drop it on another run to share one pipe. Drag the boiler, cylinder or a riser to move it; Delete removes it.';
 
-/** The drawing menu: a slim column of tool icons (names on hover) that floats over the canvas. */
-export function DrawMenu({ band, tool, setTool, sticky, setSticky, snapOn, setSnapOn, grid, setGrid }: {
+/** The drawing menu: a slim column of tool icons (names on hover) that floats over the canvas; groups open to the right. */
+/** The heating and cooling lens's tools; the rest are the floor plan's. UFH zones are also drawn in a floor layer, which is plan only. */
+const PIPE_TOOLS: Tool[] = ['select', 'radiator', 'ufh', 'source', 'cylinder', 'riser'];
+export function DrawMenu({ house, band, tool, setTool, sticky, setSticky, snapOn, setSnapOn, lens = 'plan', opPick, setOpPick }: {
+  house: House;
   /** On a floor or ceiling layer: only zones and (on floors) heated-floor loops can be drawn. */
-  band: null | 'floor' | 'top' | 'roof';
-  tool: Tool; setTool: (t: Tool) => void; sticky: boolean; setSticky: (v: boolean) => void; snapOn: boolean; setSnapOn: (v: boolean) => void; grid: number; setGrid: (v: number) => void;
+  band: null | 'floor' | 'top' | 'roof'; lens?: Lens;
+  tool: Tool; setTool: (t: Tool) => void; sticky: boolean; setSticky: (v: boolean) => void; snapOn: boolean; setSnapOn: (v: boolean) => void;
+  /** The window and door types the tools place. */
+  opPick: OpPick; setOpPick: (p: OpPick) => void;
 }) {
+  const [open, setOpen] = useState<string | null>(null);
+  // The last tool used in each group is the one its button shows and picks.
+  const [lastIn, setLastIn] = useState<Record<string, Tool>>({});
+  const allowed = (id: Tool) => (lens === 'pipes' ? PIPE_TOOLS.includes(id) : !PIPE_TOOLS.includes(id) || id === 'select' || (id === 'ufh' && band === 'floor')) && (!band || id === 'select' || id === 'room' || id === 'box' || (id === 'ufh' && band === 'floor'));
+  const named = (id: Tool, l: string) => (band ? ((band === 'roof' ? { room: 'Roof', box: 'Box roof' } : { room: 'Zone', box: 'Box zone' }) as Record<string, string>)[id] ?? l : l);
+  const pick = (g: string, id: Tool, keep: boolean) => { setTool(id); setSticky(keep && id !== 'select'); setLastIn({ ...lastIn, [g]: id }); };
+  const groups = GROUPS.map((g) => ({ ...g, tools: g.tools.filter(([id]) => allowed(id)) })).filter((g) => g.tools.length);
   return (
     <div className="draw-menu" role="toolbar" aria-label="Drawing tools">
-      {TOOLS.filter(([id]) => !band || id === 'select' || id === 'room' || id === 'box' || (id === 'ufh' && band === 'floor')).map(([id, l, glyph]) => [id, band ? ((band === 'roof' ? { room: 'Roof', box: 'Box roof' } : { room: 'Zone', box: 'Box zone' }) as Record<string, string>)[id] ?? l : l, glyph] as [Tool, string, string]).map(([id, label, glyph]) => (
-        <button key={id} type="button" className={tool === id ? 'on' : ''} aria-pressed={tool === id} aria-label={label} title={`${label}. Double-click to keep this tool after each use`}
-          onClick={() => { setTool(id); setSticky(false); }} onDoubleClick={() => { setTool(id); setSticky(id !== 'select'); }}>
-          <span aria-hidden="true">{glyph}</span>{sticky && tool === id && <i className="lock" aria-hidden="true" />}
-        </button>
-      ))}
+      {groups.map((g) => {
+        const shown = g.tools.find(([id]) => id === tool) ?? g.tools.find(([id]) => id === lastIn[g.id]) ?? g.tools[0];
+        const [id, l, glyph] = shown, label = named(id, l), on = g.tools.some(([t]) => t === tool), more = g.tools.length > 1 || !!g.list;
+        const types = g.list === 'glazing' ? ofKind(house, 'glazing') : g.list === 'door' ? ofKind(house, 'door').filter((b) => b.id !== OPEN_DOORWAY) : [];
+        const chosen = g.list === 'glazing' ? opPick.glazing ?? types[0]?.id : opPick.door ?? types[0]?.id;
+        return (
+          <div key={g.id} className="tool-group" onMouseEnter={() => more && setOpen(g.id)} onMouseLeave={() => setOpen(null)}>
+            <button type="button" className={on ? 'on' : ''} aria-pressed={on} aria-label={label} aria-haspopup={more || undefined} aria-expanded={more ? open === g.id : undefined}
+              title={`${label}${more ? ' (more on hover)' : ''}. Double-click to keep this tool after each use`}
+              onClick={() => { pick(g.id, id, false); if (more) setOpen(open === g.id ? null : g.id); }} onDoubleClick={() => pick(g.id, id, true)}>
+              <span aria-hidden="true">{glyph}</span>{more && <i className="more" aria-hidden="true" />}{sticky && on && <i className="lock" aria-hidden="true" />}
+            </button>
+            {more && open === g.id && (g.list ? (
+              <div className="flyout list" role="menu" aria-label={`${g.label} types`}>
+                {types.map((b) => (
+                  <button key={b.id} type="button" role="menuitemradio" aria-checked={on && chosen === b.id} className={on && chosen === b.id ? 'on' : ''}
+                    onClick={() => { setOpPick(g.list === 'glazing' ? { ...opPick, glazing: b.id } : { ...opPick, door: b.id }); pick(g.id, id, false); setOpen(null); }}>
+                    <b>{b.name}</b><span>{b.u != null ? `U ${fmt(b.u, 2)}` : ''}</span>
+                  </button>
+                ))}
+                {g.list === 'door' && (
+                  <button type="button" role="menuitemradio" aria-checked={on && chosen === OPEN_DOORWAY} className={on && chosen === OPEN_DOORWAY ? 'on' : ''}
+                    onClick={() => { setOpPick({ ...opPick, door: OPEN_DOORWAY }); pick(g.id, id, false); setOpen(null); }}>
+                    <b>Opening</b><span>between two rooms, no door</span>
+                  </button>
+                )}
+                {!types.length && g.list === 'glazing' && <p className="small muted">No glazing build-ups yet: add one under Build-ups.</p>}
+              </div>
+            ) : (
+              <div className="flyout" role="menu" aria-label={g.label}>
+                {g.tools.map(([t, tl, tg]) => (
+                  <button key={t} type="button" role="menuitemradio" aria-checked={tool === t} aria-label={named(t, tl)} title={`${named(t, tl)}. Double-click to keep this tool after each use`} className={tool === t ? 'on' : ''}
+                    onClick={() => { pick(g.id, t, false); setOpen(null); }} onDoubleClick={() => pick(g.id, t, true)}>
+                    <span aria-hidden="true">{tg}</span>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        );
+      })}
       <div className="draw-menu-end">
         <button type="button" className={snapOn ? 'on' : ''} aria-pressed={snapOn} aria-label="Snap to walls and angles" title="Snap to walls and angles" onClick={() => setSnapOn(!snapOn)}><span aria-hidden="true">⌖</span></button>
-        <select className="draw-grid-sel" value={grid} aria-label="Grid size" title="Grid size" onChange={(e) => setGrid(Number(e.target.value))}>
-          {[[0.01, '1cm'], [0.05, '5cm'], [0.1, '10cm'], [0.25, '25cm']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-        </select>
       </div>
     </div>
+  );
+}
+
+/** The grid size, beside the zoom buttons. It stops the mouse-down so the zoom group keeping focus on the canvas does not stop it opening. */
+export function GridSelect({ grid, setGrid }: { grid: number; setGrid: (v: number) => void }) {
+  return (
+    <select className="draw-grid-sel btn-secondary" value={grid} aria-label="Grid size" title="Grid size" onMouseDown={(e) => e.stopPropagation()} onChange={(e) => setGrid(Number(e.target.value))}>
+      {[[0.01, '1 cm'], [0.05, '5 cm'], [0.1, '10 cm'], [0.25, '25 cm']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    </select>
   );
 }
 
@@ -112,6 +181,24 @@ export function LayerTabs({ house, storey, band, roof, pickStorey, pickBand, pic
       <div className="lt-row" role="tablist" aria-label="Storeys and layers, ground up">{tabs}</div>
       <button type="button" className="lt-add" onClick={() => { upd(addStoreyAbove); pickStorey(house.storeys.length); }}>＋ Storey</button>
       <label className="lt-faint small" title="Show the storeys above and below faintly"><input type="checkbox" checked={below} onChange={(e) => setBelow(e.target.checked)} /> Faint above / below</label>
+    </div>
+  );
+}
+
+/** The lenses along the top of the canvas: what is being edited, each with its own tools and things to pick. `children` sit at the right of the bar. */
+export function LensTabs({ house, lens, setLens, children }: { house: House; lens: Lens; setLens: (l: Lens) => void; children?: ReactNode }) {
+  const runs = (house.heating.pipes ?? []).length, ems = house.heating.emitters.length;
+  const src = house.heating.source ? (house.hp.source === 'ashp' || house.hp.source === 'gshp' ? 'heat pump placed' : 'boiler placed') : 'no heat source yet';
+  const tab = (id: Lens, name: string, sub: string) => (
+    <button key={id} type="button" role="tab" className={`lt${lens === id ? ' on' : ''}`} aria-selected={lens === id} onClick={() => setLens(id)}><b>{name}</b><span>{sub}</span></button>
+  );
+  return (
+    <div className="lens-tabs">
+      <div className="lt-row" role="tablist" aria-label="Lens: what to edit">
+        {tab('plan', 'Floor plan', 'rooms, walls, windows and doors')}
+        {tab('pipes', 'Heating and cooling', `${ems} emitter${ems === 1 ? '' : 's'} · ${runs} pipe run${runs === 1 ? '' : 's'} · ${src}`)}
+      </div>
+      {children && <div className="lens-stats">{children}</div>}
     </div>
   );
 }
@@ -173,6 +260,17 @@ export function LayerSettings({ house, res, storey, band, roof, zone, pickZone, 
               const sfx = uid(''); upd((h) => { if (s === h.storeys.length - 1) addStoreyAbove(h); let k = 0; copyRooms(h, h.rooms.filter((r) => r.storey === s).map((r) => r.id), [0, 0], s + 1, false, (p) => `${p}${sfx}${k++}`); }); pickStorey(s + 1); }}>Copy rooms up ›</button>}
       {s === last && canRemoveTop(house) && <button type="button" className="btn-link" onClick={() => { upd(removeTop); pickStorey(Math.min(storey, last - 1)); }}>Remove this empty top storey</button>}
       {s === 0 && canRemoveBasement(house) && <button type="button" className="btn-link" onClick={() => { upd(removeBasement); pickStorey(0); }}>Remove this empty basement</button>}
+    </div>
+  );
+}
+
+/** One limit as a bar: green well inside it, amber within 20% of it, red over it. */
+function Gauge({ label, val, max, unit, dp }: { label: string; val: number; max: number; unit: string; dp: number }) {
+  const f = max > 0 ? val / max : 0;
+  return (
+    <div className={`gauge ${f > 1 ? 'over' : f > 0.8 ? 'near' : 'ok'}`}>
+      <div className="gauge-head"><span>{label}</span><span className="mono">{fmt(val, dp)} / {fmt(max, dp)} {unit}</span></div>
+      <div className="gauge-track" role="meter" aria-label={label} aria-valuenow={val} aria-valuemin={0} aria-valuemax={max}><div className="gauge-fill" style={{ width: `${Math.min(100, f * 100)}%` }} /></div>
     </div>
   );
 }
@@ -310,9 +408,9 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
         })}
         {info.some((i) => !i.w.other) && (
           <div className="chips" role="group" aria-label="Other side of the wall">
-            <button type="button" className={`chip${info.filter((i) => !i.w.other).every((i) => !i.party) ? ' on' : ''}`} onClick={() => upd((h) => info.filter((i) => !i.w.other).forEach((i) => { delete h.faceBoundary[i.keys[0]]; }))}>Outside</button>
-            <button type="button" className={`chip${info.filter((i) => !i.w.other).every((i) => i.party) ? ' on' : ''}`} disabled={info.some((i) => !i.w.other && !i.outside)} title="Neighbour's side, at the neighbour temperature"
-              onClick={() => upd((h) => info.filter((i) => !i.w.other).forEach((i) => { h.faceBoundary[i.keys[0]] = 'party'; }))}>Party wall</button>
+            <button type="button" className={`chip${info.filter((i) => !i.w.other).every((i) => !i.party) ? ' on' : ''}`} onClick={() => upd((h) => info.filter((i) => !i.w.other).forEach((i) => { for (const k of [i.keys[0], ...partyKeys(h, i.w.room, i.w.edge)]) delete h.faceBoundary[k]; }))}>Outside</button>
+            <button type="button" className={`chip${info.filter((i) => !i.w.other).every((i) => i.party) ? ' on' : ''}`} disabled={info.some((i) => !i.w.other && !i.outside)} title="Neighbour's side, at the neighbour temperature. Sets this wall line on every storey."
+              onClick={() => upd((h) => info.filter((i) => !i.w.other).forEach((i) => { for (const k of [i.keys[0], ...partyKeys(h, i.w.room, i.w.edge)]) h.faceBoundary[k] = 'party'; }))}>Party wall</button>
           </div>
         )}
         <button type="button" className="btn-link" onClick={() => upd((h) => info.forEach((i) => h.openings.forEach((o) => { if (o.room === i.w.room && wallIndex(h, o) === i.w.edge) delete o.t; })))}>Spread windows and doors evenly</button>
@@ -350,6 +448,94 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
           if (c != null) x.t = c;
         })}>Centre on wall</button>
         <button type="button" className="btn-danger" onClick={() => { upd((h) => { h.openings = h.openings.filter((x) => x.id !== o.id); }); setSel({ ...sel, item: null }); }}>Delete</button>
+      </>
+    );
+  }
+
+  if (sel.item?.k === 'pipe') {
+    const p = house.heating.pipes?.find((x) => x.id === sel.item!.id);
+    if (!p) return null;
+    // The floor's branch: this run itself if it climbs, else the first run upstream that does.
+    let br: typeof p | undefined = p;
+    while (br && br.rise == null) { const up: string | null = br.parent; br = house.heating.pipes?.find((x) => x.id === up); }
+    // What it carries: every heater beyond it, the flow for that, and what its size can take.
+    const pr = sizePipes(house, res), row = pr.rows.find((r) => r.pipe.id === p.id);
+    const served: string[] = [];
+    const walk = (x: typeof p) => { if (x.emitter) served.push(x.emitter); house.heating.pipes!.filter((c) => c.parent === x.id).forEach(walk); };
+    walk(p);
+    const idMM = PIPE_SIZES[p.size] ?? 13.6, cap = maxFlow(idMM, pr.paMax), flowL = row?.flowLpm ?? 0;
+    const family = Object.keys(PIPE_SIZES).filter((k) => k.startsWith(p.size.startsWith('PEX') ? 'PEX' : 'Cu')).sort((a, b) => PIPE_SIZES[a] - PIPE_SIZES[b]);
+    const fits = family.find((k) => maxFlow(PIPE_SIZES[k], pr.paMax) >= flowL);
+    const st = p.leg ? house.storeys[p.leg.storey]?.name.toLowerCase() : '';
+    // The run it comes off, when that is on the same floor: it can follow its floor or ceiling.
+    const upSame = house.heating.pipes?.find((x) => x.id === p.parent && x.leg && x.leg.storey === p.leg?.storey);
+    const em = p.emitter ? house.heating.emitters.find((x) => x.id === p.emitter) : undefined, tail = em && p.leg ? valveTail(house, p.leg.storey, viaOf(house, p), em.kind) : 0;
+    const emName = (id: string) => { const e = house.heating.emitters.find((x) => x.id === id); return e ? `${house.rooms.find((r) => r.id === e.room)?.name ?? e.room} ${e.kind === 'ufh' ? 'UFH' : e.kind === 'towel' ? 'towel rail' : 'radiator'}` : id; };
+    const setRun = (patch: Partial<typeof p>) => upd((h) => { const x = h.heating.pipes?.find((q) => q.id === p.id); if (x) Object.assign(x, patch); });
+    return (
+      <>
+        <p className="small"><b>{p.name}</b> · {runLength(house, p)} m{p.typed ? ' (typed in)' : ''}{p.rise ? `, ${p.rise.toFixed(1)} m of it between floors` : ''}{tail && !p.typed ? `, ${tail.toFixed(2)} m of it ${viaOf(house, p) === 'ceiling' ? 'down the wall to' : 'up to'} the valves` : ''}.</p>
+        <div className="hf-row">
+          <label className="hf"><span className="eyebrow">Pipe size</span>
+            <select className="select" value={p.size} onChange={(e) => setRun({ size: e.target.value })}>{Object.keys(PIPE_SIZES).map((k) => <option key={k}>{k}</option>)}</select>
+          </label>
+          {p.leg && <label className="hf"><span className="eyebrow">Runs in the</span>
+            <select className="select" name="via" value={p.via ?? (upSame ? 'same' : 'floor')} onChange={(e) => setRun({ via: e.target.value === 'same' ? undefined : (e.target.value as 'floor' | 'ceiling') })}>
+              {upSame && <option value="same">{viaOf(house, upSame)}, as the run it comes off</option>}
+              <option value="floor">floor: void {voidName(house, p.leg.storey)}</option><option value="ceiling">ceiling: void {voidName(house, p.leg.storey + 1)}</option>
+            </select>
+          </label>}
+        </div>
+        {served.length > 0 && (
+          <table className="h-table">
+            <thead><tr><th>Serves</th><th className="n">kW</th></tr></thead>
+            <tbody>
+              {served.map((id) => <tr key={id}><td>{emName(id)}</td><td className="n mono">{fmt((pr.emitterW.get(id) ?? 0) / 1000, 2)}</td></tr>)}
+              <tr><td><b>Carries</b></td><td className="n mono"><b>{fmt((row?.loadW ?? 0) / 1000, 2)}</b></td></tr>
+            </tbody>
+          </table>
+        )}
+        <div className="gauges" aria-label={`${p.size} against its limits`}>
+          <Gauge label={`Flow (${house.heating.dT} K)`} val={flowL} max={cap} unit="l/min" dp={1} />
+          <Gauge label="Velocity" val={row?.v ?? 0} max={MAX_V(idMM)} unit="m/s" dp={2} />
+          <Gauge label="Pressure drop" val={row?.paM ?? 0} max={pr.paMax} unit="Pa/m" dp={0} />
+        </div>
+        <p className="small muted">
+          {pr.longest > 0 && <>Pump budget: {fmt(pr.head / 1000)} kPa of head, less 5 kPa for the heater and valves, over the {fmt(pr.longest, 1)} m longest circuit, flow and return, plus 30% for fittings: {fmt(pr.paPump)} Pa/m. </>}
+          {pr.paMax < pr.paPump ? `Capped at ${fmt(pr.paCap)} Pa/m.` : 'Under the cap, so the pump sets the limit.'}
+        </p>
+        <div className="hf-row">
+          <Num label="Flow − return (whole system)" unit="K" step={1} value={house.heating.dT} onChange={(v) => upd((h) => { h.heating.dT = Math.max(1, v); })} />
+          <Num label="Pump head" unit="kPa" step={1} value={house.heating.pumpHead ?? 40} onChange={(v) => upd((h) => { h.heating.pumpHead = Math.max(0, v); })} />
+          <Num label="Pa/m cap" unit="Pa/m" step={10} value={house.heating.paCap ?? MAX_PA_M} onChange={(v) => upd((h) => { h.heating.paCap = Math.max(10, v); })} />
+        </div>
+        {flowL > cap ? <p className="small warn">Too small for this flow{fits ? <>: <button type="button" className="btn-link" onClick={() => setRun({ size: fits })}>use {fits}</button></> : '.'}</p>
+          : fits && fits !== p.size && PIPE_SIZES[fits] < idMM ? <p className="small muted">{fits} would also do.</p> : null}
+        <p className="small muted">Drag a stretch of the pipe sideways to move it; its ends stay on what they connect to. Double-click a stretch to add a bend there. Drag a run onto another and they join into one shared pipe, sized for both, that tees off to each.</p>
+        {br && (house.heating.risers?.length ?? 0) > 0 && (
+          <label className="hf"><span className="eyebrow">{br.name.replace(/ \(.*\)$/, '')} comes up</span>
+            <select className="select" value={br.ends?.[1] ?? 'source'} onChange={(e) => upd((h) => setBranchRiser(h, br.id, e.target.value))}>
+              <option value="source">Straight up from the {house.hp.source === 'ashp' || house.hp.source === 'gshp' ? 'heat pump' : 'boiler'}</option>
+              {house.heating.risers!.map((r, i) => <option key={r.id} value={r.id}>Riser {i + 1} ({r.at[0].toFixed(1)}, {r.at[1].toFixed(1)} m)</option>)}
+            </select>
+          </label>
+        )}
+        <button type="button" className="btn-link" onClick={() => upd((h) => resetRun(h, p.id))}>Straighten this run</button>
+        <a className="btn-link" href={href('pipes')}>Pipework: sizes and flows ›</a>
+      </>
+    );
+  }
+
+  if (sel.item?.k === 'plant') {
+    const id = sel.item.id, at = plantOf(house, id);
+    if (!at) return null;
+    const what = id === 'cylinder' ? 'Hot water cylinder' : id === 'source' ? (house.hp.source === 'ashp' || house.hp.source === 'gshp' ? 'Heat pump' : 'Boiler') : 'Pipe riser';
+    return (
+      <>
+        <p className="small"><b>{what}</b> at {at.at[0].toFixed(2)}, {at.at[1].toFixed(2)} m. Drag it to move it.
+          {id === 'source' ? ' Pipes run from here to every heater.' : id === 'cylinder' ? ' Its coil is fed from the heat source.' : ' Pipes to other floors can pass through the floors here.'}</p>
+        <a className="btn-link" href={href('pipes')}>Pipework: lay out pipes from the plan ›</a>
+        <button type="button" className="btn-link" onClick={() => { upd((h) => removePlant(h, id)); setSel(NO_SEL); }}>Delete</button>
       </>
     );
   }

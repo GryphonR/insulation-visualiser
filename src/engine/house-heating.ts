@@ -46,6 +46,7 @@ export interface Zone {
   /** UFH manifold position on the plan, m (on the storey of its loops). */
   manifold?: { x: number; y: number };
 }
+export interface Plant { at: Pt; storey: number }
 export interface Heating {
   emitters: Emitter[]; zones: Zone[];
   control: 'fixed' | 'ideal' | 'curve';
@@ -55,6 +56,10 @@ export interface Heating {
   dT: number;
   /** Heat pump minimum flow rate, l/min. */
   minFlow: number;
+  /** Where the boiler or heat pump and the hot water cylinder sit on the plan (m, on a storey), and the risers: points where pipes pass through every floor. */
+  source?: Plant; cylinder?: Plant; risers?: Array<{ id: string; at: Pt }>;
+  /** Most a run may lose per metre, Pa/m, even when the pump has head to spare (for balancing and quiet). 300 when unset. */
+  paCap?: number;
   /** Pipe runs from the heat pump (board 3), and the pump's available head at the design flow, kPa. */
   pipes?: Pipe[];
   pumpHead?: number;

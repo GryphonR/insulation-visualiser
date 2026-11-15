@@ -30,7 +30,7 @@ export function buildTiles(res: ScenarioResult): Tile[] {
       wall: true, label: 'Time lag', value: sim.lag.toFixed(1), unit: 'hours',
       note: 'Decrement delay: how long after the hottest outside surface (sun plus air) the heat flow at the inside surface peaks.' + held,
     }]),
-    { wall: true, label: 'Inner thermal mass', value: String(Math.round(sim.kin)), unit: 'kJ/m²K', note: `Heat capacity inside the main insulation (top 100 mm). Whole wall: ${Math.round(sim.ktot)} kJ/m²K.` },
+    { wall: true, label: 'Inner thermal mass', value: String(Math.round(sim.kin)), unit: 'kJ/m²K', note: `Heat the room side takes in and gives back over a day (ISO 13786). Whole wall: ${Math.round(sim.ktot)} kJ/m²K.` },
     { label: 'Inside surface', value: `${sim.timin.toFixed(1)}–${sim.timax.toFixed(1)}`, unit: '°C', note: `Swing of ${(sim.timax - sim.timin).toFixed(1)} K across the day.` },
     { label: 'Heat into the room, 24 h', value: sim.gain.toFixed(0), unit: 'Wh/m²', note: 'Total heat crossing the inner face towards the room.' },
     { label: 'Heat out of the room, 24 h', value: sim.loss.toFixed(0), unit: 'Wh/m²', note: 'Total heat crossing the inner face away from the room.' },

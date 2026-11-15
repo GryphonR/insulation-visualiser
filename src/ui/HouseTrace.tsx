@@ -4,9 +4,12 @@ import { storeyLevel } from '../engine/house';
 import type { House, HouseResult, TraceSettings } from '../engine/house';
 import type { Project } from '../engine/house-scenarios';
 import type { Pt } from '../engine/geom';
+import { polyArea } from '../engine/geom';
+import { addRoomAt } from '../engine/house-draw';
+import { fetchFootprint, footprintToPlan, parseLatLon } from '../engine/osm';
 import { Chip } from './controls';
 import { planBounds } from './HousePlan';
-import { NumInput } from './hform';
+import { NumInput, uid } from './hform';
 
 
 const TILE = 256, ZOOM = 19;
@@ -90,8 +93,9 @@ export function traceUnderlay(h: House, t: TraceSettings, storey: number, imager
 }
 
 /** Tracing controls under the plan: a floor-plan image per storey, or satellite imagery. */
-export function TraceControls({ house, res, storey: s, trace: t, setTrace: set, onMeasure, measuring, imagery, setImagery }: {
+export function TraceControls({ house, res, storey: s, trace: t, setTrace: set, upd, onMeasure, measuring, imagery, setImagery }: {
   house: House; res: HouseResult; storey: number; trace: TraceSettings; setTrace: (fn: (t: TraceSettings) => void) => void;
+  upd: (fn: (h: House) => void) => void;
   /** This browser's satellite provider and key (not part of the project). */
   imagery: Imagery; setImagery: (v: Imagery) => void;
   /** Start picking two points on the plan that are `len` metres apart, to scale the image. */
@@ -101,6 +105,27 @@ export function TraceControls({ house, res, storey: s, trace: t, setTrace: set, 
   const storey = storeyLevel(house, s);
   const [msg, setMsg] = useState('');
   const [known, setKnown] = useState('');
+  const [pin, setPin] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const getOutline = async () => {
+    const at = parseLatLon(pin);
+    if (!at) { setMsg('Paste the latitude and longitude as two numbers, e.g. 52.19870, 0.14350.'); return; }
+    setBusy(true); setMsg('');
+    try {
+      // An empty plan turns to square up the walls; drawn rooms keep the plan's turn so their compass directions don't change.
+      const f = footprintToPlan(await fetchFootprint(at), house.rooms.length ? house.north ?? 0 : undefined);
+      const xs = f.poly.map((p) => p[0]), ys = f.poly.map((p) => p[1]);
+      upd((h) => { if (!h.rooms.length) h.north = f.north; h.guide = { w: +Math.max(...xs).toFixed(1), d: +Math.max(...ys).toFixed(1), poly: f.poly }; });
+      set((x) => { x.sat.lat = f.origin[0]; x.sat.lon = f.origin[1]; });
+      setMsg(`Found a ${Math.round(polyArea(f.poly))} m² footprint, shown dashed on the plan. Check it is just your house: on a terrace, one outline can cover several.`);
+    } catch (e) { setMsg((e as Error).message); }
+    setBusy(false);
+  };
+  const fill = () => upd((h) => {
+    const poly = h.guide?.poly;
+    if (poly) h.storeys.forEach((st, i) => { addRoomAt(h, uid('r'), poly, i).name = st.name; });
+  });
 
   const im = t.images[storey];
   // px right, py up on the plan as drawn, which may be turned from true north; dx east, dy north on the ground.
@@ -181,6 +206,12 @@ export function TraceControls({ house, res, storey: s, trace: t, setTrace: set, 
         The key stays in this browser only; it is never saved in the project or its exports. Starts at the centre of postcode district {house.climate.postcode.toUpperCase()}: paste your house's latitude and longitude (right-click it in any online map), then nudge until the roof lines up.
         {imagery.provider === 'mapbox' && <> <a href={IMAGERY_PRESETS.mapbox.terms} target="_blank" rel="noreferrer">Mapbox terms</a>.</>}
       </p>}
+      <div className="hf-row">
+        <label className="hf"><span className="eyebrow">Your house on the map (latitude, longitude)</span><input className="h-text" placeholder="e.g. 52.19870, 0.14350" value={pin} onChange={(e) => setPin(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') getOutline(); }} /></label>
+        <button type="button" className="btn-secondary" disabled={busy || !pin.trim()} onClick={getOutline}>{busy ? 'Looking it up…' : 'Get outline from OpenStreetMap'}</button>
+        {house.guide?.poly && !house.rooms.length && <button type="button" className="btn-secondary" onClick={fill}>Make each floor one room from it</button>}
+      </div>
+      <p className="small muted">Right-click your house in an online map to copy its latitude and longitude. Outlines <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>.</p>
       {msg && <p className="small">{msg}</p>}
     </div>
   );

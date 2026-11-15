@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Pt } from '../engine/geom';
 import { DrawCanvas, GRID, NO_SEL } from './DrawCanvas';
-import type { EditField, Sel, Tool } from './DrawCanvas';
-import { DrawMenu, Inspector, LayerSettings, LayerTabs, RoomFields, drawHint } from './DrawPanels';
+import type { EditField, Lens, OpPick, Sel, Tool } from './DrawCanvas';
+import { DrawMenu, GridSelect, Inspector, LayerSettings, LayerTabs, LensTabs, RoomFields, drawHint } from './DrawPanels';
 import { bandName } from '../engine/house-draw';
 import { planBounds } from './HousePlan';
 import { TraceControls, loadImagery, saveImagery, traceOf, traceUnderlay } from './HouseTrace';
@@ -27,6 +27,10 @@ export function PlanPage({ selected }: { selected?: string }) {
   const [sel, setSel] = useState<Sel>({ ...NO_SEL, room: startRoom?.id ?? '' });
   const [tool, setTool] = useState<Tool>('select');
   const [lens, setLens] = useState<'loss' | 'temp' | 'cover' | 'none'>('loss');
+  /** What is being edited: the plan, or the pipework. Floor and ceiling layers and the roof are plan only. */
+  const [view, setView] = useState<Lens>('plan');
+  const [opPick, setOpPick] = useState<OpPick>({});
+  const pickView = (v: Lens) => { setView(v); setSel(NO_SEL); setTool('select'); if (v === 'pipes' && (band != null || roofOn)) { setBand(null); setRoofOn(false); } };
   const [showBelow, setShowBelow] = useState(true);
   const [sticky, setSticky] = useState(false);
   const [snapOn, setSnapOn] = useState(true);
@@ -41,7 +45,7 @@ export function PlanPage({ selected }: { selected?: string }) {
   useEffect(() => {
     if (!editField) return;
     // The selection's own section comes first in the panel, so its first dropdown or number is the one meant.
-    const el = panel.current?.querySelector<HTMLInputElement | HTMLSelectElement>({ type: 'select', size: 'input[type="number"]', name: 'input[aria-label="Room name"]' }[editField]);
+    const el = panel.current?.querySelector<HTMLInputElement | HTMLSelectElement>({ type: 'select', size: 'input[type="number"]', name: 'input[aria-label="Room name"]', via: 'select[name="via"]' }[editField]);
     el?.focus();
     if (el instanceof HTMLInputElement) el.select();
     setEditField(null);
@@ -58,20 +62,20 @@ export function PlanPage({ selected }: { selected?: string }) {
   // A band shows the rooms of the storey it is the floor of (the top band, the top storey); the roof, the storey the chosen section sits on.
   const shown = roofOn ? (roofSel ? roofStorey(house, roofSel) : storey) : band == null ? storey : Math.min(band, last);
   const goStorey = (s: number) => { setStorey(s); setBand(null); setRoofOn(false); setSel(NO_SEL); setTool('select'); };
-  const goBand = (b: number) => { setBand(b); setRoofOn(false); setSel(NO_SEL); setTool('select'); };
+  const goBand = (b: number) => { setBand(b); setRoofOn(false); setSel(NO_SEL); setTool('select'); setView('plan'); };
   const goRoof = (id?: string) => {
     const s = house.roofs.find((x) => x.id === id) ?? house.roofs[0];
     if (!roofOn) setStorey(s ? roofStorey(house, s) : last);
-    setRoofOn(true); setBand(null); setSel(s ? { ...NO_SEL, zone: s.id } : NO_SEL); setTool('select');
+    setRoofOn(true); setBand(null); setSel(s ? { ...NO_SEL, zone: s.id } : NO_SEL); setTool('select'); setView('plan');
   };
 
 
-  const hint = drawHint(roofOn ? 'roof' : band != null, tool);
-  const inspectorTitle = roofSel ? 'Roof' : sel.zone ? (house.zones?.find((x) => x.id === sel.zone)?.ufh ? 'Underfloor heating zone' : 'Floor zone') : (sel.group?.length ?? 0) > 1 ? 'Rooms' : sel.walls.length ? 'Walls' : sel.item?.k === 'op' ? 'Window or door' : 'Heat emitter';
+  const hint = drawHint(roofOn ? 'roof' : band != null, tool, view);
+  const inspectorTitle = roofSel ? 'Roof' : sel.zone ? (house.zones?.find((x) => x.id === sel.zone)?.ufh ? 'Underfloor heating zone' : 'Floor zone') : (sel.group?.length ?? 0) > 1 ? 'Rooms' : sel.walls.length ? 'Walls' : sel.item?.k === 'op' ? 'Window or door' : sel.item?.k === 'plant' ? 'Heating plant' : sel.item?.k === 'pipe' ? 'Pipe run' : 'Heat emitter';
 
   return (
     <div className="plan-stage">
-        <DrawCanvas key={`${shown}-${band}-${roofOn}`} house={house} storey={shown} band={band ?? undefined} roof={roofOn} tool={measure ? 'select' : tool} setTool={setTool} sel={sel} setSel={setSel} upd={upd} below={showBelow} sticky={sticky} grid={grid} snapOn={snapOn} onEdit={editSel}
+        <DrawCanvas key={`${shown}-${band}-${roofOn}`} house={house} storey={shown} band={band ?? undefined} roof={roofOn} tool={measure ? 'select' : tool} setTool={setTool} sel={sel} setSel={setSel} upd={upd} below={showBelow} sticky={sticky} grid={grid} snapOn={snapOn} onEdit={editSel} lens={view} opPick={opPick} zoomStart={<GridSelect grid={grid} setGrid={setGrid} />}
           underlay={traceUnderlay(house, trace, storey, imagery)}
           overlay={measure ? (to, _S, from) => (
             <g>
@@ -102,9 +106,7 @@ export function PlanPage({ selected }: { selected?: string }) {
             return lens === 'temp' ? `${fmt(x.T, 1)} °C` : lens === 'cover' ? (!cv ? 'unheated' : cv.has ? `${fmt(cv.cover * 100)}% cover` : 'no emitter')
               : r.heated ? `${fmt(x.totalW)} W` : `unheated ${fmt(x.T, 1)} °C`;
           }} />
-      <DrawMenu band={roofOn ? 'roof' : band == null ? null : band > last ? 'top' : 'floor'} tool={tool} setTool={(t) => { setTool(t); if (t !== 'select') setSel({ ...NO_SEL, room: sel.room }); }} sticky={sticky} setSticky={setSticky} snapOn={snapOn} setSnapOn={setSnapOn} grid={grid} setGrid={setGrid} />
-
-      <div className="float-top">
+      <LensTabs house={house} lens={view} setLens={pickView}>
         <span className="mono small"><b>{fmt(res.peakW / 1000, 2)} kW</b> · {fmt(res.heatedA ? res.peakW / res.heatedA : 0)} W/m² · {fmt(maxX - minX, 1)} × {fmt(maxY - minY, 1)} m</span>
         <label className="small">Colour <select className="draw-grid-sel" style={{ width: 'auto' }} value={lens} aria-label="Colour rooms by" onChange={(e) => setLens(e.target.value as typeof lens)}>
           <option value="loss">heat loss</option><option value="temp">temperature</option><option value="cover">emitter cover</option><option value="none">none</option>
@@ -114,14 +116,17 @@ export function PlanPage({ selected }: { selected?: string }) {
           <NumInput className="thk-input" step={5} value={house.north ?? 0} aria-label="Bearing that up on the plan faces, degrees from north"
             onChange={(e) => upd((h) => { const v = Number(e.target.value) || 0; h.north = ((v % 360) + 360) % 360; })} />°
         </label>
-        <a className="small" href={href('pipes')}>Pipe runs ›</a>
-        <a className="small" href={href('zones')}>Manifolds ›</a>
         {res.checks.length > 0 && (
           <details className="plan-checks">
             <summary>⚠ {res.checks.length} check{res.checks.length === 1 ? '' : 's'}</summary>
             <div>{res.checks.map((c, i) => <p key={i} className={c.level === 'error' ? 'h-err small' : 'warn small'}>{c.level === 'error' ? 'Error: ' : ''}{c.text}</p>)}</div>
           </details>
         )}
+      </LensTabs>
+
+      {/* The tools down the left of the canvas. */}
+      <div className="plan-left">
+      <DrawMenu house={house} opPick={opPick} setOpPick={setOpPick} lens={view} band={roofOn ? 'roof' : band == null ? null : band > last ? 'top' : 'floor'} tool={tool} setTool={(t) => { setTool(t); if (t !== 'select') setSel({ ...NO_SEL, room: sel.room }); }} sticky={sticky} setSticky={setSticky} snapOn={snapOn} setSnapOn={setSnapOn} />
       </div>
 
       {hint && (
@@ -157,8 +162,8 @@ export function PlanPage({ selected }: { selected?: string }) {
             </section>
           )}
           <details className="fp-sec">
-            <summary>Tracing image</summary>
-            <TraceControls house={house} res={res} storey={storey} trace={trace} setTrace={setTrace} imagery={imagery} setImagery={(v) => { setImageryState(v); saveImagery(v); }} measuring={!!measure} onMeasure={(len) => setMeasure({ len, pts: [] })} />
+            <summary>Tracing image and map outline</summary>
+            <TraceControls house={house} res={res} storey={storey} trace={trace} setTrace={setTrace} upd={upd} imagery={imagery} setImagery={(v) => { setImageryState(v); saveImagery(v); }} measuring={!!measure} onMeasure={(len) => setMeasure({ len, pts: [] })} />
           </details>
         </aside>
       )}

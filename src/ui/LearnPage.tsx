@@ -416,9 +416,12 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <ul>
             <li><b>Winter design day:</b> the peak, with the heating schedule and setback, on a cold overcast day.</li>
             <li><b>Typical year:</b> energy by month and day, and hours each room is too cold or too warm. Use smooth monthly weather, or a real year of hourly weather for your station.</li>
-            <li><b>Summer peak day:</b> overheating in bedrooms and lofts, on a clear hot day with no heating.</li>
+            <li><b>Summer peak day:</b> overheating in bedrooms and lofts, on a clear hot day with no heating. As in CIBSE TM59, windows are opened while someone is home, once a room passes 22 °C and it is cooler outside. The air they let through is single-sided stack flow (BS 5925), taking a fifth of each window's area as the open gap, with no help from wind.</li>
             <li><b>Cold snap:</b> five days with the heating off, to see how long rooms hold their heat.</li>
           </ul>
+          <p>
+            Party walls lose heat to the neighbour's set temperature only on the design day. In the other runs next door is taken to be lived in like this house, so no net heat crosses (as SAP treats a filled party wall); the wall still stores heat.
+          </p>
           <p>
             "Too cold" counts hours when the heating is meant to be on and a room is more than 1 K under its setpoint. "Too warm" counts hours above 25 °C, or 26 °C in bedrooms. <Go to="gains">Occupancy &amp; gains</Go> sets the heating times and the heat from people, cooking and appliances. Why heavy walls change these results is in <Go to="learn/mass">Thermal mass</Go>.
           </p>
@@ -552,7 +555,7 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
             Think of a wall as a series of buckets joined by narrow pipes. The pipes are the resistances. The buckets are the thermal mass. Pour water in at one end and the first bucket fills first, then the next, and the flow out the far end starts late and is smoothed out. A wall with big buckets (heavy masonry) responds slowly and gently. A wall with tiny buckets (a lightweight frame with mineral wool) lets changes straight through.
           </p>
           <p>
-            Where the mass sits matters as much as how much there is. Mass <b>on the room side</b> of the insulation can exchange heat with the room, so it evens out room temperature. Mass on the outside of the insulation barely meets the room at all. The tool reports <b>inner thermal mass</b> to show how much sits on the room side of the main insulation layer, within 100 mm.
+            Where the mass sits matters as much as how much there is. Mass <b>on the room side</b> of the insulation can exchange heat with the room, so it evens out room temperature. Mass on the outside of the insulation barely meets the room at all. The tool reports <b>inner thermal mass</b>: how much heat the wall soaks up from the room and gives back over a daily cycle.
           </p>
         </section>
 
@@ -645,7 +648,7 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
               <tr><td>U-value</td><td>Steady-state heat loss per square metre per degree. Lower is better insulated.</td></tr>
               <tr><td>Decrement factor</td><td>Share of the outside heat swing reaching the inner face. Lower damps more.</td></tr>
               <tr><td>Decrement delay</td><td>Hours between the outside peak and the inner heat-flow peak.</td></tr>
-              <tr><td>Inner thermal mass</td><td>Heat storage on the room side of the main insulation, kJ/m²K. Whole-wall mass is shown beneath.</td></tr>
+              <tr><td>Inner thermal mass</td><td>Heat the wall stores and gives back to the room over a day, kJ/m²K. Whole-wall mass is shown beneath.</td></tr>
               <tr><td>Inner face</td><td>The lowest and highest inner surface temperature over the day.</td></tr>
               <tr><td>Net heat flow, 24 h</td><td>Heat gained minus heat lost through the wall over the day. Positive means a net gain to the room.</td></tr>
               <tr><td>Room air, peak delay</td><td>Free-floating mode only: the room's own temperature range, and how far behind the outdoor peak it runs.</td></tr>
@@ -852,7 +855,7 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           </p>
           <h3>Thermal mass figures</h3>
           <p>
-            The tool finds the layer with the highest resistance (normally the insulation) and adds up the heat capacity of the material between it and the room, up to a depth of 100 mm. That is the <em>inner thermal mass</em>. The whole-wall figure simply totals every layer.
+            The <em>inner thermal mass</em> is the areal heat capacity of BS EN ISO 13786: how much heat a square metre takes in and gives back when the room swings over a 24-hour cycle. Each layer's conductivity, density and heat capacity set how far the swing reaches into it, about 100 mm into brick or stone but hardly past insulation. Mass behind insulation drops out, and low-conductivity layers that hold heat, such as wood fibre, count in part, so the tool needs no rule about which layer is the insulation. The room-side surface film is left out, because the house runs model that link separately. The whole-wall figure simply totals every layer. The house runs add up the same figure over every wall, floor and ceiling of a room to get its thermal mass, treating the room as empty. A wall or floor between two rooms counts half to each.
           </p>
           <h3>Colours and arrows</h3>
           <p>

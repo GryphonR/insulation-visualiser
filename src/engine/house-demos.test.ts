@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MAT } from './data';
 import { sharedSpan } from './geom';
 import { calcHouse, maxWallGap, onStorey, roomEdges } from './house';
-import { innerDoorAt } from './house-draw';
+import { innerDoorAt, partyKeys } from './house-draw';
 import { DEMOS } from './house-demos';
 import { flowNeeded } from './house-heating';
 import { runMoisture } from './moisture';
@@ -62,5 +62,15 @@ describe('demo projects', () => {
       for (const c of r.checks) expect(c.level, c.text).toBe('ok');
       if (r.absorbed) expect(r.absorbed.pct).toBeLessThan(r.absorbed.crit);
     }
+  });
+});
+
+describe('partyKeys', () => {
+  it('finds the outside walls on the same line on every storey', () => {
+    const h = DEMOS.find((d) => d.id === 'victorian')!.make().scenarios[0].house;
+    const front = h.rooms.find((r) => r.id === 'front')!;
+    const keys = partyKeys(h, 'front', roomEdges(front).findIndex((e) => e.id === 'W'));
+    // The wall directly above; not the back room further along the same line, nor the east side.
+    expect(keys.sort()).toEqual(['w:bed1:W:1', 'w:front:W:0']);
   });
 });
