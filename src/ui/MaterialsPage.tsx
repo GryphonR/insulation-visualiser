@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { MATERIALS, MATERIAL_CATEGORIES, MAT, deleteCustomMaterial, saveCustomMaterial } from '../engine/data';
+import { MATERIALS, MATERIAL_CATEGORIES, MATERIAL_GROUPS, MAT, blend, deleteCustomMaterial, mixable, saveCustomMaterial } from '../engine/data';
 import type { Material } from '../engine/data';
 import { Card, Num, fmt, uid } from './hform';
 import { useProject } from './project';
@@ -46,6 +46,51 @@ function MaterialModal({ onCancel, onSave }: { onCancel: () => void; onSave: (m:
   );
 }
 
+type Mix = { a: string; b: string; f: number };
+
+/** The two materials of a mixed layer and the share of the second. */
+function MixFields({ mix, onChange }: { mix: Mix; onChange: (m: Mix) => void }) {
+  const pick = (label: string, v: string, set: (id: string) => void) => (
+    <label className="hf"><span className="eyebrow">{label}</span>
+      <select className="select" value={v} onChange={(e) => set(e.target.value)}>
+        {MATERIAL_GROUPS.map((g) => <optgroup key={g.cat} label={g.label}>{g.items.filter((m) => mixable(m) && !m.mix).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</optgroup>)}
+      </select></label>
+  );
+  return (
+    <div className="hf-row">
+      {pick('Main material', mix.a, (a) => onChange({ ...mix, a }))}
+      {pick('Mixed with', mix.b, (b) => onChange({ ...mix, b }))}
+      <Num label={`Share of ${MAT[mix.b]?.name ?? 'second'}`} unit="%" step={1} min={1} value={Math.round(mix.f * 1000) / 10} onChange={(v) => v > 0 && v < 100 && onChange({ ...mix, f: v / 100 })} />
+    </div>
+  );
+}
+
+/** A layer of two materials side by side, e.g. bricks and mortar or studs in insulation, blended into one material. */
+function MixModal({ onCancel, onSave }: { onCancel: () => void; onSave: (m: Material) => void }) {
+  const [name, setName] = useState('');
+  const [mix, setMix] = useState<Mix>({ a: 'mw', b: 'm_timber_500_kg_m', f: 0.15 });
+  const A = MAT[mix.a], B = MAT[mix.b];
+  const ok = name.trim() && mixable(A) && mixable(B) && mix.a !== mix.b && mix.f > 0 && mix.f < 1;
+  const save = () => ok && onSave({ id: uid('cm'), name: name.trim(), ...blend(A, B, mix.f), t: A.t, min: A.min, max: Math.max(A.max, A.t), step: A.step });
+  const k = ok ? blend(A, B, mix.f).k : undefined;
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label="New mixed layer">
+        <div className="modal-head"><h2>New mixed layer</h2></div>
+        <div className="modal-body">
+          <label className="hf"><span className="eyebrow">Name</span><input className="h-text" autoFocus maxLength={60} placeholder="e.g. 89 mm studs in PIR" value={name} onChange={(e) => setName(e.target.value)} /></label>
+          <MixFields mix={mix} onChange={setMix} />
+          <p className="small muted">The share is of the wall face: joints for brick or stone, studs, joists or rafters for timber. Conductivity is averaged by area, which slightly overstates heat loss through the layer.{k ? <> Blended λ <b className="mono">{fmt(k, 3)} W/mK</b>.</> : null}</p>
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
+          <button type="button" className="btn-primary" disabled={!ok} onClick={save}>Add mixed layer</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Board 2a: the material library. Built-in values are locked, so this is a reference for the layers in the build-ups. */
 export function MaterialsPage() {
   const { house, project, active, customStackups, projectId } = useProject();
@@ -54,7 +99,7 @@ export function MaterialsPage() {
   const [sel, setSel] = useState('pir');
   const [, bump] = useState(0);
   const save = (m: Material) => { saveCustomMaterial(m); bump((n) => n + 1); };
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState<false | 'material' | 'mix'>(false);
   const copy = (m: Material) => {
     const id = uid('cm');
     save({ ...m, id, name: `${m.name} (custom)` });
@@ -84,7 +129,8 @@ export function MaterialsPage() {
             {Object.entries(MATERIAL_CATEGORIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
           <span className="mono small muted">{rows.length} of {MATERIALS.length}</span>
-          <button type="button" className="btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setCreating(true)}>+ Custom material</button>
+          <button type="button" className="btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setCreating('material')}>+ Custom material</button>
+          <button type="button" className="btn-secondary" onClick={() => setCreating('mix')}>+ Mixed layer</button>
         </div>
         <div className="card" style={{ overflow: 'auto', maxHeight: '70vh' }}>
           <table className="h-table sticky-head">
@@ -110,7 +156,10 @@ export function MaterialsPage() {
             <div className="kpi"><span className="eb">ρ</span><span className="v">{s.rho}</span><span className="small muted">kg/m³</span></div>
             <div className="kpi"><span className="eb">c</span><span className="v">{s.cp}</span><span className="small muted">J/kgK</span></div>
           </div>
-          {custom && (
+          {s.mix && <p className="small">{MAT[s.mix.a]?.name ?? s.mix.a} with {fmt(s.mix.f * 100, 0)}% {MAT[s.mix.b]?.name ?? s.mix.b}, side by side.</p>}
+          {custom && s.mix && <MixFields mix={s.mix} onChange={(x) => mixable(MAT[x.a]) && mixable(MAT[x.b]) && edit(blend(MAT[x.a], MAT[x.b], x.f))} />}
+          {custom && s.mix && <label className="hf"><span className="eyebrow">Name</span><input className="h-text" value={s.name} onChange={(e) => edit({ name: e.target.value })} /></label>}
+          {custom && !s.mix && (
             <div className="hf-row">
               <label className="hf"><span className="eyebrow">Name</span><input className="h-text" value={s.name} onChange={(e) => edit({ name: e.target.value })} /></label>
               {s.R != null
@@ -134,7 +183,8 @@ export function MaterialsPage() {
           {elsewhere.length > 0 && <p className="small muted">Also used in {elsewhere.join(', ')}.{custom && ' Remove it from those before deleting.'}</p>}
         </Card>
       </aside>
-      {creating && <MaterialModal onCancel={() => setCreating(false)} onSave={(m) => { save(m); setSel(m.id); setCreating(false); }} />}
+      {creating === 'mix' && <MixModal onCancel={() => setCreating(false)} onSave={(m) => { save(m); setSel(m.id); setCreating(false); }} />}
+      {creating === 'material' && <MaterialModal onCancel={() => setCreating(false)} onSave={(m) => { save(m); setSel(m.id); setCreating(false); }} />}
     </div>
   );
 }

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { MAT } from './data';
-import { sharedSpan } from './geom';
-import { calcHouse, maxWallGap, onStorey, roomEdges } from './house';
-import { innerDoorAt, partyKeys } from './house-draw';
+import { overlapAreaPoly, sharedSpan } from './geom';
+import { calcHouse, maxWallGap, onStorey, roomEdges, roomPoly } from './house';
+import { OPEN_STAIRWELL, innerDoorAt, partyKeys } from './house-draw';
 import { DEMOS } from './house-demos';
 import { flowNeeded } from './house-heating';
 import { sizePipes } from './house-pipes';
@@ -29,9 +29,11 @@ describe('demo projects', () => {
 
   it.each(DEMOS.map((d) => [d.label, d] as const))('%s: every room can be reached from an outside door, and each inside door sits on a shared wall', (_, d) => {
     const h = d.make().scenarios[0].house, byId = new Map(h.rooms.map((r) => [r.id, r]));
-    // Stairs and landings open into each other without a door.
+    // Stairs and landings open into each other without a door, on one storey or through a stairwell.
     const open = (a: string, b: string) => {
       const r = byId.get(a)!, o = byId.get(b)!;
+      if ((h.zones ?? []).some((z) => z.buildup === OPEN_STAIRWELL && [r, o].every((x) => onStorey(x, z.band - 1) || onStorey(x, z.band)) && r.storey !== o.storey
+        && [r, o].every((x) => overlapAreaPoly(z.poly, roomPoly(x)) > 0.1))) return true;
       const len = (e: ReturnType<typeof roomEdges>[number], f: typeof e) => { const sp = sharedSpan(e, f, 0.02, maxWallGap(h)); return sp ? sp[1] - sp[0] : 0; };
       return ['hall', 'landing'].includes(r.type) && ['hall', 'landing'].includes(o.type) && h.storeys.some((_, s) => onStorey(r, s) && onStorey(o, s))
         && roomEdges(r).some((e) => roomEdges(o).some((f) => len(e, f) > 0.7));

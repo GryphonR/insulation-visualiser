@@ -1,6 +1,7 @@
 import { MAT, PRESETS, canonId } from './data';
 import { sharedSpan } from './geom';
 import { calcHouse, maxWallGap, roomEdges, roomFaces } from './house';
+import { splitStoreys } from './house-draw';
 import type { Buildup, Device, Dormer, House, Opening, Room, RoofSection, Side } from './house';
 
 /** A pitched roof over the top storey that follows the rooms: gable, ridge along the longer side, on the wall plate. */
@@ -81,6 +82,7 @@ export function defaultHouse(): House {
   // Through lounge: the living room opens to the hall and to the dining room.
   addInnerDoors(h, [['hall', 'living'], ['hall', 'dining'], ['hall', 'kitchen'], ['hall', 'wc'], ['hall', 'utility'], ['living', 'dining'],
     ['hall', 'bed1'], ['hall', 'bed2'], ['hall', 'bed3'], ['hall', 'bath']]);
+  splitStoreys(h, 'hall', 'landing');
   return h;
 }
 
@@ -146,7 +148,7 @@ function baseHouse(): House {
         E('R1', 'living', 'z1', 'K2', 1400), E('R2', 'kitchen', 'z1', 'K2', 800), E('R3', 'hall', 'z1', 'K1', 600),
         { ...E('R4', 'wc', 'z1', 'K1', 500), kind: 'towel', rated: 860 }, E('R5', 'dining', 'z1', 'K2', 1200),
         E('R6', 'bed1', 'z2', 'K2', 1200), E('R7', 'bed2', 'z2', 'K2', 1200), E('R8', 'bed3', 'z2', 'K2', 800),
-        { ...E('R9', 'bath', 'z3', 'K1', 800), kind: 'towel', rated: 1440 },
+        { ...E('R9', 'bath', 'z3', 'K1', 800), kind: 'towel', rated: 1440 }, E('R10', 'landing', 'z1', 'K1', 400),
       ],
     },
   };
@@ -162,7 +164,7 @@ export function upgradeHouse(p: House): House {
   const d = defaultHouse();
   const h: House = {
     ...d, ...p, vent: { ...d.vent, ...p.vent }, loft: { ...d.loft, ...p.loft }, climate: { ...d.climate, ...p.climate }, hp: { ...d.hp, ...p.hp, co2: { ...d.hp.co2, ...p.hp?.co2 } },
-    gains: { ...d.gains, ...p.gains }, suspended: { ...d.suspended, ...p.suspended }, defaults: { ...d.defaults, ...p.defaults }, heating: p.heating,
+    gains: { ...d.gains, ...p.gains }, suspended: { ...d.suspended, ...p.suspended }, defaults: { ...d.defaults, ...p.defaults }, heating: p.heating, zones: p.zones ?? [],
   };
   h.buildups = h.buildups.map((b) => ({ ...b, layers: (b.layers ?? []).filter(([m, t]) => !!MAT[m] && Number.isFinite(t) && t > 0).map(([m, t]) => [canonId(m), t] as [string, number]) }));
   for (const id of Object.values(h.defaults)) {

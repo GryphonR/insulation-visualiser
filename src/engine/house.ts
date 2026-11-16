@@ -1116,6 +1116,14 @@ export function calcHouse(h: House): HouseResult {
   for (let i = 0; i < zs.length; i++) for (let j = i + 1; j < zs.length; j++) {
     if (zs[i].band === zs[j].band && overlapAreaPoly(zs[i].poly, zs[j].poly) > 0.01) checks.push({ level: 'warn', text: `Floor zones ${zs[i].name} and ${zs[j].name} overlap; the first one drawn gets the shared area.` });
   }
+  // An open stairwell (a floor build-up with no layers) only joins two rooms: rooms must cover it on the storeys below and above.
+  for (const z of zs) {
+    const b = h.buildups.find((x) => x.id === z.buildup);
+    if (b?.kind !== 'floor' || b.layers.length || z.poly.length < 3) continue;
+    const A = polyArea(z.poly), cover = (s: number) => h.rooms.filter((r) => onStorey(r, s)).reduce((t, r) => t + overlapAreaPoly(z.poly, roomPoly(r)), 0);
+    if (z.band < 1 || z.band >= h.storeys.length || cover(z.band - 1) < A - 0.05 || cover(z.band) < A - 0.05)
+      checks.push({ level: 'warn', text: `${z.name} is open (${b.name}) but has no room over or under part of it; draw it inside the rooms it joins.` });
+  }
   for (const r of h.rooms) {
     if (roomArea(r) <= 0.01) checks.push({ level: 'error', text: `${r.name} has no floor area.` });
     if (r.poly && selfIntersects(r.poly)) checks.push({ level: 'error', text: `${r.name}'s outline crosses itself.` });

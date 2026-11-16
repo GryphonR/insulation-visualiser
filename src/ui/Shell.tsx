@@ -7,13 +7,13 @@ import { fmt } from './hform';
 export const SECTIONS = [
   { n: 1, id: 'buildups', label: 'Build-ups', to: 'buildups', routes: ['buildups', 'library', 'materials', 'compare-buildups', 'wall'] },
   { n: 2, id: 'model', label: 'Model', to: 'plan', routes: ['plan', 'view3d', 'room', 'site', 'storeys', 'vent', 'floor', 'openings', 'spaces', 'checks'] },
-  { n: 3, id: 'heating', label: 'Heating', to: 'heating', routes: ['heating', 'emitters', 'zones', 'pipes'] },
+  { n: 3, id: 'heating', label: 'Heating', to: 'heating', routes: ['heating', 'emitters', 'zones', 'pipes', 'schematic'] },
   { n: 4, id: 'results', label: 'Results', to: 'results', routes: ['results', 'energy', 'bills', 'moisture', 'report', 'gains'] },
 ] as const;
 
 const SUBNAV: Record<string, Array<[string, string]>> = {
   model: [['plan', 'Floor plan'], ['view3d', '3D view'], ['site', 'Site & climate'], ['storeys', 'Storeys & loft'], ['vent', 'Ventilation'], ['floor', 'Floors'], ['openings', 'Windows & doors'], ['spaces', 'Unheated spaces'], ['checks', 'Checks & history']],
-  heating: [['heating', 'System & flow'], ['emitters', 'Emitters'], ['zones', 'Zones & UFH'], ['pipes', 'Pipework']],
+  heating: [['heating', 'System & flow'], ['emitters', 'Emitters'], ['zones', 'Zones & UFH'], ['pipes', 'Pipework'], ['schematic', 'System diagram']],
   buildups: [['buildups', 'Project'], ['materials', 'Materials'], ['library', 'Build-ups'], ['wall', 'Simulate']],
   results: [['results', 'Design day'], ['year', 'Test the house'], ['gains', 'Occupancy & heating times'], ['energy', 'Energy & cost'], ['bills', 'Check against bills'], ['moisture', 'Moisture & mould'], ['report', 'Report & export']],
   scenarios: [['scenarios', 'Scenarios'], ['compare', 'Compare A vs B']],
@@ -46,7 +46,7 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
   const issues = heatingIssues(res);
   const setActive = (id: string) => setProject((p) => ({ ...p, active: id }));
   return (
-    <div className={route === 'plan' ? 'shell fill' : 'shell'}>
+    <div className={route === 'plan' ? 'shell fill' : route === 'schematic' ? 'shell wide' : 'shell'}>
       <header className="top">
         <a className="brand" href={href('buildups')}>
           <span className="logo" aria-hidden="true"><span /><span /><span /></span>Insuliser

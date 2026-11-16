@@ -11,6 +11,7 @@ import type { TraceSettings } from '../engine/house';
 import type { Imagery } from './HouseTrace';
 import { fmt, mix, NumInput } from './hform';
 import { useProject } from './project';
+import { autoPipes, combineRuns, pipeRest, unpiped } from '../engine/house-pipes';
 import { href } from './route';
 
 /** Board 1: the floor plan as a drawing canvas, layer by layer, with a lens and a summary of the selected room. */
@@ -32,6 +33,8 @@ export function PlanPage({ selected }: { selected?: string }) {
   const [opPick, setOpPick] = useState<OpPick>({});
   const pickView = (v: Lens) => { setView(v); setSel(NO_SEL); setTool('select'); if (v === 'pipes' && (band != null || roofOn)) { setBand(null); setRoofOn(false); } };
   const [showBelow, setShowBelow] = useState(true);
+  // Asked in the bar, not with confirm(): embedded browsers can drop native dialogs silently.
+  const [ask, setAsk] = useState<'auto' | 'unroute' | null>(null);
   const [sticky, setSticky] = useState(false);
   const [snapOn, setSnapOn] = useState(true);
   const [panelOpen, setPanelOpen] = useState(() => window.innerWidth >= 1100);
@@ -116,6 +119,28 @@ export function PlanPage({ selected }: { selected?: string }) {
           <NumInput className="thk-input" step={5} value={house.north ?? 0} aria-label="Bearing that up on the plan faces, degrees from north"
             onChange={(e) => upd((h) => { const v = Number(e.target.value) || 0; h.north = ((v % 360) + 360) % 360; })} />°
         </label>
+        {view === 'pipes' && house.heating.source && (() => {
+          const n = unpiped(house).length, runs = house.heating.pipes?.length ?? 0;
+          return <>
+            {n > 0 && runs > 0 && <button type="button" className="btn-secondary small" title="A plain square run from the heat source, or the floor's riser, to each heater with none. Runs already drawn stay."
+              onClick={() => upd((h) => { pipeRest(h); })}>Pipe the {n} unpiped</button>}
+            {ask ? <span className="small" role="alert">
+              {ask === 'auto' ? `Replace all ${runs} pipe run${runs === 1 ? '' : 's'} with an automatic layout? Runs you drew or moved are lost.` : `Delete all ${runs} pipe run${runs === 1 ? '' : 's'}? The boiler, cylinder, risers and heaters stay.`}{' '}
+              <button type="button" className="btn-secondary small" autoFocus onClick={() => {
+                if (ask === 'auto') upd((h) => { h.heating.pipes = autoPipes(h); combineRuns(h, res); });
+                else { upd((h) => { h.heating.pipes = []; }); setSel(NO_SEL); }
+                setAsk(null);
+              }}>{ask === 'auto' ? 'Yes, replace' : 'Yes, delete'}</button>{' '}
+              <button type="button" className="btn-secondary small" onClick={() => setAsk(null)}>Cancel</button>
+              {' '}(Ctrl+Z undoes)
+            </span> : <>
+              <button type="button" className="btn-secondary small" title="Lay every run from the plan: from the heat source, up the riser that makes the runs shortest, to every heater, with runs that leave together sharing a pipe."
+                onClick={() => { if (runs) setAsk('auto'); else upd((h) => { h.heating.pipes = autoPipes(h); combineRuns(h, res); }); }}>Auto route</button>
+              {runs > 0 && <button type="button" className="btn-secondary small" title="Take out every pipe run, to draw them yourself."
+                onClick={() => setAsk('unroute')}>Unroute all</button>}
+            </>}
+          </>;
+        })()}
         {res.checks.length > 0 && (
           <details className="plan-checks">
             <summary>⚠ {res.checks.length} check{res.checks.length === 1 ? '' : 's'}</summary>

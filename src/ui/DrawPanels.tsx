@@ -4,7 +4,7 @@ import { CIBSE_ACH, SHADING, defaultTemp, onStorey, roomEdges, roomHeight } from
 import type { Buildup, BuildupKind, House, HouseResult, Room, RoomType } from '../engine/house';
 import { RAD_LABEL, UFH_PIPES, UFH_SPACINGS, loopLength, loopMax } from '../engine/house-heating';
 import type { RadType } from '../engine/house-heating';
-import { OPEN_DOORWAY, addBasement, addStoreyAbove, bandName, canAddBasement, canRemoveBasement, canRemoveTop, copyRooms, deleteRoom, flipRooms, innerDoorAt, isOutside, narrowAtWall, openingCentre, partyKeys, pieceAlign, pieceGap, pieceKeys, pieceThickness, removeBasement, setPieceAlign, removeTop, rotateRooms, setWallLength, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
+import { OPEN_DOORWAY, addBasement, addStoreyAbove, bandName, canAddBasement, canRemoveBasement, canRemoveTop, copyRooms, deleteRoom, flipRooms, innerDoorAt, isOutside, narrowAtWall, openingCentre, partyKeys, pieceAlign, pieceGap, pieceKeys, pieceThickness, removeBasement, setPieceAlign, removeTop, rotateRooms, setWallLength, splitStoreys, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
 import { polyArea } from '../engine/geom';
 import { Num, fmt, uid, NumInput } from './hform';
 import { NO_SEL, plantOf, removePlant } from './DrawCanvas';
@@ -25,6 +25,7 @@ const GROUPS: Array<{ id: string; label: string; tools: ToolDef[]; list?: 'glazi
   { id: 'source', label: 'Boiler / heat pump', tools: [['source', 'Boiler / heat pump', '♨']] },
   { id: 'cylinder', label: 'Hot water cylinder', tools: [['cylinder', 'Hot water cylinder', '◍']] },
   { id: 'riser', label: 'Pipe riser', tools: [['riser', 'Pipe riser', '↕']] },
+  { id: 'pipe', label: 'Draw a pipe run', tools: [['pipe', 'Draw a pipe run', '⌐']] },
 ];
 const HINT: Record<Tool, string> = {
   select: 'Drag a wall or a corner to reshape; drag a room to move it and it snaps flush to its neighbours. Shift-drag on empty canvas boxes several rooms; Shift-click a room adds it; Shift-click walls selects several. Arrow keys nudge. Double-click a wall to add a corner, a corner to remove it, a room to open it. Alt stops neighbours following; hold Shift while drawing for free (no snapping). Double-click a tool to keep it.',
@@ -39,6 +40,7 @@ const HINT: Record<Tool, string> = {
   source: 'Click where the boiler or heat pump goes (on this floor). There is one: clicking again moves it. Pipes are laid from here to every radiator, along the walls.',
   cylinder: 'Click where the hot water cylinder goes, if there is one. Clicking again moves it.',
   riser: 'Click where pipes pass up or down through the floors, such as a cupboard or boxing in a corner. Pipes to other floors go up whichever riser makes the runs shortest; with no riser they go straight up from the boiler.',
+  pipe: 'Click a green ring (the boiler or heat pump, a riser, a radiator, a UFH manifold or the cylinder) or an existing run to start, click the corners, then click what it feeds to finish. Stretches run square to the grid or to a nearby wall, even one at an angle, and stop 10 cm short of a wall across their way, so the next one runs along it. Hold Shift (or turn snapping off) to draw at any angle. Enter leaves the end open, to tee off later; Backspace undoes a corner. A heater that already had a run gets the new one instead.',
   ufh: "Drag out a rectangle, or click corners for any shape, to draw an underfloor heating zone. Every heated room it covers gets UFH for its part of the zone; set each room's covering and pipe spacing under Emitters. Drag the zone by its tag.",
 };
 
@@ -56,11 +58,11 @@ const HINT_ROOF: Partial<Record<Tool, string>> = {
   box: 'Drag out a rectangular roof at its eaves, or click one corner then the opposite one.',
 };
 export const drawHint = (band: boolean | 'roof', tool: Tool, lens: Lens = 'plan') => (lens === 'pipes' && tool === 'select' ? PIPE_SELECT_HINT : band === 'roof' ? HINT_ROOF[tool] ?? HINT[tool] : band ? HINT_BAND[tool] ?? HINT[tool] : HINT[tool]);
-const PIPE_SELECT_HINT = 'Click an emitter, an underfloor zone tag or a pipe run to edit it; drag an emitter to move it. A pipe run shows what it serves and its size. Drag a stretch sideways to move it; double-click to add a bend; drop it on another run to share one pipe. Drag the boiler, cylinder or a riser to move it; Delete removes it.';
+const PIPE_SELECT_HINT = 'Click an emitter, an underfloor zone tag or a pipe run to edit it; drag an emitter to move it. A pipe run shows what it serves and its size. Drag a stretch sideways to move it; double-click to add a bend; drop it on another run to share one pipe; right-click it for more. Teal dots are where each heater takes its pipes; a red dashed ring has no run yet, and a small square is the open end of a run. To add a run, or put back one you deleted, use Draw a pipe run (⌐), or Pipe the unpiped at the top. Drag the boiler, cylinder or a riser to move it. Delete removes whatever is selected.';
 
 /** The drawing menu: a slim column of tool icons (names on hover) that floats over the canvas; groups open to the right. */
 /** The heating and cooling lens's tools; the rest are the floor plan's. UFH zones are also drawn in a floor layer, which is plan only. */
-const PIPE_TOOLS: Tool[] = ['select', 'radiator', 'ufh', 'source', 'cylinder', 'riser'];
+const PIPE_TOOLS: Tool[] = ['select', 'radiator', 'ufh', 'source', 'cylinder', 'riser', 'pipe'];
 export function DrawMenu({ house, band, tool, setTool, sticky, setSticky, snapOn, setSnapOn, lens = 'plan', opPick, setOpPick }: {
   house: House;
   /** On a floor or ceiling layer: only zones and (on floors) heated-floor loops can be drawn. */
@@ -365,10 +367,9 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
           {sel.room && <button type="button" className="btn-secondary" onClick={() => pick(every(false, sel.room))}>This room's walls</button>}
         </div>
         <label className="hf"><span className="eyebrow">Wall build-up</span>
+          {/* Only the selected walls: the house's default wall (which every wall without its own pick follows) is set under Build-ups. */}
           <BuildupSelect label="Wall build-up" value={common(ids)} options={ofKind(house, 'wall')} onPick={(id) => upd((h) => {
             info.forEach((i) => i.keys.forEach((k) => { h.faceBuildup[k] = id; }));
-            // The last pick becomes what the next wall drawn starts with.
-            h.defaults[info.some((i) => i.outside) ? 'extWall' : 'intWall'] = id;
           })} />
         </label>
         {Us.length > 0 && <p className="small">U-value {Us.length && Math.min(...Us) === Math.max(...Us) ? fmt(Us[0], 2) : `${fmt(Math.min(...Us), 2)}–${fmt(Math.max(...Us), 2)}`} W/m²K</p>}
@@ -571,6 +572,16 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
   return null;
 }
 
+/** Turns a room through several storeys into a room on each, joined by a stairwell zone in the floor between. */
+export function SplitStoreys({ roomId, upd }: { roomId: string; upd: (fn: (h: House) => void) => void }) {
+  return (
+    <div className="row-between">
+      <span className="small muted">Different shape upstairs? Make it a room on each floor, joined by an open stairwell.</span>
+      <button type="button" className="btn-secondary" onClick={() => upd((h) => { splitStoreys(h, roomId, uid('r')); })}>Split across floors</button>
+    </div>
+  );
+}
+
 /** Name, use and heating of the selected room, with delete. */
 export function RoomFields({ house, roomId, upd, onDeleted }: { house: House; roomId: string; upd: (fn: (h: House) => void) => void; onDeleted: () => void }) {
   const r = house.rooms.find((x) => x.id === roomId);
@@ -600,6 +611,7 @@ export function RoomFields({ house, roomId, upd, onDeleted }: { house: House; ro
         <label className="small"><input type="checkbox" checked={r.heated} onChange={(e) => set((x) => { x.heated = e.target.checked; })} /> Heated</label>
         <button type="button" className="btn-link" onClick={() => { upd((h) => deleteRoom(h, roomId)); onDeleted(); }}>Delete room</button>
       </div>
+      {r.span > 1 && <SplitStoreys roomId={roomId} upd={upd} />}
     </>
   );
 }

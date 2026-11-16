@@ -173,6 +173,7 @@ svg.draw:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px;
 .draw-zoom { position: absolute; right: 10px; bottom: 10px; z-index: 2; display: flex; gap: 4px; }
 .draw-zoom .btn-secondary { min-height: 32px; padding: 0 10px; background: var(--card); }
 .draw-note { position: absolute; left: 62px; bottom: 56px; max-width: 50%; padding: 6px 10px; background: #fdf3ea; border: 1px solid #c2410c; font-size: 13px; }
+.draw-note-acts { display: flex; gap: 12px; margin-top: 4px; }
 /* Wall menu: a half circle of round buttons around the right-click point. */
 .radial-back { position: absolute; inset: 0; z-index: 6; }
 .radial { position: absolute; width: 0; height: 0; }

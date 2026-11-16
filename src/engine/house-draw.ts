@@ -451,6 +451,54 @@ export function splitRoom(h: House, id: string, a: Pt, b: Pt, newId: string): bo
   return true;
 }
 
+/** An opening in a floor for the stairs: the air in the two rooms mixes through it, as through an open doorway. */
+export const OPEN_STAIRWELL = 'open-stairwell';
+/**
+ * Make sure the house has the open-stairwell build-up (edits h in place). shortcut: one U for the buoyant exchange through the
+ * stairwell, the doorway's 60 W/m²K over its plan area; in fact it is stronger when the lower room is the warmer one.
+ */
+export function ensureOpenStairwell(h: House): string {
+  if (!h.buildups.some((b) => b.id === OPEN_STAIRWELL)) h.buildups.push({ id: OPEN_STAIRWELL, name: 'Open stairwell (no floor)', kind: 'floor', layers: [], u: 60 });
+  return OPEN_STAIRWELL;
+}
+
+/**
+ * A room through two or more storeys becomes one room on its lowest storey and a new room `newId` on the storeys above, with the
+ * same outline, joined by an open-stairwell zone over the whole of it (reshape it to the stairs). The upper room takes the walls,
+ * roof and inside doors of its storeys; windows, outside doors, emitters and devices stay below. Returns the zone's id, or null.
+ */
+export function splitStoreys(h: House, id: string, newId: string, zoneId = `z-${newId}`): string | null {
+  const r = h.rooms.find((x) => x.id === id);
+  if (!r || r.span < 2) return null;
+  const up = r.storey + 1, landing = /\s*&\s*landing/i.test(r.name);
+  const upper: Room = { ...structuredClone(r), id: newId, storey: up, span: r.span - 1, type: landing ? 'landing' : r.type, name: landing ? 'Landing' : `${r.name} (upstairs)` };
+  if (landing) r.name = r.name.replace(/\s*&\s*landing/i, '');
+  r.span = 1;
+  delete r.ceiling; delete r.rooflight;
+  h.rooms.push(upper);
+  const isUp = (oid: string) => { const o = h.rooms.find((x) => x.id === oid); return !!o && !onStorey(o, r.storey); };
+  const swap = (pair: string) => pairKey(...(pair.split('|').map((q) => (q === id ? newId : q)) as [string, string]));
+  for (const m of [h.faceBuildup, h.faceBoundary, h.wallAlign] as Array<Record<string, string>>) {
+    for (const [key, v] of Object.entries(m)) {
+      const w = key.match(/^w:([^:]+):([^:]+):(\d+)$/), iw = key.match(/^iw:([^:]+):(\d+)$/), f = key.match(/^f:(.+)$/), top = key.match(/^(ev|lc|fr|rl|sl):([^:]+)(.*)$/);
+      let to: string | null = null;
+      if (w && w[1] === id && +w[3] >= up) to = `w:${newId}:${w[2]}:${w[3]}`;
+      else if (iw && iw[1].split('|').includes(id) && +iw[2] >= up) to = `iw:${swap(iw[1])}:${iw[2]}`;
+      else if (f && f[1].split('|').includes(id) && isUp(f[1].split('|').find((q) => q !== id)!)) to = `f:${swap(f[1])}`;
+      else if (top && top[2] === id) to = `${top[1]}:${newId}${top[3]}`;
+      if (to) { delete m[key]; m[to] = v; }
+    }
+  }
+  // An inside door to a room the lower storey doesn't reach now leads from (or to) the upper room.
+  h.openings.forEach((o) => {
+    if (o.to === id && isUp(o.room)) o.to = newId;
+    else if (o.room === id && o.to && isUp(o.to)) o.room = newId;
+  });
+  ensureOpenStairwell(h);
+  (h.zones ??= []).push({ id: zoneId, band: up, name: 'Stairwell', poly: roomPoly(r).map(([x, y]) => [+x.toFixed(3), +y.toFixed(3)] as Pt), buildup: OPEN_STAIRWELL });
+  return zoneId;
+}
+
 /** Copies of rooms (with their windows and doors, and optionally emitters) moved by `d`, onto `storey` if given. Returns the new room ids. */
 export function copyRooms(h: House, ids: string[], d: Pt, storey: number | undefined, withEmitters: boolean, mk: (prefix: string) => string): string[] {
   const map = new Map<string, string>();

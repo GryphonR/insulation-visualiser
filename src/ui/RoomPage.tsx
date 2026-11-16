@@ -13,6 +13,7 @@ import { Card, Num, Why, fmt, mix, uid, NumInput } from './hform';
 import { WHY } from './assumptions';
 import { useProject } from './project';
 import { Crumbs } from './Shell';
+import { SplitStoreys } from './DrawPanels';
 import { href } from './route';
 
 const ROOM_TYPES = Object.keys(ROOM_TEMPS) as RoomType[];
@@ -308,6 +309,7 @@ export function RoomPage({ id, initialTab }: { id: string; initialTab?: string }
                   </select>
                 </label>
               </div>
+              {room.span > 1 && <SplitStoreys roomId={room.id} upd={upd} />}
 
               <div className="outline-ed">
                 <div className="row-between">

@@ -51,7 +51,7 @@ export function newHouse(inp: NewHouseInput): House {
   ];
   h.defaults = { ...h.defaults, extWall: 'wall', groundFloor: 'floor', loftCeiling: 'loftc' };
 
-  h.rooms = []; h.openings = []; h.faceBoundary = {}; h.faceBuildup = {}; h.wallAlign = {};
+  h.rooms = []; h.openings = []; h.faceBoundary = {}; h.faceBuildup = {}; h.wallAlign = {}; h.zones = [];
   h.vent.source = 'est';
   h.vent.factors = [
     { id: 'base', label: `Age-band default, ${a.label}`, dq: a.q50, on: true },

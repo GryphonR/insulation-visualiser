@@ -14,6 +14,7 @@ import { HouseRuns } from './ui/HouseRuns';
 import { ChecksPage, FloorPage, GainsPage, OpeningsPage, SpacesPage } from './ui/HouseMore';
 import { HouseStart } from './ui/HouseStart';
 import { CompareAB, ScenariosPage } from './ui/HouseWorkspace';
+import { HouseSchematic } from './ui/HouseSchematic';
 import { LearnPage } from './ui/LearnPage';
 import { LibraryPage } from './ui/LibraryPage';
 import { MaterialsPage } from './ui/MaterialsPage';
@@ -85,6 +86,7 @@ function Routes({ firstVisit }: { firstVisit: boolean }) {
     case 'compare-buildups': case 'wall': page = <WallPage ids={parts.slice(1)} />; break;
     case 'heating': case 'emitters': case 'zones': case 'pipes':
       page = <HouseHeating key={`${active.id}/${route}`} house={house} setHouse={setHouse} section={({ heating: 'system', emitters: 'emitters', zones: 'zones', pipes: 'pipes' } as const)[route]} />; break;
+    case 'schematic': page = <HouseSchematic />; break;
     case 'floor': page = <FloorPage />; break;
     case 'openings': page = <OpeningsPage />; break;
     case 'spaces': page = <SpacesPage />; break;

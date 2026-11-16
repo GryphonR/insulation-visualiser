@@ -127,6 +127,9 @@ describe('runMoisture', () => {
     expect(wf.absorbed?.crit).toBe(18);
     const pir = runMoisture({ ...base, dv: 6, layers: L(['m_limestone_hard', 300], ['pir', 100], ['pb', 12.5]) })!;
     expect(pir.absorbed).toBeUndefined();
+    // A mixed layer with timber studs is checked as organic; its blend runs without NaNs.
+    const stud = runMoisture({ ...base, dv: 6, layers: L(['ply', 11], ['x_stud_mw', 140], ['pb', 12.5]) })!;
+    expect(Number.isFinite(stud.absorbed?.pct)).toBe(true);
   });
 
   it('the outer face takes up rain by exposure and by its capillarity', () => {

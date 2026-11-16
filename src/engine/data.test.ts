@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonId, ID_ALIASES, MAT, MATERIAL_CATEGORIES, MATERIAL_GROUPS, MATERIALS, PRESETS } from './data';
+import { blend, canonId, ID_ALIASES, MAT, MATERIAL_CATEGORIES, MATERIAL_GROUPS, MATERIALS, PRESETS } from './data';
 
 describe('material library', () => {
   it('has no duplicate ids', () => {
@@ -60,5 +60,17 @@ describe('retired material ids', () => {
       expect(MAT[old]).toBe(MAT[id]);
       expect(canonId(old)).toBe(id);
     }
+  });
+});
+
+describe('mixed layers', () => {
+  it('blends by area: k and heat capacity weighted, vapour in parallel, timber keeps its rot capacity', () => {
+    const mw = MAT.mw, t = MAT.m_timber_500_kg_m, x = blend(mw, t, 0.15);
+    expect(x.k).toBeCloseTo(0.85 * mw.k! + 0.15 * t.k!, 3);
+    expect(x.rho * x.cp / (0.85 * mw.rho * mw.cp + 0.15 * t.rho * t.cp)).toBeCloseTo(1, 2);
+    expect(x.mu).toBeCloseTo(1 / (0.85 / mw.mu! + 0.15 / t.mu!), 1);
+    expect(x.rho * x.hygro!).toBeCloseTo(0.15 * t.rho * t.hygro!);
+    expect(MAT.x_stud_mw.k).toBeCloseTo(x.k!);
+    expect(MAT.x_soft_brick_lime.mix).toEqual({ a: 'h_soft_brick', b: 'h_lime_putty_mortar', f: 0.17 });
   });
 });

@@ -3,9 +3,10 @@
 import type { House, HouseResult } from './house';
 import { pointInPoly } from './geom';
 import type { Pt } from './geom';
-import { calcHouse, onStorey, roomPoly } from './house';
+import { calcHouse, onStorey, roomEdges, roomPoly } from './house';
 import { emitterPose } from './house-draw';
 import { emitterOut, lpm } from './house-heating';
+import type { Emitter } from './house-heating';
 
 /** Pipe sizes: label → internal diameter, mm. */
 export const PIPE_SIZES: Record<string, number> = {
@@ -128,7 +129,7 @@ interface Feed { hub: Pt; legs: PipeLeg[]; run: number; rise: number; riser?: st
 export interface PipeRoute { feeds: Map<number, Feed>; tails: Array<{ emitter?: string; cylinder?: true; storey: number; leg: PipeLeg; run: number }> }
 
 // Pipes follow the walls and joists: along one axis then the other, turning inside the house where that is possible.
-const ell = (h: House, s: number, a: Pt, b: Pt): Pt[] => {
+export const ell = (h: House, s: number, a: Pt, b: Pt): Pt[] => {
   const c: Pt = [b[0], a[1]], inside = h.rooms.some((r) => onStorey(r, s) && pointInPoly(c, roomPoly(r)));
   return tidy([a, inside ? c : [a[0], b[1]], b]);
 };
@@ -142,7 +143,7 @@ export function routePipes(h: House): PipeRoute | null {
   if (!src) return null;
   const risers = h.heating.risers ?? [];
   const ends = h.heating.emitters.flatMap((e) => {
-    const r = h.rooms.find((x) => x.id === e.room), at = emitterPose(h, e)?.at;
+    const r = h.rooms.find((x) => x.id === e.room), at = emitterPort(h, e) ?? undefined;
     return r && at ? [{ emitter: e.id as string | undefined, storey: r.storey, at }] : [];
   });
   const cyl = h.heating.cylinder;
@@ -162,6 +163,19 @@ export function routePipes(h: House): PipeRoute | null {
     return { emitter: x.emitter, cylinder: x.emitter ? undefined : (true as const), storey: x.storey, leg: { storey: x.storey, pts: ell(h, x.storey, hub, x.at) }, run: runOf(hub, x.at) };
   });
   return { feeds, tails };
+}
+
+/**
+ * Where a heater's pipes connect: a radiator or towel rail at its valve end (whichever end is nearer the heat source),
+ * a UFH loop at its manifold, taken as the middle of the loop.
+ */
+export function emitterPort(h: House, e: Emitter): Pt | null {
+  const ps = emitterPose(h, e);
+  if (!ps || e.kind === 'ufh') return ps?.at ?? null;
+  const half = (e.kind === 'towel' ? 0.5 : e.len / 1000) / 2, a = (ps.ang * Math.PI) / 180, d: Pt = [Math.cos(a) * half, Math.sin(a) * half];
+  const ends: Pt[] = [[ps.at[0] - d[0], ps.at[1] - d[1]], [ps.at[0] + d[0], ps.at[1] + d[1]]].map((q) => [+q[0].toFixed(3), +q[1].toFixed(3)] as Pt);
+  const src = h.heating.source?.at;
+  return src && Math.hypot(ends[1][0] - src[0], ends[1][1] - src[1]) < Math.hypot(ends[0][0] - src[0], ends[0][1] - src[1]) ? ends[1] : ends[0];
 }
 
 const m1 = (v: number) => Math.max(0.5, Math.round(v * 10) / 10);
@@ -214,7 +228,7 @@ function planPipes(h: House, route: PipeRoute): Pipe[] {
 export function endPoint(h: House, id: string): Pt | null {
   if (id === 'source' || id === 'cylinder') return h.heating[id]?.at ?? null;
   if (id.startsWith('tee:')) { const p = h.heating.pipes?.find((x) => x.id === id.slice(4)), pts = p && livePath(h, p); return pts ? pts[pts.length - 1] : null; }
-  if (id.startsWith('e:')) { const e = h.heating.emitters.find((x) => x.id === id.slice(2)); return (e && emitterPose(h, e)?.at) ?? null; }
+  if (id.startsWith('e:')) { const e = h.heating.emitters.find((x) => x.id === id.slice(2)); return (e && emitterPort(h, e)) ?? null; }
   return h.heating.risers?.find((r) => r.id === id)?.at ?? null;
 }
 
@@ -235,9 +249,12 @@ export function livePath(h: House, p: Pipe): Pt[] | null {
   if (!p.leg) return null;
   const orig = p.leg.pts, pts = orig.map((q) => [q[0], q[1]] as Pt);
   const [a, b] = (p.ends ?? ['', '']).map((id) => endPoint(h, id));
-  if (pts.length === 2) {
-    const s0 = a ?? pts[0], s1 = b ?? pts[1];
-    return Math.abs(s0[0] - s1[0]) < 1e-6 || Math.abs(s0[1] - s1[1]) < 1e-6 ? [s0, s1] : ell(h, p.leg.storey, s0, s1);
+  // A run whose ends met when it was laid has a single point.
+  if (pts.length <= 2) {
+    const s0 = a ?? pts[0], s1 = b ?? pts[pts.length - 1];
+    // Laid on the slant (drawn so, to follow a wall off the grid), it stays a straight line.
+    const slant = pts.length === 2 && Math.abs(orig[0][0] - orig[1][0]) > 1e-6 && Math.abs(orig[0][1] - orig[1][1]) > 1e-6;
+    return slant || Math.abs(s0[0] - s1[0]) < 1e-6 || Math.abs(s0[1] - s1[1]) < 1e-6 ? [s0, s1] : ell(h, p.leg.storey, s0, s1);
   }
   const follow = (end: number, nb: number, to: Pt | null) => {
     if (!to) return;
@@ -459,4 +476,172 @@ export function joinRun(h: House, id: string, res?: HouseResult): boolean {
   h.heating.pipes = pipes;
   foldTrunks(h);
   return true;
+}
+
+// --- Drawing runs by hand ------------------------------------------------------------------------
+
+/** Where a drawn run starts or ends: an attachment (see endPoint: 'source', 'cylinder', a riser id, 'e:' + emitter), or a point on an existing run. */
+export type Attach = { id: string } | { run: string; at: Pt };
+/** How far a pipe drawn along a wall sits off it, m (clips, and room for the plaster). */
+export const PIPE_WALL = 0.1;
+
+/** Everything on a storey's plan that a run can be attached to, and where. Risers pass every floor; the source and cylinder are on their own. */
+export function attachments(h: House, storey: number): Array<{ id: string; at: Pt; label: string }> {
+  const hs = h.heating, out: Array<{ id: string; at: Pt; label: string }> = [];
+  const hp = h.hp.source === 'ashp' || h.hp.source === 'gshp';
+  if (hs.source?.storey === storey) out.push({ id: 'source', at: hs.source.at, label: hp ? 'Heat pump' : 'Boiler' });
+  if (hs.cylinder?.storey === storey) out.push({ id: 'cylinder', at: hs.cylinder.at, label: 'Hot water cylinder' });
+  (hs.risers ?? []).forEach((r, i) => out.push({ id: r.id, at: r.at, label: `Riser ${i + 1}` }));
+  for (const e of hs.emitters) {
+    const r = h.rooms.find((x) => x.id === e.room), at = r?.storey === storey ? emitterPort(h, e) ?? undefined : undefined;
+    if (r && at) out.push({ id: `e:${e.id}`, at, label: `${r.name} ${e.kind === 'ufh' ? 'UFH manifold' : e.kind === 'towel' ? 'towel rail' : 'radiator'}` });
+  }
+  return out;
+}
+
+const dot = (a: Pt, b: Pt) => a[0] * b[0] + a[1] * b[1];
+const r3 = (q: Pt): Pt => [+q[0].toFixed(3), +q[1].toFixed(3)];
+
+/**
+ * A run drawn from `last` towards `q`: along whichever is nearest its heading of the grid's axes and the lines along and
+ * square to the walls within 2 m (so it follows a wall off the grid), stopping PIPE_WALL short of a wall across its way
+ * when it comes within `tol`, so the next stretch runs along that wall.
+ */
+export function wallSnap(h: House, storey: number, last: Pt, q: Pt, tol: number): Pt {
+  const v: Pt = [q[0] - last[0], q[1] - last[1]], vl = Math.hypot(v[0], v[1]);
+  if (vl < 1e-9) return q;
+  const walls = h.rooms.filter((r) => onStorey(r, storey)).flatMap((r) => roomEdges(r));
+  const near = (e: (typeof walls)[number]) => {
+    const t = Math.max(0, Math.min(e.len, dot([last[0] - e.a[0], last[1] - e.a[1]], e.d)));
+    return Math.hypot(e.a[0] + e.d[0] * t - last[0], e.a[1] + e.d[1] * t - last[1]) < 2;
+  };
+  let u: Pt = [1, 0], fit = -1;
+  for (const c of [[1, 0], [0, 1], ...walls.filter(near).flatMap((e) => [e.d, e.n])] as Pt[]) {
+    const f = Math.abs(dot(v, c)) / vl;
+    if (f > fit + 1e-6) { fit = f; u = c; }
+  }
+  let t = dot(v, u), best = tol;
+  for (const e of walls) {
+    const un = dot(u, e.n);
+    if (Math.abs(un) < 0.2) continue; // along the run, not across it
+    const side = Math.sign(dot([last[0] - e.a[0], last[1] - e.a[1]], e.n)) || 1;
+    const s = (dot([e.a[0] + side * PIPE_WALL * e.n[0] - last[0], e.a[1] + side * PIPE_WALL * e.n[1] - last[1]], e.n)) / un;
+    const along = dot([last[0] + u[0] * s - e.a[0], last[1] + u[1] * s - e.a[1]], e.d);
+    if (along < -0.05 || along > e.len + 0.05) continue;
+    if (Math.abs(s - dot(v, u)) < best) { best = Math.abs(s - dot(v, u)); t = s; }
+  }
+  return r3([last[0] + u[0] * t, last[1] + u[1] * t]);
+}
+
+/**
+ * The last stretch of a drawn run, from `a` into `b`, with a corner: square to the stretch before it (`prev` → `a`) when
+ * that one runs off the grid, along a wall at an angle, else square to the grid (see ell).
+ */
+export function squareInto(h: House, storey: number, prev: Pt | undefined, a: Pt, b: Pt): Pt[] {
+  const d: Pt = prev ? [a[0] - prev[0], a[1] - prev[1]] : [0, 0], l = Math.hypot(d[0], d[1]);
+  if (l < 1e-9 || Math.abs(d[0]) < 1e-6 || Math.abs(d[1]) < 1e-6) return ell(h, storey, a, b);
+  const u: Pt = [d[0] / l, d[1] / l], w: Pt = [-u[1], u[0]], ab: Pt = [b[0] - a[0], b[1] - a[1]];
+  const c1 = r3([a[0] + u[0] * dot(ab, u), a[1] + u[1] * dot(ab, u)]), c2 = r3([a[0] + w[0] * dot(ab, w), a[1] + w[1] * dot(ab, w)]);
+  const inside = h.rooms.some((r) => onStorey(r, storey) && pointInPoly(c1, roomPoly(r)));
+  return tidy([a, inside ? c1 : c2, b]);
+}
+
+const nextId = (pipes: Pipe[]) => { let n = pipes.length + 1; while (pipes.some((p) => p.id === `P${n}`)) n++; return `P${n}`; };
+
+/** Tee into run `id` at the point nearest `at`: what a new run starts from and comes off. Splits the run when the tee is part way along (edits h in place). */
+function teeAt(h: House, id: string, at: Pt): { start: string; parent: string | null; T: Pt } | null {
+  const pipes = h.heating.pipes ?? [], Y = pipes.find((p) => p.id === id), yp = Y && livePath(h, Y);
+  if (!Y?.leg || !Y.ends || !yp || yp.length < 2) return null;
+  let best = { d: Infinity, j: 0, T: yp[0] };
+  for (let j = 0; j + 1 < yp.length; j++) {
+    const a = yp[j], b = yp[j + 1], dx = b[0] - a[0], dy = b[1] - a[1], t = Math.max(0, Math.min(1, ((at[0] - a[0]) * dx + (at[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+    const T: Pt = [+(a[0] + dx * t).toFixed(3), +(a[1] + dy * t).toFixed(3)], d = Math.hypot(T[0] - at[0], T[1] - at[1]);
+    if (d < best.d) best = { d, j, T };
+  }
+  const { j, T } = best, up = tidy([...yp.slice(0, j + 1), T]), down = tidy([T, ...yp.slice(j + 1)]);
+  if (pathLen(up) < 0.15) return { start: Y.ends[0], parent: Y.parent, T: yp[0] };
+  if (pathLen(down) < 0.15) return { start: `tee:${Y.id}`, parent: Y.id, T: yp[yp.length - 1] };
+  Y.via = viaOf(h, Y);
+  const S: Pipe = { id: nextId(pipes), name: sharedName([Y.name]), parent: Y.parent, size: Y.size, length: m1(pathLen(up)), leg: { storey: Y.leg.storey, pts: up }, ends: [Y.ends[0], ''], via: Y.via };
+  pipes.push(S);
+  Y.parent = S.id; Y.ends = [`tee:${S.id}`, Y.ends[1]]; Y.leg = { storey: Y.leg.storey, pts: down }; delete Y.typed;
+  h.heating.pipes = pipes;
+  return { start: `tee:${S.id}`, parent: S.id, T };
+}
+
+/** True for what a run can come from: the source, a riser or another run (not a heater or the cylinder). */
+export const feedsFrom = (a: Attach) => 'run' in a || !(a.id === 'cylinder' || a.id.startsWith('e:'));
+
+/**
+ * A run drawn on storey `storey`'s plan through the corners `mid`, from `a` to `b` (an open end, for teeing off later, if null).
+ * Drawn from a heater back to its feed, it is turned round. On a floor away from the source it comes off that floor's branch
+ * (up the riser, or straight up), made if there is none. A heater or cylinder that already had a run gets this one instead.
+ * The corners are kept as drawn, slants and all; with `square`, the last stretch into the heater gets a corner rather than running on the slant.
+ * Returns the new run's id, or why it cannot be drawn (edits h in place).
+ */
+export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attach | null, square = true): { id: string } | { error: string } {
+  const src = h.heating.source;
+  if (!src) return { error: 'Place the boiler or heat pump first.' };
+  if (b && !feedsFrom(a) && feedsFrom(b)) { [a, b] = [b, a]; mid = [...mid].reverse(); }
+  if (!feedsFrom(a)) return { error: 'A run comes from the boiler or heat pump, a riser or another run: start or finish on one.' };
+  if (b && feedsFrom(b)) return { error: 'Finish on a radiator, UFH manifold or the cylinder, or press Enter to leave the end open for teeing off later.' };
+  if (!b && mid.length < 1) return { error: 'Draw at least one stretch.' };
+  if (!('run' in a) && a.id !== 'source' && storey === src.storey) return { error: 'On the floor with the heat source, start from the heat source itself.' };
+  const B = b as { id: string } | null; // never a run: checked above
+  const pipes = (h.heating.pipes ??= []);
+  // The heater's old run goes, so it is not counted twice.
+  if (B) for (const old of pipes.filter((p) => (B.id === 'cylinder' ? p.ends?.[1] === 'cylinder' : p.emitter === B.id.slice(2)))) removeRun(h, old.id);
+  const all = h.heating.pipes!, root = all.find((p) => p.parent === null && !p.leg)?.id ?? null;
+  let start: string, parent: string | null, P0: Pt;
+  let via: Pipe['via'];
+  if ('run' in a) {
+    // A run in this floor's void or its ceiling void (the floor void of the storey above) can be teed into from this plan.
+    const Y = all.find((p) => p.id === a.run), yv = Y ? voidOf(h, Y) : -1;
+    if (Y && yv !== storey && yv !== storey + 1) return { error: 'That run is not under this floor or in its ceiling.' };
+    if (Y?.leg && Y.leg.storey !== storey) via = yv === storey ? 'floor' : 'ceiling';
+    const t = Y ? teeAt(h, a.run, a.at) : null;
+    if (!t) return { error: 'That run is gone.' };
+    ({ start, parent, T: P0 } = t);
+  } else if (storey === src.storey) {
+    start = 'source'; parent = root; P0 = src.at;
+  } else {
+    // Another floor: off its branch from the source, up this riser (or straight up).
+    const v = rise(h, src.storey, storey), at = endPoint(h, a.id)!, riser = a.id !== 'source';
+    let br = all.find((p) => p.ends?.[0] === 'source' && p.ends[1] === a.id && Math.abs((p.rise ?? -1) - v) < 1e-6);
+    if (!br) {
+      br = { id: nextId(all), name: `To ${h.storeys[storey]?.name.toLowerCase() ?? `storey ${storey}`}${riser ? ' (up the riser)' : ' (through the floor)'}`, parent: root, size: 'Cu 22 mm',
+        length: m1((riser ? runOf(src.at, at) : 0) + v), ends: ['source', a.id], rise: v, ...(riser ? { leg: { storey: src.storey, pts: ell(h, src.storey, src.at, at) } } : {}) };
+      all.push(br);
+    }
+    start = a.id; parent = br.id; P0 = at;
+  }
+  const end = B ? endPoint(h, B.id)! : mid[mid.length - 1];
+  const raw = tidy([P0, ...(B ? mid : mid.slice(0, -1)), end]);
+  const n = raw.length, pts = square && b && n > 1 ? tidy([...raw.slice(0, -1), ...squareInto(h, storey, raw[n - 3], raw[n - 2], raw[n - 1]).slice(1)]) : raw;
+  if (pts.length < 2) return { error: 'Draw at least one stretch.' };
+  const e = B?.id.startsWith('e:') ? h.heating.emitters.find((x) => x.id === B.id.slice(2)) : undefined, room = e && h.rooms.find((r) => r.id === e.room)?.name;
+  const id = nextId(all);
+  all.push({ id, parent, leg: { storey, pts }, ends: [start, B?.id ?? ''], length: m1(pathLen(pts)),
+    name: e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.id}` : B ? 'Hot water cylinder coil' : 'Main',
+    size: e ? (e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : storey === src.storey || storey === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)') : 'Cu 22 mm',
+    ...(e ? { emitter: e.id } : {}), ...(via ? { via } : {}) });
+  return { id };
+}
+
+/** Heaters, and the cylinder, with no run to them. */
+export function unpiped(h: House): string[] {
+  const ps = h.heating.pipes ?? [], has = new Set(ps.map((p) => p.emitter));
+  return [...h.heating.emitters.filter((e) => !has.has(e.id)).map((e) => `e:${e.id}`), ...(h.heating.cylinder && !ps.some((p) => p.ends?.[1] === 'cylinder') ? ['cylinder'] : [])];
+}
+
+/** A plain square run from the source, or the floor's riser, to each heater and the cylinder that has none; the runs already drawn stay. Returns how many were added (edits h in place). */
+export function pipeRest(h: House): number {
+  const route = routePipes(h), todo = new Set(unpiped(h));
+  if (!route) return 0;
+  let n = 0;
+  for (const t of route.tails) {
+    const id = t.emitter ? `e:${t.emitter}` : 'cylinder';
+    if (todo.has(id) && 'id' in drawRun(h, t.storey, { id: route.feeds.get(t.storey)?.riser ?? 'source' }, [], { id })) n++;
+  }
+  return n;
 }

@@ -2,6 +2,7 @@ import { COMMON_MATERIALS } from './materials-common';
 import { EXTRA_MATERIALS, MATERIAL_CATEGORIES as EXTRA_CATEGORIES } from './materials-extra';
 import { HERITAGE_MATERIALS, HERITAGE_CATEGORIES } from './materials-heritage';
 import { withMu } from './materials-mu';
+import { hex2rgb } from '../lib/util';
 
 export interface Material {
   id: string;
@@ -33,6 +34,8 @@ export interface Material {
   A?: number;
   wf?: number;
   w80?: number;
+  /** A layer of two materials side by side (bricks and mortar, studs in insulation): b takes share f of the face. The other properties are the blend, from blend(). */
+  mix?: { a: string; b: string; f: number };
 }
 
 export const MATERIALS: Material[] = [...COMMON_MATERIALS, ...EXTRA_MATERIALS, ...HERITAGE_MATERIALS].map(withMu);
@@ -48,8 +51,48 @@ export const MAT: Record<string, Material> = Object.fromEntries(MATERIALS.map((m
 // Lookups by a retired id still resolve, so old saves, favourites and library entries keep simulating.
 for (const [old, id] of Object.entries(ID_ALIASES)) MAT[old] = MAT[id];
 
+/**
+ * Properties of a layer where b fills share f of the face and a the rest. Conductivity is area-weighted, the
+ * BS EN ISO 6946 lower bound, which errs towards more heat loss. Vapour runs through both side by side, and
+ * an organic part keeps its rot-check capacity in kg/m². Capillary data is dropped: no honest blend of it.
+ * Only for conductivity materials (no fixed-R air gaps).
+ */
+export function blend(a: Material, b: Material, f: number): Pick<Material, 'k' | 'rho' | 'cp' | 'col' | 'mu' | 'muWet' | 'hygro' | 'mix'> {
+  const w = (x: number, y: number) => (1 - f) * x + f * y;
+  const sig = (v: number) => +v.toPrecision(3);
+  const rho = Math.round(w(a.rho, b.rho));
+  const hy = a.hygro || b.hygro ? w(a.rho * (a.hygro ?? 0), b.rho * (b.hygro ?? 0)) / rho : undefined;
+  const ca = hex2rgb(a.col), cb = hex2rgb(b.col);
+  const col = '#' + ca.map((c, i) => Math.round(w(c, cb[i])).toString(16).padStart(2, '0')).join('');
+  const vap = (x?: number, y?: number) => (x && y ? sig(1 / w(1 / x, 1 / y)) : undefined);
+  return {
+    k: sig(w(a.k as number, b.k as number)), rho, cp: Math.round(w(a.rho * a.cp, b.rho * b.cp) / rho), col,
+    mu: vap(a.mu, b.mu), muWet: vap(a.muWet ?? a.mu, b.muWet ?? b.mu), hygro: hy, mix: { a: a.id, b: b.id, f },
+  };
+}
+
+/** A material whose k can be blended: a conductivity, not a fixed-R gap. */
+export const mixable = (m?: Material): m is Material => !!m && m.R == null && (m.k ?? 0) > 0;
+
+// Built-in mixed layers. Joint share for 215×65 bricks with 10 mm joints: 1 − 215·65/(225·75) ≈ 17%.
+// Rubble joints are a judgement call (25-35%). Studs: BR 443's 15% timber fraction for timber-frame walls;
+// joists 47 mm at 400 mm centres ≈ 12%.
+const MIXES: Array<[string, string, string, string, number, number, number, number]> = [
+  ['x_soft_brick_lime', 'Solid brickwork, soft red brick + lime mortar (17%)', 'h_soft_brick', 'h_lime_putty_mortar', 0.17, 215, 102, 450],
+  ['x_stock_brick_lime', 'Solid brickwork, London stock + lime mortar (17%)', 'h_stock_brick', 'h_lime_putty_mortar', 0.17, 215, 102, 450],
+  ['x_sandstone_rubble', 'Sandstone rubble + lime mortar (30%)', 'h_yorkshire_sandstone', 'h_lime_putty_mortar', 0.3, 500, 200, 1000],
+  ['x_limestone_rubble', 'Limestone rubble + lime mortar (30%)', 'h_cotswold_limestone', 'h_lime_putty_mortar', 0.3, 500, 200, 1000],
+  ['x_stud_mw', 'Timber studs in mineral wool (15% timber)', 'mw', 'm_timber_500_kg_m', 0.15, 140, 50, 300],
+  ['x_joist_mw', 'Joists or rafters in mineral wool (12% timber)', 'mw', 'm_timber_500_kg_m', 0.12, 150, 50, 300],
+];
+for (const [id, name, a, b, f, t, min, max] of MIXES) {
+  const m: Material = { id, name, ...blend(MAT[a], MAT[b], f), t, min, max, step: 5, cat: 'mixed' };
+  MATERIALS.push(m);
+  MAT[id] = m;
+}
+
 /** Category id -> dropdown group label, in display order (the common/curated set first). */
-export const MATERIAL_CATEGORIES: Record<string, string> = { common: 'Common build-up materials', ...HERITAGE_CATEGORIES, ...EXTRA_CATEGORIES };
+export const MATERIAL_CATEGORIES: Record<string, string> = { common: 'Common build-up materials', mixed: 'Mixed layers (two materials side by side)', ...HERITAGE_CATEGORIES, ...EXTRA_CATEGORIES };
 
 export interface MaterialGroup {
   cat: string;
@@ -85,6 +128,9 @@ export const PRESETS: Preset[] = [
   // Pitched warm roofs: concrete tile, ventilated batten gap, then insulation.
   { id: 'warmabove', name: 'Pitched warm roof, PIR over rafters', orient: 'roof', layers: [['m_roof_tile_concrete', 15], ['vgap', 40], ['pir', 120], ['ply', 18], ['pb', 12.5]] },
   { id: 'warmbetween', name: 'Pitched warm roof, between + under rafters', orient: 'roof', layers: [['m_roof_tile_concrete', 15], ['vgap', 40], ['mw', 150], ['pir', 40], ['pb', 12.5]] },
+  // Sized to U ≤ 0.16 by the series sum (no rafter bridging).
+  { id: 'warmbetween_pir', name: 'Pitched warm roof, between + under rafters, all PIR', orient: 'roof', layers: [['m_roof_tile_concrete', 15], ['vgap', 40], ['pir', 100], ['pir', 30], ['pb', 12.5]] },
+  { id: 'warmbetween_wf', name: 'Pitched warm roof, between + under rafters, wood fibre', orient: 'roof', layers: [['m_roof_tile_concrete', 15], ['vgap', 40], ['h_wf_flex', 150], ['wf', 85], ['pb', 12.5]] },
   { id: 'warmfoil', name: 'Pitched warm roof, multifoil + between rafters', orient: 'roof', layers: [['m_roof_tile_concrete', 15], ['vgap', 40], ['tlx', 33], ['mw', 100], ['pb', 12.5]] },
 ];
 

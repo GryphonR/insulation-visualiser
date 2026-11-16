@@ -1,8 +1,9 @@
 // Demo projects for the start screen: a whole house as found, plus an upgrade scenario where it has one.
 // Each starts from the age-band template (newHouse) and adds rooms, windows, party walls and its own build-ups.
-import { calcHouse, roomPoly } from './house';
-import type { Buildup, Device, House, Opening, Room } from './house';
+import { calcHouse, defaultTemp, roomEdges, roomPoly } from './house';
+import type { Buildup, Device, House, Opening, RoofSection, Room } from './house';
 import { CHIMNEY, FAN, addInnerDoors, defaultHouse, mainRoof } from './house-default';
+import { splitStoreys } from './house-draw';
 import { autoEmitters } from './house-heating';
 import type { Plant } from './house-heating';
 import { autoPipes, combineRuns, runLength } from './house-pipes';
@@ -73,11 +74,12 @@ function upgrade(base: House, name: string, flow: number, edit: (h: House) => vo
   return { id: 's1', name, kind: 'plan', parent: 'base', house: h };
 }
 
-/** Rooms, outside openings, then an inside door between each pair in `doors`. */
+/** Rooms, outside openings, then an inside door between each pair in `doors`; a room through two storeys becomes `id` below and `id-up` above. */
 function finish(h: House, rooms: Room[], openings: Array<Omit<Opening, 'id'>>, doors: Array<[string, string]>, w?: number, ht?: number): House {
   h.rooms = rooms;
   h.openings = openings.map((o, i) => ({ ...o, id: `o${i + 1}` }));
   addInnerDoors(h, doors, w, ht);
+  for (const r of rooms.filter((x) => x.span > 1)) splitStoreys(h, r.id, `${r.id}-up`);
   return h;
 }
 
@@ -270,6 +272,7 @@ export function passivhaus(): Project {
   plumb(h);
   return newProject(h);
 }
+
 
 // Oldest first, as listed on the start screen.
 export const DEMOS: Array<{ id: string; label: string; make: () => Project }> = [

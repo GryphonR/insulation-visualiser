@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { calcHouse } from './house';
 import { defaultHouse } from './house-default';
 import { lpm } from './house-heating';
-import { PIPE_SIZES, autoPipes, combineRuns, dragSegment, joinRun, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitSegment } from './house-pipes';
+import { PIPE_SIZES, PIPE_WALL, attachments, drawRun, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, joinRun, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitSegment, squareInto } from './house-pipes';
+
+/** Place a heater so its pipes connect at `p` (its valve end, for a radiator). */
+const put = (h: ReturnType<typeof defaultHouse>, e: ReturnType<typeof defaultHouse>['heating']['emitters'][number], p: [number, number]) => {
+  e.at = p; e.ang = 0;
+  const q = emitterPort(h, e)!;
+  e.at = [2 * p[0] - q[0], 2 * p[1] - q[1]];
+};
 
 describe('pipe sizing', () => {
   it('velocity and pressure drop: a known case (15 mm copper, 3 l/min ≈ 0.34 m/s, ~130 Pa/m)', () => {
@@ -67,6 +74,14 @@ describe('editing pipe routes', () => {
     return h;
   };
 
+  it('removing a run hands the runs off it to the run it came off', () => {
+    const h = laid(), mid = h.heating.pipes!.find((p) => p.parent && h.heating.pipes!.some((c) => c.parent === p.id))!;
+    const kids = h.heating.pipes!.filter((c) => c.parent === mid.id).map((c) => c.id);
+    removeRun(h, mid.id);
+    expect(h.heating.pipes!.some((p) => p.id === mid.id)).toBe(false);
+    for (const id of kids) expect(h.heating.pipes!.find((p) => p.id === id)!.parent).toBe(mid.parent);
+  });
+
   it('sliding a middle stretch moves its corners; an end stretch gains a bend and keeps its end', () => {
     const L: Array<[number, number]> = [[0, 0], [4, 0], [4, 3]];
     expect(dragSegment(L, 1, [1, 7])).toEqual([[0, 0], [5, 0], [5, 3], [4, 3]]);
@@ -86,7 +101,7 @@ describe('editing pipe routes', () => {
     // Moving the radiator drags the run's end with it.
     e.at = [3, 2];
     const pts = livePath(h, run)!;
-    expect(pts[pts.length - 1]).toEqual(e.at);
+    expect(pts[pts.length - 1]).toEqual(emitterPort(h, e));
     // A typed length wins until it is cleared.
     run.typed = true; run.length = 42;
     expect(runLength(h, run)).toBe(42);
@@ -136,7 +151,7 @@ describe('dragging one run onto another', () => {
     const h = defaultHouse();
     h.heating.source = { at: [0, 0], storey: 0 };
     const [e1, e2] = h.heating.emitters;
-    e1.at = [4, 3]; e2.at = [5, 2];
+    put(h, e1, [4, 3]); put(h, e2, [5, 2]);
     h.heating.pipes = [
       { id: 'P1', name: 'Boiler', parent: null, size: 'Cu 28 mm', length: 1 },
       { id: 'A', name: 'A', parent: 'P1', size: 'Cu 15 mm', length: 7, emitter: e1.id, ends: ['source', `e:${e1.id}`], leg: { storey: 0, pts: [[0, 0], [4, 0], [4, 3]] } },
@@ -159,7 +174,7 @@ describe('dropping a run onto a run from another branch', () => {
     const h = defaultHouse();
     h.heating.source = { at: [0, 0], storey: 0 };
     const [e1, e2, e3] = h.heating.emitters;
-    e1.at = [0.2, 5]; e2.at = [2, 4]; e3.at = [1, -2];
+    put(h, e1, [0.2, 5]); put(h, e2, [2, 4]); put(h, e3, [1, -2]);
     h.heating.emitters = [e1, e2, e3];
     const run = (id: string, parent: string, ends: [string, string], pts: Array<[number, number]>, emitter?: string) =>
       ({ id, name: id, parent, size: 'Cu 10 mm (microbore)', length: 1, emitter, ends, leg: { storey: 0, pts } });
@@ -292,5 +307,131 @@ describe('the void between floors', () => {
     // Each keeps its own floor and where it runs: F still serves the first floor, from its floor void.
     expect(F).toMatchObject({ parent: S.id, via: 'floor', leg: { storey: 1 } });
     expect(voidOf(h, F)).toBe(1);
+  });
+});
+
+describe('drawing runs by hand', () => {
+  const blank = () => {
+    const h = defaultHouse();
+    h.heating.source = { at: [0.5, 0.5], storey: 0 };
+    h.heating.pipes = [];
+    return h;
+  };
+  const em = (h: ReturnType<typeof defaultHouse>, storey: number) => h.heating.emitters.find((e) => h.rooms.find((r) => r.id === e.room)?.storey === storey)!;
+
+  it('every heater, the source and the cylinder have an attachment point on their floor', () => {
+    const h = blank();
+    h.heating.cylinder = { at: [1, 1], storey: 1 };
+    const g = attachments(h, 0).map((a) => a.id), f = attachments(h, 1).map((a) => a.id);
+    expect(g).toContain('source');
+    expect(f).toContain('cylinder');
+    expect(g.filter((x) => x.startsWith('e:')).length + f.filter((x) => x.startsWith('e:')).length).toBe(h.heating.emitters.length);
+  });
+
+  it('a run drawn from a radiator to the source is turned round, squared up and sized; drawing it again replaces it', () => {
+    const h = blank(), e = em(h, 0), at = attachments(h, 0).find((x) => x.id === `e:${e.id}`)!.at;
+    const r = drawRun(h, 0, { id: `e:${e.id}` }, [[at[0], 0.5]], { id: 'source' });
+    expect('id' in r).toBe(true);
+    const p = h.heating.pipes!.find((x) => 'id' in r && x.id === r.id)!;
+    expect(p.ends).toEqual(['source', `e:${e.id}`]);
+    expect(p.emitter).toBe(e.id);
+    expect(livePath(h, p)![0]).toEqual([0.5, 0.5]);
+    for (let i = 1; i < p.leg!.pts.length; i++) { const [a, b] = [p.leg!.pts[i - 1], p.leg!.pts[i]]; expect(a[0] === b[0] || a[1] === b[1]).toBe(true); }
+    drawRun(h, 0, { id: 'source' }, [], { id: `e:${e.id}` });
+    expect(h.heating.pipes!.filter((x) => x.emitter === e.id).length).toBe(1);
+    expect(sizePipes(h, calcHouse(h)).unpiped).not.toContain(e.id);
+  });
+
+  it('a run drawn on the slant keeps its slants, to the end when drawn free', () => {
+    const h = blank(), e = em(h, 0), at = attachments(h, 0).find((x) => x.id === `e:${e.id}`)!.at;
+    const c: [number, number] = [1.7, 1.3];
+    const free = drawRun(h, 0, { id: 'source' }, [c], { id: `e:${e.id}` }, false) as { id: string };
+    const p = h.heating.pipes!.find((x) => x.id === free.id)!;
+    expect(p.leg!.pts).toEqual([[0.5, 0.5], c, at]);
+    expect(livePath(h, p)).toEqual([[0.5, 0.5], c, at]);
+    const straight = drawRun(h, 0, { id: 'source' }, [], { id: `e:${e.id}` }, false) as { id: string };
+    expect(livePath(h, h.heating.pipes!.find((x) => x.id === straight.id)!)).toEqual([[0.5, 0.5], at]);
+    // With snapping on, only the last stretch into the heater gets a corner; the drawn slant stays.
+    const sq = drawRun(h, 0, { id: 'source' }, [c], { id: `e:${e.id}` }) as { id: string };
+    const q = h.heating.pipes!.find((x) => x.id === sq.id)!.leg!.pts;
+    expect(q.slice(0, 2)).toEqual([[0.5, 0.5], c]);
+    expect(q.length).toBe(at[0] === c[0] || at[1] === c[1] ? 3 : 4);
+  });
+
+  it('teeing part way along a run splits it into a shared run feeding both', () => {
+    const h = blank();
+    const main = drawRun(h, 0, { id: 'source' }, [[4.5, 0.5]], null) as { id: string };
+    const e = em(h, 0), r = drawRun(h, 0, { run: main.id, at: [2.5, 0.6] }, [], { id: `e:${e.id}` }) as { id: string };
+    const x = h.heating.pipes!.find((p) => p.id === r.id)!, s = h.heating.pipes!.find((p) => p.id === x.parent)!;
+    expect(s.leg!.pts).toEqual([[0.5, 0.5], [2.5, 0.5]]);
+    expect(h.heating.pipes!.find((p) => p.id === main.id)!.parent).toBe(s.id);
+    expect(livePath(h, x)![0]).toEqual([2.5, 0.5]);
+  });
+
+  it('upstairs, a run off the source makes the branch through the floor', () => {
+    const h = blank(), e = em(h, 1);
+    const r = drawRun(h, 1, { id: 'source' }, [], { id: `e:${e.id}` }) as { id: string };
+    const x = h.heating.pipes!.find((p) => p.id === r.id)!, br = h.heating.pipes!.find((p) => p.id === x.parent)!;
+    expect(br.ends).toEqual(['source', 'source']);
+    expect(br.rise).toBeCloseTo(h.storeys[0].h + h.storeys[1].zone, 6);
+    expect('error' in drawRun(h, 0, { id: 'cylinder' }, [], { id: `e:${e.id}` })).toBe(true);
+  });
+
+  it('snaps a stretch to stop short of the wall across it', () => {
+    const h = blank(), r = h.rooms.find((x) => x.storey === 0)!, xs = r.poly ? r.poly.map((q) => q[0] + (r.x ?? 0)) : [r.x, r.x + r.w];
+    const wall = Math.max(...xs), q = wallSnap(h, 0, [wall - 2, 1], [wall - 0.05, 1.2], 0.3);
+    expect(q).toEqual([+(wall - PIPE_WALL).toFixed(3), 1]);
+  });
+
+  it('follows a wall off the grid and stops short of the wall across it, square to that wall', () => {
+    const h = blank(), c = Math.cos(Math.PI / 6), s = Math.sin(Math.PI / 6);
+    const turn = (x: number, y: number): [number, number] => [x * c - y * s, x * s + y * c];
+    h.rooms = h.rooms.filter((r) => r.storey === 0).slice(0, 1);
+    h.rooms[0].poly = [turn(0, 0), turn(4, 0), turn(4, 3), turn(0, 3)];
+    // Local frame: along the room's long wall (u), across it (w).
+    const loc = (p: [number, number]) => [p[0] * c + p[1] * s, -p[0] * s + p[1] * c];
+    const last = turn(1, 0.1), q = wallSnap(h, 0, last, turn(3.95, 0.3), 0.3);
+    const [x, y] = loc(q);
+    expect(x).toBeCloseTo(4 - PIPE_WALL, 2);
+    expect(y).toBeCloseTo(0.1, 2);
+    // The last stretch into a heater turns square to the stretch before it, not to the grid.
+    const tail = squareInto(h, 0, last, q, turn(3, 2));
+    expect(tail.length).toBe(3);
+    expect(loc(tail[1])[0]).toBeCloseTo(3, 2);
+    expect(loc(tail[1])[1]).toBeCloseTo(0.1, 2);
+  });
+});
+
+describe('attachment points and filling in', () => {
+  it("a radiator's pipes connect at its valve end nearer the heat source", () => {
+    const h = defaultHouse(), e = h.heating.emitters.find((x) => x.kind === 'radiator')!;
+    h.heating.source = { at: [0, 0], storey: 0 };
+    e.at = [5, 2]; e.ang = 0;
+    expect(emitterPort(h, e)).toEqual([+(5 - e.len / 2000).toFixed(3), 2]);
+  });
+
+  it('pipes the rest: every heater left without a run gets one, and drawn runs stay', () => {
+    const h = defaultHouse();
+    h.heating.source = { at: [0.5, 0.5], storey: 0 };
+    h.heating.risers = [{ id: 'rs1', at: [2, 0.5] }];
+    h.heating.pipes = autoPipes(h);
+    const gone = h.heating.pipes.filter((p) => p.emitter).slice(-2);
+    gone.forEach((p) => removeRun(h, p.id));
+    expect(unpiped(h).length).toBe(2);
+    expect(pipeRest(h)).toBe(2);
+    expect(unpiped(h)).toEqual([]);
+    expect(sizePipes(h, calcHouse(h)).unpiped).toEqual([]);
+  });
+
+  it("tees into a run in the ceiling void from the floor below's plan, and lays the new run in that ceiling", () => {
+    const h = defaultHouse();
+    h.heating.source = { at: [0.5, 0.5], storey: 0 };
+    h.heating.pipes = [];
+    const main = drawRun(h, 0, { id: 'source' }, [[4.5, 0.5]], null) as { id: string };
+    h.heating.pipes.find((p) => p.id === main.id)!.via = 'ceiling';
+    const e = h.heating.emitters.find((x) => h.rooms.find((r) => r.id === x.room)?.storey === 0)!;
+    const r = drawRun(h, 0, { run: main.id, at: [2.5, 0.5] }, [], { id: `e:${e.id}` }) as { id: string };
+    expect(viaOf(h, h.heating.pipes.find((p) => p.id === r.id)!)).toBe('ceiling');
+    expect('error' in drawRun(h, 1, { run: main.id, at: [2, 0.5] }, [[2, 2]], null)).toBe(false);
   });
 });

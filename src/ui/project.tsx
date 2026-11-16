@@ -102,7 +102,7 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       // Text fields keep the browser's own typing undo; everywhere else (checkboxes, sliders, number fields, the canvas) undoes the project.
-      if (!(e.ctrlKey || e.metaKey) || t?.matches('textarea, input:not([type]), input[type=text], input[type=search], [contenteditable]')) return;
+      if (!(e.ctrlKey || e.metaKey) || t?.matches?.('textarea, input:not([type]), input[type=text], input[type=search], [contenteditable]')) return;
       const k = e.key.toLowerCase();
       if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); } else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
     };

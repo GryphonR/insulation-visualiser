@@ -71,7 +71,7 @@ describe('floor and ceiling zones', () => {
     const h = defaultHouse(), before = calcHouse(h).rooms.find((r) => r.room.id === 'living')!, a0 = sum(h, 'living', 'floor');
     h.buildups.push({ id: 'warm', name: 'Floor, 200 mm PIR', kind: 'floor', layers: [['m_concrete_reinforced', 100], ['pir', 200], ['m_cement_sand', 65]] });
     addFloorZone(h, 'z1', 0, [[0, 0], [2.25, 0], [2.25, 4.2], [0, 4.2]]);
-    h.zones![0].buildup = 'warm';
+    h.zones![h.zones!.length - 1].buildup = 'warm';
     const after = calcHouse(h).rooms.find((r) => r.room.id === 'living')!;
     expect(sum(h, 'living', 'floor')).toBeCloseTo(a0);
     expect(after.faces.filter((f) => f.key.includes('~z1'))).toHaveLength(1);
@@ -83,7 +83,7 @@ describe('floor and ceiling zones', () => {
     const h = defaultHouse();
     h.buildups.push({ id: 'warm', name: 'Floor, deep', kind: 'floor', layers: [['pb', 12.5], ['cavity', 150], ['m_timber_500_kg_m', 20]] });
     addFloorZone(h, 'z2', 1, [[0, 0], [4.5, 0], [4.5, 2], [0, 2]]);
-    h.zones![0].buildup = 'warm';
+    h.zones![h.zones!.length - 1].buildup = 'warm';
     const res = calcHouse(h), part = (id: string) => res.rooms.find((r) => r.room.id === id)!.faces.filter((f) => f.key.includes('~z2')).reduce((t, f) => t + f.area, 0);
     const upper = h.rooms.filter((r) => r.storey === 1).map((r) => r.id), lower = h.rooms.filter((r) => r.storey === 0).map((r) => r.id);
     expect(upper.reduce((t, id) => t + part(id), 0)).toBeGreaterThan(5);
@@ -243,7 +243,7 @@ describe('underfloor heating zones', () => {
     const covered = ground(h);
     covered[0].heated = false;
     const s = syncUfh(h);
-    expect(h.zones![0]).toMatchObject({ name: 'UFH 1', ufh: true });
+    expect(h.zones![h.zones!.length - 1]).toMatchObject({ name: 'UFH 1', ufh: true });
     expect(covered.length).toBeGreaterThan(2);
     expect(loops(s)).toEqual(Object.fromEntries(covered.filter((r) => r.heated).map((r) => [r.id, +overlapAreaPoly(Z, roomPoly(r)).toFixed(2)])));
     const res = calcHouse(s);
@@ -259,7 +259,7 @@ describe('underfloor heating zones', () => {
   it("gives every loop the zone's pipe spacing and diameter, and the diameter sets how long a loop may be", () => {
     const { s } = drawn(), mine = (h: H) => h.heating.emitters.filter((e) => e.fromZone);
     expect(mine(s).every((e) => e.spacing === 150 && e.pipe === 16)).toBe(true);
-    Object.assign(s.zones![0], { spacing: 200, pipe: 20 });
+    Object.assign(s.zones![s.zones!.length - 1], { spacing: 200, pipe: 20 });
     const wide = syncUfh(s);
     expect(mine(wide).every((e) => e.spacing === 200 && e.pipe === 20)).toBe(true);
     expect(loopMax(mine(wide)[0])).toBe(120);
@@ -274,7 +274,7 @@ describe('underfloor heating zones', () => {
 
   it('follows the zone: shrinking it shrinks the loops, deleting it or making a room unheated removes them', () => {
     const { s } = drawn(), corner = s.rooms.find((r) => r.storey === 0 && pointInPoly([0.5, 0.5], roomPoly(r)))!;
-    s.zones![0].poly = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    s.zones![s.zones!.length - 1].poly = [[0, 0], [1, 0], [1, 1], [0, 1]];
     const small = syncUfh(s);
     expect(loops(small)).toEqual({ [corner.id]: 1 });
     small.rooms.find((r) => r.id === corner.id)!.heated = false;

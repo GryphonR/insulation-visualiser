@@ -9,7 +9,8 @@ import type { Pt } from '../engine/geom';
 import { OPEN_DOORWAY, addEmitter, addFloorZone, ensureOpenDoorway, joinRooms, addRoomAt, cutPlan, deleteRoom, emitterPose, flushDelta, innerDoorAt, innerWallThickness, insertCorner, isOutside, joinedCorners, moveCorners, nearestWall, openingCentre, pieceAlign, pieceGap, pieceSeg, pieceThickness, problems, removeCorner, roomAt, splitRoom, stretchAtWall, wallIndex, wallPieces } from '../engine/house-draw';
 import type { WallPiece } from '../engine/house-draw';
 import { planBounds } from './HousePlan';
-import { dragSegment, joinRun, livePath, removeRun, routePipes, splitSegment, voidName, voidOf } from '../engine/house-pipes';
+import { attachments, dragSegment, drawRun, feedsFrom, joinRun, livePath, removeRun, routePipes, splitSegment, squareInto, unpiped, voidName, voidOf, wallSnap } from '../engine/house-pipes';
+import type { Attach } from '../engine/house-pipes';
 import type { Heating, Plant } from '../engine/house-heating';
 import { uid } from './hform';
 import { href } from './route';
@@ -18,7 +19,7 @@ import { href } from './route';
 export type Lens = 'plan' | 'pipes';
 /** The window and door build-ups the tools place (unset: the first of each). */
 export interface OpPick { glazing?: string; door?: string }
-export type Tool = 'select' | 'box' | 'room' | 'split' | 'join' | 'corner' | 'window' | 'door' | 'radiator' | 'ufh' | 'source' | 'cylinder' | 'riser';
+export type Tool = 'select' | 'box' | 'room' | 'split' | 'join' | 'corner' | 'window' | 'door' | 'radiator' | 'ufh' | 'source' | 'cylinder' | 'riser' | 'pipe';
 /** A wall of a room; with `span`, just the piece of it between two metre marks along the wall (`other` is the room it is shared with, if any). */
 export interface WallRef { room: string; edge: number; span?: [number, number]; other?: string; /** Gap to the other room's line, metres (inside walls). */ gap?: number }
 export interface Sel { room: string; walls: WallRef[]; item: { k: 'op' | 'em' | 'plant' | 'pipe'; id: string } | null; /** A floor or ceiling zone. */ zone?: string; /** Several rooms picked with the selection box or Shift-click. */ group?: string[]; /** Arrows on the selected inside wall pick which side of the plan stretches to fit its build-up. */ stretch?: boolean }
@@ -98,6 +99,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   /** First corner of a box room (click, click), first point of a split line. */
   const [boxA, setBoxA] = useState<Pt | null>(null);
   const [cut, setCut] = useState<Pt | null>(null);
+  /** Where the pipe run being drawn starts; its corners so far are in `draft`. */
+  const [pipeFrom, setPipeFrom] = useState<Attach | null>(null);
   const pointers = useRef(new Map<number, Pt>());
   const pinch = useRef<{ d: number; v: View } | null>(null);
   const coarse = useMemo(() => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches, []);
@@ -140,7 +143,9 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     svg.addEventListener('wheel', on, { passive: false });
     return () => svg.removeEventListener('wheel', on);
   }, []);
-  useEffect(() => { setDraft([]); setNote(''); setTyped(''); setBoxA(null); setCut(null); setMenu(null); }, [tool, storey]);
+  useEffect(() => { setDraft([]); setNote(''); setTyped(''); setBoxA(null); setCut(null); setMenu(null); setPipeFrom(null); }, [tool, storey]);
+  // A note left in select mode (after a delete, say) fades after a while.
+  useEffect(() => { if (!note || tool !== 'select') return; const t = setTimeout(() => setNote(''), 8000); return () => clearTimeout(t); }, [note, tool]);
   /** The semicircle of actions opened by right-clicking something: where (px in the canvas, and plan metres) and on what. */
   const [menu, setMenu] = useState<{ x: number; y: number; at: Pt; on: MenuFor } | null>(null);
   const [menuTip, setMenuTip] = useState('');
@@ -320,6 +325,49 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   const addPipeCorner = (id: string, pts: Pt[], seg: number, at: Pt) =>
     upd((h) => { const y = h.heating.pipes?.find((r) => r.id === id); if (y?.leg) y.leg = { storey: y.leg.storey, pts: splitSegment(pts, seg, at) }; });
 
+  /** What a pipe can attach to under the pointer: the source, cylinder, a riser or a heater (by its attachment point), else a run on this floor. */
+  const pipeHit = (p: Pt): { a: Attach; at: Pt; label: string } | null => {
+    const r = Math.max(0.3, z(14 * hs) / S);
+    const port = attachments(house, storey).map((x) => ({ x, d: Math.hypot(x.at[0] - p[0], x.at[1] - p[1]) })).filter((q) => q.d < r).sort((a, b) => a.d - b.d)[0];
+    if (port) return { a: { id: port.x.id }, at: port.x.at, label: port.x.label };
+    let best: { a: Attach; at: Pt; label: string } | null = null, bd = r;
+    for (const x of house.heating.pipes ?? []) {
+      const v = voidOf(house, x), q = v === storey || v === storey + 1 ? livePath(house, x) : null;
+      for (let i = 0; q && i + 1 < q.length; i++) {
+        const a = q[i], b = q[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+        const at: Pt = [a[0] + dx * t, a[1] + dy * t], d = Math.hypot(at[0] - p[0], at[1] - p[1]);
+        if (d < bd) { bd = d; best = { a: { run: x.id, at }, at, label: `Tee off ${x.name}` }; }
+      }
+    }
+    return best;
+  };
+  /** Take out a run, saying where the runs off it now come from. */
+  const deleteRun = (id: string) => {
+    const p = house.heating.pipes?.find((x) => x.id === id), kids = house.heating.pipes?.filter((x) => x.parent === id).length ?? 0;
+    const up = p?.parent ? house.heating.pipes?.find((x) => x.id === p.parent)?.name : null;
+    upd((h) => removeRun(h, id)); setSel(NO_SEL);
+    if (p) setNote(`Deleted ${p.name}.${kids ? ` The ${kids} run${kids === 1 ? '' : 's'} off it now come${kids === 1 ? 's' : ''} off ${up ?? 'the heat source'}.` : ''} Ctrl+Z puts it back; Draw a pipe run draws a new one.`);
+  };
+  /** What a click finishes the pipe being drawn on: only the other kind of end (a heater for a run from a feed, and back). */
+  const pipeEnd = (p: Pt) => { const x = pipeHit(p); return x && pipeFrom && feedsFrom(x.a) !== feedsFrom(pipeFrom) ? x : null; };
+  /** The next corner of the pipe being drawn: square to the last one, stopping just short of a wall across its way (Shift: free). */
+  const pipePt = (p: Pt): Pt => {
+    const last = draft[draft.length - 1];
+    if (!last || loose.current) return p;
+    const q = wallSnap(house, storey, last, [snap(p[0]), snap(p[1])], Math.max(0.3, z(14 * hs) / S));
+    return q;
+  };
+  /** Finish the pipe being drawn on `to` (or, with null, leave its end open), if the engine takes it. */
+  const finishPipe = (to: Attach | null) => {
+    if (!pipeFrom) return;
+    const mid = draft.slice(1), sq = !loose.current, test = drawRun(structuredClone(house), storey, pipeFrom, mid, to, sq);
+    if ('error' in test) { setNote(test.error); return; }
+    upd((h) => { drawRun(h, storey, pipeFrom, mid, to, sq); });
+    setSel({ ...NO_SEL, item: { k: 'pipe', id: test.id } });
+    setDraft([]); setPipeFrom(null); setNote('');
+    if (!sticky) setTool('select');
+  };
+
   /** A new room (or, on a floor or ceiling layer, a zone; with the UFH tool, an underfloor heating zone in this floor) with this outline. */
   const create = (pts: Pt[]) => {
     const id = uid(zoneMode || tool === 'ufh' ? 'z' : 'r');
@@ -420,6 +468,21 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       return;
     }
     if (tool === 'window' || tool === 'door') { placeOpening(p, tool === 'door'); return; }
+    if (tool === 'pipe') {
+      if (!pipeFrom) {
+        const hit = pipeHit(p);
+        if (!hit) { setNote('Start on the boiler or heat pump, a riser, a radiator, a UFH manifold, the cylinder or an existing run (the green rings).'); return; }
+        setPipeFrom(hit.a); setDraft([hit.at]);
+        setNote(feedsFrom(hit.a) ? 'Click each corner; click a radiator, manifold or the cylinder to finish, or press Enter to leave the end open. Backspace undoes a corner, Esc cancels.'
+          : 'Click each corner; click the boiler, a riser or a run to finish. Backspace undoes a corner, Esc cancels.');
+        return;
+      }
+      const end = pipeEnd(p);
+      if (end) { finishPipe(end.a); return; }
+      const q = pipePt(p);
+      if (!near(q, draft[draft.length - 1], 0.05)) setDraft([...draft, q]);
+      return;
+    }
     if (tool === 'source' || tool === 'cylinder' || tool === 'riser') {
       const q: Pt = [snap(p[0]), snap(p[1])], id = tool === 'riser' ? uid('rs') : tool;
       // One heat source and one cylinder: placing again moves it.
@@ -553,7 +616,9 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       openMenu(t.on, q.x, q.y, t.at);
       return;
     }
-    if (e.key === 'Escape') { setDraft([]); setNote(''); setTyped(''); setDrag(null); setTool('select'); }
+    if (e.key === 'Escape') { setDraft([]); setNote(''); setTyped(''); setDrag(null); setPipeFrom(null); setTool('select'); }
+    else if (tool === 'pipe' && pipeFrom && e.key === 'Enter') finishPipe(null);
+    else if (tool === 'pipe' && pipeFrom && e.key === 'Backspace') { if (draft.length > 1) setDraft(draft.slice(0, -1)); else { setDraft([]); setPipeFrom(null); setNote(''); } }
     else if (outline && draft.length && /^[0-9.]$/.test(e.key)) setTyped(typed + e.key);
     else if (outline && e.key === 'Enter' && Number(typed) >= 0.1) { setDraft([...draft, draftPt(hover ?? draft[draft.length - 1])]); setTyped(''); }
     else if (outline && e.key === 'Enter') closeDraft(draft);
@@ -577,6 +642,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       if (sel.item?.k === 'op') upd((h) => { h.openings = h.openings.filter((o) => o.id !== sel.item!.id); });
       else if (sel.item?.k === 'em') upd((h) => { h.heating.emitters = h.heating.emitters.filter((x) => x.id !== sel.item!.id); });
       else if (sel.item?.k === 'plant') upd((h) => removePlant(h, sel.item!.id));
+      else if (sel.item?.k === 'pipe') { deleteRun(sel.item.id); return; }
       else if (sel.zone) upd((h) => { h.zones = h.zones?.filter((z) => z.id !== sel.zone); h.roofs = h.roofs.filter((z) => z.id !== sel.zone); });
       else if (!sel.walls.length && sel.room) { const ids = sel.group?.length ? sel.group : [sel.room]; upd((h) => ids.forEach((id) => deleteRoom(h, id))); setSel(NO_SEL); return; }
       else return;
@@ -617,9 +683,14 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   });
 
   /** True where the wall at `t` metres along edge `idx` is drawn with thickness (the window or door is then drawn as a thin strip across it). */
-  const wallIsThick = (room: string, idx: number, t: number) => {
+  /** Where the wall at `t` along a room's wall is drawn, as offsets along the wall's normal (as the wall layer draws it); null where it has no thickness. */
+  const wallBand = (room: string, idx: number, t: number): [number, number] | null => {
     const pc = wallPieces(house, room, idx, storey).find((p) => t >= p.span[0] - 0.01 && t <= p.span[1] + 0.01);
-    return !!pc && ((pc.gap ?? 0) > 0.01 || pieceThickness(house, room, idx, storey, pc) > 0);
+    if (!pc) return null;
+    const between = !!pc.other && (pc.gap ?? 0) > 0.01, th = between ? pc.gap! : pieceThickness(house, room, idx, storey, pc);
+    if (!(th > 0)) return null;
+    const al = between ? 'out' : pieceAlign(house, room, idx, storey, pc);
+    return al === 'out' ? [0, th] : al === 'in' ? [-th, 0] : [-th / 2, th / 2];
   };
 
   const hv = hover;
@@ -761,7 +832,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     const runLines = runs.filter((x) => { const v = voidOf(house, x); return v === storey || v === storey + 1; }).map((x) => {
       const pts = pipeDrag?.id === x.id ? dragSegment(pipeDrag.base, pipeDrag.seg, loopShift(pipeDrag)) : livePath(house, x) ?? x.leg!.pts;
       const onR = sel.item?.k === 'pipe' && sel.item.id === x.id, v = voidOf(house, x), other = x.leg!.storey !== storey;
-      const end = to(pts[pts.length - 1]);
+      const end = to(pts[pts.length - 1]), open = x.ends?.[1] === '' && !(hs0.pipes ?? []).some((c) => c.parent === x.id);
       return (
         <g key={`run${x.id}`}>
           <title>{x.name} · {x.size} · in the void {voidName(house, v)}{other ? ` · serves the ${house.storeys[x.leg!.storey]?.name.toLowerCase()}` : ''}</title>
@@ -770,6 +841,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
             strokeDasharray={v === storey + 1 ? `${z(9)} ${z(3)} ${z(2)} ${z(3)}` : undefined} />
           {/* Where a run from the void goes through to a heater on the other floor. */}
           {other && x.emitter && <circle cx={end[0]} cy={end[1]} r={z(3.5)} fill="#fff" stroke="#c0392b" strokeOpacity={0.6} strokeWidth={z(1.5)} pointerEvents="none" />}
+          {/* An open end that feeds nothing yet. */}
+          {open && <rect x={end[0] - z(5)} y={end[1] - z(5)} width={z(10)} height={z(10)} fill="#fff" stroke="#c0392b" strokeWidth={z(2)} pointerEvents="none"><title>Open end: {x.name} feeds nothing yet. Tee a run off it with Draw a pipe run, or delete it.</title></rect>}
           {onR && pts.slice(1, -1).map((q, i) => <circle key={i} cx={to(q)[0]} cy={to(q)[1]} r={z(3.5)} fill="#fff" stroke="#c2410c" strokeWidth={z(1.5)} pointerEvents="none" />)}
           {pipeSel && pts.slice(1).map((q, i) => (
             <line key={`h${i}`} x1={to(pts[i])[0]} y1={to(pts[i])[1]} x2={to(q)[0]} y2={to(q)[1]} stroke="transparent" strokeWidth={z(10 * hs)}
@@ -811,6 +884,13 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
             </g>
           );
         })}
+        {/* Where each thing takes its pipes, and the ones that have none. The draw tool shows bigger rings of its own. */}
+        {lens === 'pipes' && tool !== 'pipe' && (() => {
+          const none = new Set(src ? unpiped(house) : []);
+          return attachments(house, storey).map((a) => none.has(a.id)
+            ? <circle key={`ap${a.id}`} cx={to(a.at)[0]} cy={to(a.at)[1]} r={z(9)} fill="none" stroke="#c0392b" strokeWidth={z(2)} strokeDasharray={`${z(3)} ${z(2)}`} pointerEvents="none"><title>{a.label}: no pipe run yet</title></circle>
+            : <circle key={`ap${a.id}`} cx={to(a.at)[0]} cy={to(a.at)[1]} r={z(2.5)} fill="#0b8a7a" pointerEvents="none" />);
+        })()}
         {hs0.cylinder?.storey === storey && box('cylinder', hs0.cylinder.at, 'HW', '#1f6fb5', 'Hot water cylinder')}
         {src?.storey === storey && box('source', src.at, hp ? 'HP' : 'B', '#c2410c', hp ? 'Heat pump' : 'Boiler')}
         {src && src.storey !== storey && (
@@ -836,11 +916,13 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
               const c = dragged ? dragged.t : o.t != null ? Math.max(half, Math.min(L - half, o.t)) : (L * (i + 0.5)) / ops.length;
               const a = to([ee.a[0] + ee.d[0] * (c - half), ee.a[1] + ee.d[1] * (c - half)]), b = to([ee.a[0] + ee.d[0] * (c + half), ee.a[1] + ee.d[1] * (c + half)]);
               const door = house.buildups.find((x) => x.id === o.buildup)?.kind === 'door', on = sel.item?.k === 'op' && sel.item.id === o.id;
+              // The opening is drawn as a gap across the whole wall, so it is picked up across the whole wall too, not just at the room's outline.
+              const band = wallBand(rr.id, ee.idx, c), mid = band ? ((band[0] + band[1]) / 2) * S : 0, nx = ee.n[0] * mid, ny = ee.n[1] * mid;
               return (
                 <g key={o.id}>
-                  {on && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="#c2410c" strokeWidth={z(12)} strokeLinecap="round" opacity={0.35} pointerEvents="none" />}
-                  {!wallIsThick(r.id, e.idx, c) && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={o.buildup === OPEN_DOORWAY ? '#d6c2a4' : door ? '#8a5a2b' : '#1f6fb5'} strokeWidth={z(6)} pointerEvents="none" />}
-                  {planSel && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="transparent" strokeWidth={z(16 * hs)} style={{ cursor: 'grab' }}
+                  {on && <line x1={a[0] + nx} y1={a[1] + ny} x2={b[0] + nx} y2={b[1] + ny} stroke="#c2410c" strokeWidth={Math.max(z(12), band ? (band[1] - band[0]) * S : 0)} strokeLinecap="round" opacity={0.35} pointerEvents="none" />}
+                  {!band && <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={o.buildup === OPEN_DOORWAY ? '#d6c2a4' : door ? '#8a5a2b' : '#1f6fb5'} strokeWidth={z(6)} pointerEvents="none" />}
+                  {planSel && <line x1={a[0] + nx} y1={a[1] + ny} x2={b[0] + nx} y2={b[1] + ny} stroke="transparent" strokeWidth={Math.max(z(16 * hs), band ? (band[1] - band[0]) * S : 0)} style={{ cursor: 'grab' }}
                     onPointerDown={(ev) => { setSel({ room: r.id, walls: [], item: { k: 'op', id: o.id } }); begin(ev, { k: 'op', id: o.id, start: raw(ev), cur: raw(ev), moved: false }); }}
                     onContextMenu={menuOn({ k: 'op', id: o.id })} />}
                 </g>
@@ -1051,7 +1133,20 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
             onDoubleClick={(e) => { e.stopPropagation(); if (zn.poly.length > 3) upd((h) => editPoly(h, zn.id, { remove: i })); }} />
         )))}
         {/* In-progress drawing and placement previews */}
-        {draft.length > 0 && <>
+        {tool === 'pipe' && (() => {
+          // Attachment points, the rubber band from the last corner, and what a click would attach to.
+          const hit = hv ? (pipeFrom ? pipeEnd(hv) : pipeHit(hv)) : null, last = draft[draft.length - 1];
+          const next = hv && last ? (hit ? hit.at : pipePt(hv)) : null, band = last && next ? [...draft, ...(hit && !loose.current && !near(next, last) ? squareInto(house, storey, draft[draft.length - 2], last, next).slice(1, -1) : []), next] : draft;
+          return <g pointerEvents="none">
+            {attachments(house, storey).map((x) => <circle key={x.id} cx={to(x.at)[0]} cy={to(x.at)[1]} r={z(9)} fill="none" stroke="#0b8a7a" strokeWidth={z(2)} strokeDasharray={`${z(3)} ${z(2)}`}><title>{x.label}</title></circle>)}
+            {band.length > 1 && <polyline points={pts(band)} fill="none" stroke="#c0392b" strokeWidth={z(2.5)} strokeDasharray={`${z(7)} ${z(4)}`} strokeLinejoin="round" />}
+            {draft.map((q, i) => <circle key={i} cx={to(q)[0]} cy={to(q)[1]} r={z(3.5)} fill="#fff" stroke="#c0392b" strokeWidth={z(1.5)} />)}
+            {hit && <circle cx={to(hit.at)[0]} cy={to(hit.at)[1]} r={z(11)} fill="#0b8a7a" fillOpacity={0.2} stroke="#0b8a7a" strokeWidth={z(2.5)} />}
+            {hv && (hit || (last && next)) && <text x={to(hit ? hit.at : next!)[0] + z(12)} y={to(hit ? hit.at : next!)[1] - z(10)} className="draw-dim" style={{ fontSize: z(11), strokeWidth: z(3) }}>
+              {hit ? hit.label : `${Math.hypot(next![0] - last[0], next![1] - last[1]).toFixed(2)} m`}</text>}
+          </g>;
+        })()}
+        {draft.length > 0 && tool !== 'pipe' && <>
           <polyline points={pts(hv && outline ? [...draft, draftPt(hv)] : draft)} fill="none" stroke="#c2410c" strokeWidth={z(2.5)} strokeDasharray={`${z(7)} ${z(4)}`} pointerEvents="none" />
           {draft.map((q, i) => <circle key={i} cx={to(q)[0]} cy={to(q)[1]} r={z(i === 0 && draft.length >= 3 ? 7 : 4.5)} fill={i === 0 ? '#fdf3ea' : '#c2410c'} stroke="#c2410c" strokeWidth={z(2)} pointerEvents="none" />)}
           {hv && <text x={to(draftPt(hv))[0] + z(12)} y={to(draftPt(hv))[1] - z(10)} className="draw-dim" style={{ fontSize: z(11), strokeWidth: z(3) }}>{typed ? `${typed} m ⏎` : `${Math.hypot(draftPt(hv)[0] - draft[draft.length - 1][0], draftPt(hv)[1] - draft[draft.length - 1][1]).toFixed(2)} m`}</text>}
@@ -1087,7 +1182,13 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         <button type="button" className="btn-secondary" aria-label="Zoom out" onClick={() => setView((v) => ({ x: v.x - v.w * 0.125, y: v.y - v.w * ratio * 0.125, w: v.w * 1.25 }))}>−</button>
         <button type="button" className="btn-secondary" onClick={() => setView(fit(house, ratio))}>Fit</button>
       </div>
-      {note && <p className="draw-note" role="status">{note}</p>}
+      {note && <p className="draw-note" role="status">{note}
+        {/* For touch, where there is no Enter or Backspace. */}
+        {tool === 'pipe' && pipeFrom && <span className="draw-note-acts" onMouseDown={(e) => e.preventDefault()}>
+          <button type="button" className="btn-link" onClick={() => { if (draft.length > 1) setDraft(draft.slice(0, -1)); else { setDraft([]); setPipeFrom(null); setNote(''); } }}>{draft.length > 1 ? 'Undo corner' : 'Cancel'}</button>
+          {feedsFrom(pipeFrom) && draft.length > 1 && <button type="button" className="btn-link" onClick={() => finishPipe(null)}>Leave the end open</button>}
+        </span>}
+      </p>}
       {menu && (() => {
         /** `panel`: the action moves focus to the side panel, so the canvas must not take it back. */
         type Item = { label: string; glyph: string; off?: string; panel?: boolean; run: () => void };
@@ -1136,7 +1237,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
             return { title: 'Pipe run actions', tip: `${p.name} · ${p.size} · in the void ${voidName(house, voidOf(house, p))}`, items: [
               { label: 'Add a corner', glyph: '＋', run: () => addPipeCorner(p.id, pts, on.seg, at) },
               edit('Where it runs', '⇅', 'via'),
-              { label: 'Delete run', glyph: '✕', run: () => { upd((h) => removeRun(h, p.id)); setSel(NO_SEL); } },
+              { label: 'Delete run', glyph: '✕', run: () => deleteRun(p.id) },
             ] };
           }
           const em = house.heating.emitters.find((x) => x.id === on.id), name = em?.kind === 'ufh' ? 'Underfloor loop' : em?.kind === 'towel' ? 'Towel rail' : 'Radiator';
