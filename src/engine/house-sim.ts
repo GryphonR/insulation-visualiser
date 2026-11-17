@@ -7,7 +7,8 @@ import { calcHouse, sourceEff, tariff } from './house';
 import type { Face, House, HouseResult, RoomResult, RoomType } from './house';
 import { roomKappa } from './heat-capacity';
 import type { Orient } from './data';
-import { roomOut, roomSchedule, systemFlow } from './house-heating';
+import { COOLING_DEFAULT, coolEer, coolingOn, roomCool, roomOut, roomSchedule, systemFlow } from './house-heating';
+import { served } from './house-controls';
 
 /** Where a face looks for the sun: its true bearing and tilt (vertical unless set). */
 export function faceOrient(f: Pick<Face, 'az' | 'tilt' | 'side'>): Orient {
@@ -87,8 +88,12 @@ export interface SimResult {
   peakW: number; heatKWh: number; boughtKWh: number;
   /** Heat delivered and energy bought in each calendar month, kWh (a one-day case lands in its own month). */
   monthHeat: number[]; monthBought: number[];
+  /** Cooling (heat taken out, W, by hour), its peak hour W, the heat taken out and electricity bought, kWh, in all and by month. All zero without cooling. */
+  cool: Float32Array; coolPeakW: number; coolKWh: number; coolBoughtKWh: number; monthCool: number[]; monthCoolBought: number[];
   /** Per room: hours too cold while heated (late: past the warm-up after switching on), too warm, the range, and the first hour below 16 °C. */
   comfort: Array<{ id: string; cold: number; late: number; warm: number; min: number; max: number; below16: number | null }>;
+  /** Design cooling load run only: per room, hourly heat taken out and where it comes from, W. */
+  coolRooms?: Array<{ C: Float32Array; sun: Float32Array; inside: Float32Array; fabric: Float32Array; air: Float32Array }>;
 }
 
 /**
@@ -116,8 +121,12 @@ const OPEN_SHARE = 0.2;
 /** Hours a room may take to warm up after its heating comes on before it counts as falling short. */
 const WARMUP_H = 2;
 
-/** One run of a test case. Pass a typical meteorological year to drive the year case with real hourly weather. */
-export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h), tmy?: Tmy): SimResult {
+/**
+ * One run of a test case. Pass a typical meteorological year to drive the year case with real hourly weather.
+ * `load` (summer case only) makes it the design cooling load run: every heated room held at `load` °C all day by
+ * unlimited cooling, windows shut, recording each room's load and its parts.
+ */
+export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h), tmy?: Tmy, load?: number): SimResult {
   const lat = base.climate.lat;
   const wx = weather(id, base, base.Tg, tmy);
   const heatingOn = id !== 'summer';
@@ -136,7 +145,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
 
   // Links between nodes (each shared face once) and conductances to fixed temperatures.
   const links: Array<[number, number, number]> = [];
-  const Hout = new Float64Array(N), Hg = new Float64Array(N), Hp = new Float64Array(N);
+  const Hout = new Float64Array(N), Hg = new Float64Array(N), Hp = new Float64Array(N), Hvent = new Float64Array(N);
   // Sun on glass (area × g), and on roofs as sol-air: U·A × α·Rse of the absorbed sun, less a clear-night sky loss.
   const solar: Array<{ node: number; area: number; g: number; orient: (typeof ORIENTS)[number] }> = [];
   const sky: Array<{ node: number; UA: number; f: number }> = [];
@@ -168,7 +177,8 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
       }
       else if (f.kind === 'ceiling' && f.to.k === 'out') roofSun(i, UA, faceOrient({ ...f, tilt: f.tilt ?? 0 }));
     }
-    Hout[i] += 0.33 * r.n * r.V;
+    Hvent[i] = 0.33 * r.n * r.V;
+    Hout[i] += Hvent[i];
   });
   if (base.loft) {
     // Roof plus loft ventilation, recovered from the design calc's balance: H = Σ(links)·(Tin − T)/(T − Tout).
@@ -178,15 +188,26 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
   }
 
   // Heating: each room's emitters at the system flow for this hour, on its zone's schedule.
+  // Only emitters some mode sends hot water to heat; only cooling emitters some mode sends chilled water to cool.
+  const { heated, cooled } = served(h);
+  const hotH = { ...h, heating: { ...h.heating, emitters: h.heating.emitters.filter((e) => heated.has(e.id)) } };
+  const ideal = load !== undefined && id === 'summer';
+  const coolC = ideal ? { ...(h.heating.cooling ?? COOLING_DEFAULT), setpoint: load!, capacity: Infinity }
+    : coolingOn(h) && (id === 'summer' || id === 'year') ? h.heating.cooling! : null;
+  const coolE = { heating: { ...h.heating, emitters: h.heating.emitters.filter((e) => cooled.has(e.id)) } };
   const needs = rooms.filter((r) => r.room.heated).map((r) => ({ room: r.room, need: r.totalW }));
   const flowCache = new Map<number, number>();
   const flowAt = (Te: number) => {
     const k = Math.round(Te * 4) / 4;
-    if (!flowCache.has(k)) flowCache.set(k, systemFlow(h, needs, base.Tout, k));
+    if (!flowCache.has(k)) flowCache.set(k, systemFlow(hotH, needs, base.Tout, k));
     return flowCache.get(k)!;
   };
   const off = Array(24).fill(0);
   const sched = rooms.map((r) => (r.room.heated ? roomSchedule(h, r.room) ?? off : off));
+  // Cooling runs on the same hours as the room's heating, in rooms with a cooling emitter on chilled water.
+  // The design load holds every heated room all day, whatever its emitters.
+  const cools = rooms.map((r) => (ideal ? r.room.heated : !!coolC && coolE.heating.emitters.some((e) => e.room === r.room.id)));
+  const csched = rooms.map((r, i) => (ideal && cools[i] ? Array(24).fill(1) : cools[i] ? roomSchedule(h, r.room) ?? off : off));
 
   // Gain shares: awake gains to living spaces, asleep to bedrooms, cooking to kitchens (by floor area).
   const share = (types: RoomType[]) => {
@@ -207,11 +228,14 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
   for (const [a, b, UA] of links) { Hsum[a] += UA; Hsum[b] += UA; }
 
   const hours = wx.hours;
-  const out = new Float32Array(hours), heat = new Float32Array(hours);
+  const out = new Float32Array(hours), heat = new Float32Array(hours), cool = new Float32Array(hours);
   const Th = rooms.map(() => new Float32Array(hours)), Ph = rooms.map(() => new Float32Array(hours));
   const loftT = base.loft ? new Float32Array(hours) : null;
+  const f32 = () => new Float32Array(hours);
+  const coolRooms = ideal ? rooms.map(() => ({ C: f32(), sun: f32(), inside: f32(), fabric: f32(), air: f32() })) : undefined;
+  const gInt = new Float64Array(N);
   const total = wx.warmup + hours, stepsPerH = 3600 / DT;
-  const rhs = new Float64Array(N), gain = new Float64Array(N), P = new Float64Array(N);
+  const rhs = new Float64Array(N), gain = new Float64Array(N), P = new Float64Array(N), C = new Float64Array(N), held = new Uint8Array(N);
 
   for (let s = 0; s < total * stepsPerH; s++) {
     const tAbs = s / stepsPerH;
@@ -222,6 +246,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
     const [awake, asleep, app, cook] = hourGains(g, hr, weekend);
     gain.fill(0);
     rooms.forEach((_, i) => { gain[i] = awake * sLiv[i] + asleep * sBed[i] + app * sLiv[i] + cook * sKit[i]; });
+    gInt.set(gain);
     const c = wx.c(tc), doy = wx.doy(tc);
     for (const w of solar) if (w.orient) gain[w.node] += (wx.sol ? wx.sol(tc, w.orient) : solarAt(lat, doy, (tc % 24) + 0.5 / stepsPerH, c, w.orient)) * w.area * w.g;
     for (const s of sky) gain[s.node] -= s.UA * 3.6 * c * s.f;
@@ -239,17 +264,33 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
       const set = (sched[i][hr] || id === 'snap' ? r.room.setpoint : g.setback) + dt;
       const need = set * Hsum[i] - rhs[i];
       if (need <= 0) return;
-      P[i] = Math.min(roomOut(h, r.room.id, flow, T[i]), need);
+      P[i] = Math.min(roomOut(hotH, r.room.id, flow, T[i]), need);
       Ptot += P[i];
     });
     const cap = h.hp.capacity * 1000;
     if (Ptot > cap) { for (let i = 0; i < N; i++) P[i] *= cap / Ptot; Ptot = cap; }
+    // Cooling, when nothing calls for heat this step (the heat pump does one or the other): down to the cooling setpoint.
+    let Ctot = 0;
+    C.fill(0); held.fill(0);
+    if (coolC && Ptot === 0) {
+      rooms.forEach((r, i) => {
+        if (!csched[i][hr]) return;
+        const need = rhs[i] - (coolC.setpoint + dt) * Hsum[i];
+        if (need <= 0) return;
+        C[i] = ideal ? need : Math.min(roomCool(coolE, r.room.id, coolC.flow, T[i]), need);
+        held[i] = C[i] >= need - 1 ? 1 : 0;
+        Ctot += C[i];
+      });
+      const ccap = coolC.capacity * 1000;
+      if (Ctot > ccap) { for (let i = 0; i < N; i++) C[i] *= ccap / Ctot; Ctot = ccap; held.fill(0); }
+    }
     // Heatwave: someone home opens a room's windows once it passes 22 °C and it is cooler outside (CIBSE TM59).
     // Single-sided stack flow (BS 5925): Q = Cd·A/3·√(g·h·ΔT/T), on the last step's ΔT; heating is off, so no setpoint uses Hsum.
-    const opening = id === 'summer' && PATTERNS[g.pattern](hr, weekend);
+    const opening = id === 'summer' && !ideal && PATTERNS[g.pattern](hr, weekend);
     for (let i = 0; i < N; i++) {
-      const dT = T[i] - To, Hw = opening && openW[i] > 0 && T[i] > OPEN_AT && dT > 0 ? 1200 * openW[i] * Math.sqrt((9.81 * dT) / (273 + (T[i] + To) / 2)) : 0;
-      T[i] = (rhs[i] + P[i] + Hw * To) / (Hsum[i] + Hw);
+      // A room the cooling is holding at its setpoint keeps its windows shut; one it can't keep up with (or off its hours) opens them.
+      const dT = T[i] - To, Hw = opening && !held[i] && openW[i] > 0 && T[i] > OPEN_AT && dT > 0 ? 1200 * openW[i] * Math.sqrt((9.81 * dT) / (273 + (T[i] + To) / 2)) : 0;
+      T[i] = (rhs[i] + P[i] - C[i] + Hw * To) / (Hsum[i] + Hw);
       // Exact decay towards the air over the step, stable however light the mass.
       if (Cm[i] > 0) Tm[i] += (T[i] - Tm[i]) * (1 - Math.exp((-Hms[i] * DT) / Cm[i]));
     }
@@ -257,15 +298,25 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
     if (tAbs >= wx.warmup) {
       const k = Math.floor(tc);
       if (k < hours) {
-        out[k] += To / stepsPerH; heat[k] += Ptot / stepsPerH;
+        out[k] += To / stepsPerH; heat[k] += Ptot / stepsPerH; cool[k] += Ctot / stepsPerH;
         for (let i = 0; i < rooms.length; i++) { Th[i][k] += T[i] / stepsPerH; Ph[i][k] += P[i] / stepsPerH; }
         if (loftT) loftT[k] += T[LOFT] / stepsPerH;
+        // Parts of a held room's load: sun (glass and roofs), people and appliances, heat through the outside fabric and
+        // in the air, the rest (mass giving back stored heat, ground, neighbouring rooms, loft) found as the balance.
+        if (coolRooms) coolRooms.forEach((x, i) => {
+          if (!C[i]) return;
+          const d = To - T[i];
+          x.C[k] += C[i] / stepsPerH; x.sun[k] += (gain[i] - gInt[i]) / stepsPerH; x.inside[k] += gInt[i] / stepsPerH;
+          x.fabric[k] += ((Hout[i] - Hvent[i]) * d) / stepsPerH; x.air[k] += (Hvent[i] * d) / stepsPerH;
+        });
       }
     }
   }
 
   let peakW = 0, heatKWh = 0, boughtKWh = 0;
   const monthHeat = Array(12).fill(0) as number[], monthBought = Array(12).fill(0) as number[];
+  let coolPeakW = 0, coolKWh = 0, coolBoughtKWh = 0;
+  const monthCool = Array(12).fill(0) as number[], monthCoolBought = Array(12).fill(0) as number[];
   for (let k = 0; k < hours; k++) {
     heat[k] *= hf;
     peakW = Math.max(peakW, heat[k]);
@@ -273,6 +324,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
     const m = MONTH_OF_DAY[(wx.doy(k) - 1) % 365];
     monthHeat[m] += heat[k] / 1000;
     if (heat[k] > 0) { const b = heat[k] / 1000 / sourceEff(h, flowAt(out[k]), out[k], base.Tg, m); boughtKWh += b; monthBought[m] += b; }
+    if (cool[k] > 0) { const c = cool[k] / 1000; coolPeakW = Math.max(coolPeakW, cool[k]); coolKWh += c; monthCool[m] += c; const b = c / coolEer(coolC!, out[k]); coolBoughtKWh += b; monthCoolBought[m] += b; }
   }
   const comfort = rooms.map((r, i) => {
     let cold = 0, late = 0, warm = 0, min = Infinity, max = -Infinity, below16: number | null = null;
@@ -291,7 +343,42 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
   return {
     id, hours, rooms: rooms.map((r) => ({ id: r.room.id, name: r.room.name, heated: r.room.heated, setpoint: r.room.setpoint })),
     out, heat, T: Th, P: Ph, loftT, peakW, heatKWh, boughtKWh, monthHeat, monthBought, comfort,
+    cool, coolPeakW, coolKWh, coolBoughtKWh, monthCool, monthCoolBought, coolRooms,
   };
+}
+
+export interface CoolLoad {
+  /** Rooms held at, °C; the whole-house (block) load at its peak hour, W, and that hour (0–23, solar time). */
+  setpoint: number; blockW: number; blockHour: number;
+  /** Each heated room's own peak and its hour; its parts at that hour, W; what its cooling emitters can take out at the setpoint, W (0 without cooling). */
+  rooms: Array<{ id: string; name: string; area: number; peakW: number; hour: number; sun: number; inside: number; fabric: number; air: number; other: number; canW: number }>;
+}
+
+/**
+ * Design cooling load (the CIBSE Guide A / EN ISO 52016 idea): the summer peak day, clear, 15–29 °C, every heated
+ * room held at the cooling setpoint all day with windows shut. Room peaks size emitters; the whole-house peak hour
+ * (lower than the sum, as rooms peak at different times) sizes the heat pump. Sensible heat only.
+ */
+export function coolingLoad(h: House, base: HouseResult = calcHouse(h)): CoolLoad {
+  const setpoint = h.heating.cooling?.setpoint ?? COOLING_DEFAULT.setpoint;
+  const r = simulate(h, 'summer', base, undefined, setpoint);
+  let blockW = 0, blockHour = 0;
+  for (let k = 0; k < r.hours; k++) if (r.cool[k] > blockW) { blockW = r.cool[k]; blockHour = k; }
+  const { cooled } = served(h), on = coolingOn(h);
+  const coolE = { heating: { ...h.heating, emitters: h.heating.emitters.filter((e) => cooled.has(e.id)) } };
+  const rooms = base.rooms.flatMap((rr, i) => {
+    if (!rr.room.heated) return [];
+    const x = r.coolRooms![i];
+    let k = 0;
+    for (let j = 1; j < r.hours; j++) if (x.C[j] > x.C[k]) k = j;
+    const part = { sun: x.sun[k], inside: x.inside[k], fabric: x.fabric[k], air: x.air[k] };
+    return [{
+      id: rr.room.id, name: rr.room.name, area: rr.area, peakW: x.C[k], hour: k, ...part,
+      other: x.C[k] - part.sun - part.inside - part.fabric - part.air,
+      canW: on ? roomCool(coolE, rr.room.id, h.heating.cooling!.flow, setpoint) : 0,
+    }];
+  });
+  return { setpoint, blockW, blockHour, rooms };
 }
 
 /**
@@ -308,6 +395,8 @@ export function yearRes(h: House, res: HouseResult, sim: SimResult | null, k = 1
   return {
     ...res, annualKWh, months, annualFrom: sim ? 'year' : 'estimate',
     hp: { ...res.hp, kwh, seasonal: kwh > 0 ? annualKWh / kwh : res.hp.seasonal, cost: (kwh * tf.p) / 100 + tf.standing, co2: kwh * tf.co2 },
+    // A heat pump's cooling is bought on the same electricity tariff, with no second standing charge.
+    cool: sim && sim.coolKWh > 0 ? { removed: sim.coolKWh, kwh: sim.coolBoughtKWh, cost: (sim.coolBoughtKWh * tf.p) / 100, co2: sim.coolBoughtKWh * tf.co2, peakW: sim.coolPeakW } : undefined,
   };
 }
 
@@ -340,8 +429,9 @@ export function verdict(h: House, r: SimResult, cost = 0): { ok: boolean; text: 
   if (r.id === 'summer') {
     // shortcut: a fixed 3 hours over 25 °C (26 °C in bedrooms) on the peak day; CIBSE TM59 judges over a whole summer.
     const hot = r.comfort.filter((c) => c.warm > 3), worst = r.comfort.reduce((a, c) => (c.max > a.max ? c : a));
-    if (!hot.length) return { ok: true, text: `No: no room is over 25 °C (26 °C in bedrooms) for more than 3 hours; the warmest, ${named([worst.id])}, peaks at ${worst.max.toFixed(1)} °C.` };
-    return { ok: false, text: `Yes: ${named(hot.map((c) => c.id))} ${hot.length > 1 ? 'are' : 'is'} over 25 °C (26 °C in bedrooms) for more than 3 hours; ${named([worst.id])} reaches ${worst.max.toFixed(1)} °C.` };
+    const withC = r.coolKWh > 0 ? ` With cooling peaking at ${(r.coolPeakW / 1000).toFixed(1)} of ${h.heating.cooling?.capacity ?? 0} kW.` : '';
+    if (!hot.length) return { ok: true, text: `No: no room is over 25 °C (26 °C in bedrooms) for more than 3 hours; the warmest, ${named([worst.id])}, peaks at ${worst.max.toFixed(1)} °C.${withC}` };
+    return { ok: false, text: `Yes: ${named(hot.map((c) => c.id))} ${hot.length > 1 ? 'are' : 'is'} over 25 °C (26 °C in bedrooms) for more than 3 hours; ${named([worst.id])} reaches ${worst.max.toFixed(1)} °C.${withC}` };
   }
   const heated = r.comfort.filter((c) => r.rooms.find((x) => x.id === c.id)!.heated);
   const first = heated.filter((c) => c.below16 != null).sort((a, b) => a.below16! - b.below16!)[0];

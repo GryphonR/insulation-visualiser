@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { calcHouse } from './house';
 import { defaultHouse } from './house-default';
 import { lpm } from './house-heating';
-import { PIPE_SIZES, PIPE_WALL, attachments, drawRun, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, joinRun, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitSegment, squareInto } from './house-pipes';
+import { PIPE_SIZES, PIPE_WALL, attachments, drawRun, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, joinRun, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitCircuits, splitSegment, squareInto } from './house-pipes';
 
 /** Place a heater so its pipes connect at `p` (its valve end, for a radiator). */
 const put = (h: ReturnType<typeof defaultHouse>, e: ReturnType<typeof defaultHouse>['heating']['emitters'][number], p: [number, number]) => {
@@ -143,6 +143,22 @@ describe('combining runs', () => {
     }
     // Nothing left to combine the second time.
     expect(combineRuns(h, res)).toBe(0);
+  });
+  it('by circuit: the riser splits into one run per zone, and runs share a pipe only within their zone', () => {
+    const h = defaultHouse();
+    h.heating.source = { at: [0, 0], storey: 0 };
+    h.heating.risers = [{ id: 'rs1', at: [2, 0] }];
+    h.heating.pipes = autoPipes(h);
+    const res = calcHouse(h), zoneOf = (p: { emitter?: string }) => h.heating.emitters.find((e) => e.id === p.emitter)?.zone ?? null;
+    const up = h.heating.pipes.filter((p) => p.name.startsWith('To first floor')).length;
+    splitCircuits(h, zoneOf);
+    combineRuns(h, res, zoneOf);
+    const pipes = h.heating.pipes!, risers = pipes.filter((p) => p.name.startsWith('To first floor'));
+    expect(risers.length).toBeGreaterThan(up);
+    // Every run that feeds others leads to one zone only.
+    const zones = (id: string): Set<string> => { const p = pipes.find((x) => x.id === id)!, z = zoneOf(p); return new Set([...(z ? [z] : []), ...pipes.filter((k) => k.parent === id).flatMap((k) => [...zones(k.id)])]); };
+    for (const p of pipes.filter((x) => x.parent && !x.emitter)) expect(zones(p.id).size, p.name).toBe(1);
+    expect(sizePipes(h, res).unpiped).toEqual([]);
   });
 });
 

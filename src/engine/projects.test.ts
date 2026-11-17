@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { defaultHouse } from './house-default';
 import { newProject } from './house-scenarios';
-import { deleteStored, listProjects, loadActive, openStored, rawStored, saveProject, storedProjectsUsing } from './projects';
+import { deleteStored, listProjects, loadActive, openStored, parseProjectFile, projectFileText, rawStored, saveProject, storedProjectsUsing } from './projects';
 
 // Tests run in Node: a Map stands in for the browser's storage, with a switch to make it refuse writes.
 let full = false;
@@ -58,5 +58,12 @@ describe('projects in browser storage', () => {
     saveProject('b', named('Beta'));
     expect(storedProjectsUsing('cm123', 'b')).toEqual(['Alpha']);
     expect(storedProjectsUsing('cm123', 'a')).toEqual([]);
+  });
+
+  it('round-trips a project through its export file and rejects one with no scenarios', () => {
+    const back = parseProjectFile(projectFileText(named('Alpha')));
+    expect(back?.scenarios[0].house.name).toBe('Alpha');
+    expect(parseProjectFile('{"v":1,"scenarios":[]}')).toBeNull();
+    expect(() => parseProjectFile('not json')).toThrow();
   });
 });

@@ -35,6 +35,7 @@ const SECTIONS: Section[] = [
     ['plan-buildups', '1. Build-ups'],
     ['plan-model', '2. Drawing the house'],
     ['plan-heating', '3. Heating'],
+    ['plan-controls', '3b. Valves, modes and cooling'],
     ['plan-results', '4. Results'],
     ['plan-scenarios', 'Scenarios and comparing'],
   ]),
@@ -58,6 +59,7 @@ const SECTIONS: Section[] = [
     ['sun', 'Sun, and sol-air temperature'],
     ['inner-face', 'The inner face and comfort'],
     ['floor-edge', 'Floor edges and junctions'],
+    ['controls', 'Control plans, zones and cooling'],
   ]),
   ...s('Concepts', 'Moisture', [
     ['moist-vapour', 'Vapour, humidity and vapour pressure'],
@@ -330,7 +332,7 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
             <li><b>Name:</b> for your own use.</li>
           </ul>
           <p>
-            The rooms are always drawn by you. If you'd rather see a finished example first, open one of the demo houses. Each comes with its build-ups, rooms, heating and some upgrade scenarios already made.
+            The rooms are always drawn by you. If you'd rather see a finished example first, open one of the demo houses from the Projects page. Each comes with its build-ups, rooms, heating and some upgrade scenarios already made. Each also has a control plan on its system diagram: a combi for the gas houses as found (S plan plus where a boiler has a cylinder), and the heat-pump plan (a hot-water diverter and a zone valve for each zone) for every heat pump. Their pipework is laid one circuit at a time: each zone and the cylinder get their own pipes from the plant, with one riser pipe per zone, so each valve sits on a single run. Least-pipe routing lets every zone share the same trunks, which leaves no one pipe that a zone valve could shut.
           </p>
           <p>
             Your projects are listed under <Go to="projects">Project</Go> at the top left, with when each was last saved.
@@ -397,9 +399,47 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
             <li>
               <Go to="pipes">Pipework</Go>: the pipes from the heat source to each heater. It shows the water flow in each run, whether the pump can push it round, and whether a heat pump gets the minimum flow it needs. <b>Lay out typical pipework</b> gives a starting point.
             </li>
+            <li>
+              <Go to="schematic">System diagram</Go>: the pipework drawn as a flow-and-return schematic, with the valves and the modes that set them (heating, hot water, each zone, cooling). See <button type="button" className="inline-link" onClick={() => jump('plan-controls')}>3b. Valves, modes and cooling</button>.
+            </li>
           </ul>
           <p>
             The heat source itself (boiler or heat pump), its output and its efficiency are chosen at the top of <Go to="heating">System &amp; flow</Go>. Choosing one sets its typical max flow temperature and flow − return drop (80 °C and 11 K for an old boiler, 70 °C and 20 K for a condensing boiler, 45 °C and 5 K for a heat pump), so the radiators are checked at the flow that source really runs at. Your energy prices are under Results, on <Go to="energy">Energy &amp; cost</Go>.
+          </p>
+        </section>
+
+        <section id="plan-controls" className="learn-section">
+          <h2>3b. Valves, modes and cooling</h2>
+          <p>
+            The pipework says where the water <em>can</em> go. The valves say where it <em>does</em> go at any moment. Both are set on the <Go to="schematic">System diagram</Go>, which draws every run as a flow pipe (on top) and a return pipe (below), from the heat source on the left to the emitters on the right.
+          </p>
+          <h3>Pick a control plan</h3>
+          <p>
+            Under <b>Control plan</b>, choose a plan and press <b>Add</b>. The planner finds where each valve has to go on your pipework, puts it there, and fills in the plan&apos;s modes. The plans are the usual UK layouts: Y plan, S plan, S plan plus (a valve per zone), W plan, Heat pump (a diverter, zone valves and radiator isolation for cooling) and Combi. They are explained in <button type="button" className="inline-link" onClick={() => jump('controls')}>Control plans, zones and cooling</button>.
+          </p>
+          <p>
+            A valve shuts everything beyond it. Where several runs leave the same tee and one valve has to shut them all, the plan puts in a short <b>header</b> for the valve to sit on, shown on the diagram with its name. Where the runs that need shutting leave a shared pipe at different tees, the same valve is drawn on each of them. On site that means one actuator per branch wired together, or re-piping so the branches leave from one place. Remove the plan and its headers go too.
+          </p>
+          <h3>Modes</h3>
+          <p>
+            A mode is one state of the system: whether the source sends <b>hot</b> water, <b>chilled</b> water or nothing, and where each valve sits. Pick a mode in the bar above the diagram, or a row in the <b>Modes</b> table, and the diagram shows it. Pipes carrying water are coloured, with dots moving out along the flow and back along the return. Their speed follows the water velocity in that run. Heating is red, water going only to the cylinder is amber, and chilled water is blue. Each return is a paler shade of its flow. Shut runs turn grey. Each run's label gives its flow and velocity in the mode shown. The pipe size is chosen for the run's busiest mode, which the label names after <b>sized for</b> when it is a different mode. Each valve is a bowtie, hollow when open and filled when shut, and its gate turns along the pipe as it opens. <b>Play modes</b> steps through them in turn. Animation is switched off if your system asks for reduced motion.
+          </p>
+          <p>
+            Every cell in the table can be changed: rename a mode, change its water, or set any valve&apos;s position. <b>Add mode</b> copies the one showing so you can make your own, for example a night setback that heats only the bedrooms. Once you change anything, the plan is marked as your own (custom). Applying a plan again asks before it replaces your changes.
+          </p>
+          <h3>Moving and adding valves</h3>
+          <p>
+            Drag a valve onto another run to move it. Or press <b>pick runs</b> next to a valve in the <b>Valves</b> list and click runs in the diagram to put it on them or take it off. A 3-port valve has two ports: A (the plans use it for hot water) and B (heating). Pick runs for each port separately. <b>Add valve</b> makes a new 2-port valve and starts picking its runs. A valve&apos;s kind can be a 2-port zone valve, a 3-port mid-position valve (it can feed both ports at once) or a 3-port diverter (one port or the other).
+          </p>
+          <h3>What the modes change</h3>
+          <ul>
+            <li><b>Pipe sizes.</b> Each run is sized for its busiest mode, and the index circuit is the worst of any mode. With hot water priority the primary carries the larger of the heating and the cylinder reheat, not both. The cylinder coil&apos;s reheat (set under Control plan) defaults to the source&apos;s output when a plan is first added. Each run&apos;s label says which mode it was sized for.</li>
+            <li><b>The simulations.</b> An emitter is heated only if some hot mode reaches it, and cooled only if it can cool and some chilled mode reaches it. Shut a zone off in every mode and its rooms go cold in the runs.</li>
+            <li><b>Checks.</b> The diagram flags a mode with every circuit shut (the pump runs against closed valves), chilled water reaching a radiator, towel rail or the cylinder, a diverter asked for both ports, cooling from a boiler, emitters no mode heats, and a cylinder no mode reheats.</li>
+          </ul>
+          <h3>Cooling</h3>
+          <p>
+            A heat pump can run in reverse. Turn it on under <Go to="heating">System &amp; flow</Go> → <b>Cooling</b>, with its cooling output and EER (both at 35 °C outside and 18 °C water), the temperature to cool rooms to, and the chilled flow and its rise. Fan coils (an emitter kind on <Go to="emitters">Emitters</Go>, or on the plan from a radiator&apos;s side panel) and underfloor loops can cool. Radiators and towel rails cannot. In the <Go to="year/summer">Summer peak day</Go> and <Go to="year/year">Typical year</Go> runs, rooms with a cooling emitter are held at the cooling setpoint during their occupied hours. While the cooling is holding a room there, its windows stay shut. Outside those hours, or when the cooling cannot keep up, the windows are opened as in any other room. The Passivhaus-type demo shows this: fan coils in the living room and the two big bedrooms, on 7/12 °C chilled water. It is zoned as fan coils and radiators, so in cooling the radiator zone valve is shut. The cooling&apos;s electricity and cost are shown on their own, beside the heating figures on <Go to="energy">Energy &amp; cost</Go> and in the report.
           </p>
         </section>
 
@@ -960,6 +1000,41 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           </Callout>
           <p>
             Set all of this on the <Go to="floor">Floors</Go> page. <Go to="learn/junction-model">How the junction Ψ is worked out</Go> explains the calculation.
+          </p>
+        </section>
+
+        <section id="controls" className="learn-section">
+          <h2>Control plans, zones and cooling</h2>
+          <p>
+            A wet heating system has one heat source and many places the water could go: radiators or underfloor loops in each room, and the coil in a hot water cylinder. Motorised valves, opened and shut by room and cylinder thermostats through a wiring centre, decide which of those get water. A handful of standard layouts cover most UK homes.
+          </p>
+          <ul>
+            <li><b>Y plan.</b> One 3-port <em>mid-position</em> valve where the heating and hot water pipes split. Port A feeds the cylinder, port B the heating, and the mid position feeds both. Cheap and common with boilers. When both are called, the water is shared, so neither gets the boiler&apos;s full output.</li>
+            <li><b>S plan.</b> Two 2-port zone valves, one on the heating and one on the cylinder, each opened by its own thermostat. Either, both or neither can be open.</li>
+            <li><b>S plan plus.</b> An S plan with a 2-port zone valve for each heating zone (say living areas, bedrooms and bathroom), so each zone runs on its own thermostat and timer. This is what <em>zoning</em> usually means.</li>
+            <li><b>W plan.</b> A 3-port <em>diverter</em>: the water goes to the heating or to the cylinder, never both. Hot water has <em>priority</em>: the heating pauses while the cylinder reheats.</li>
+            <li><b>Heat pump.</b> Nearly always a diverter with hot water priority, because the cylinder needs a much hotter flow (around 50 to 55 °C) than the heating (35 to 45 °C). A heat pump runs most efficiently at the lowest flow it can, so it serves one at a time. Zone valves are added where there are zones, and isolation valves where it cools.</li>
+            <li><b>Combi.</b> No cylinder: the boiler heats tap water as it flows, through a plate heat exchanger, with a diverter inside the boiler. Heating pauses while a tap runs.</li>
+          </ul>
+          <h3>Why priority matters for pipe sizes</h3>
+          <p>
+            Pipes are sized for the most water they ever carry. With no valves, or a Y or S plan calling both at once, the primary pipe from the source carries the heating and the cylinder reheat together. With priority it carries one or the other, so it is sized for the larger. The planner works the flows out mode by mode and sizes each run for its busiest. It also finds the index circuit (the path with the highest pressure drop, which the pump must overcome) in each mode and checks the worst one against the pump.
+          </p>
+          <h3>Zones and the pump</h3>
+          <p>
+            When every zone valve is shut but the pump still runs, it pushes against closed valves. That is noisy, and it can starve a heat pump of the minimum flow it needs. The usual fixes are an automatic bypass valve, a buffer tank, or wiring that stops the pump when no zone calls. The planner flags any mode where every circuit is shut.
+          </p>
+          <h3>Cooling with a heat pump</h3>
+          <p>
+            A reversible heat pump runs its refrigerant cycle backwards and sends chilled water, typically 15 to 20 °C, round the same pipes. How well that cools depends on the emitter:
+          </p>
+          <ul>
+            <li><b>Underfloor loops</b> cool gently. Cold air sits low, so a cool floor transfers heat less well than a warm one: the planner takes about 60% of the heating coefficient. More importantly, the floor surface must stay above the <b>dew point</b> of the room air, or water condenses on it. At 25 °C and 60% humidity that is about 17 °C, and EN 1264 also keeps occupied floors at 19 °C or more. That limits a floor to roughly 30 to 45 W/m².</li>
+            <li><b>Fan coils</b> blow room air over a coil, so they cool and heat well. Their output is close to proportional to the difference between the water and the air. Colder water cools much more, but then the coil condenses moisture and needs a drain. The planner counts their sensible cooling only (the air temperature, not the drying).</li>
+            <li><b>Radiators and towel rails</b> barely cool. Below the dew point they sweat and drip. A cooling system shuts them off with isolation valves while it cools. The Heat pump plan adds those valves, and the checks flag any radiator left on chilled water.</li>
+          </ul>
+          <p>
+            Cooling efficiency is the <b>EER</b> (energy efficiency ratio): heat taken out per unit of electricity. It is rated at 35 °C outside and 18 °C water, and gets better as it gets cooler outside, since the heat pump has less far to lift the heat. The planner takes about 2.5% better for each degree cooler, between half and 1.6 times the rated EER. In the runs, a heat pump that is heating in an hour does not also cool in that hour.
           </p>
         </section>
 

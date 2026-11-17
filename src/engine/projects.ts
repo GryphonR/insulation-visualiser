@@ -1,6 +1,7 @@
 // Several projects in one browser: an index of them, and each project's body under its own key.
 import { hasSavedProject, loadProject, sanitizeProject } from './house-scenarios';
 import type { Project } from './house-scenarios';
+import { addImportedMaterials, customMaterialsIn } from './data';
 
 const IDX = 'insulation-visualiser.projects.v1';
 /** Storage key of one project's body (another tab's save shows up as a storage event on it). */
@@ -68,6 +69,17 @@ export function storedProjectsUsing(id: string, except: string): string[] {
   } catch {
     return [];
   }
+}
+
+/** A project as a file: carries the custom materials its layers use, so another browser can open it. */
+export const projectFileText = (p: Project) =>
+  JSON.stringify({ ...p, materials: customMaterialsIn(p.scenarios.flatMap((s) => s.house.buildups.flatMap((b) => b.layers))) }, null, 1);
+
+/** Read a project file (throws on bad JSON). Its custom materials are registered first, or cleaning drops the layers made of them. */
+export function parseProjectFile(text: string): Project | null {
+  const p = JSON.parse(text);
+  addImportedMaterials(p?.materials);
+  return sanitizeProject(p);
 }
 
 export function deleteStored(id: string): void {

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { CIBSE_ACH, SHADING, defaultTemp, onStorey, roomEdges, roomHeight } from '../engine/house';
 import type { Buildup, BuildupKind, House, HouseResult, Room, RoomType } from '../engine/house';
-import { RAD_LABEL, UFH_PIPES, UFH_SPACINGS, loopLength, loopMax } from '../engine/house-heating';
+import { EMITTER_NAME, RAD_LABEL, UFH_PIPES, UFH_SPACINGS, loopLength, loopMax } from '../engine/house-heating';
 import type { RadType } from '../engine/house-heating';
 import { OPEN_DOORWAY, addBasement, addStoreyAbove, bandName, canAddBasement, canRemoveBasement, canRemoveTop, copyRooms, deleteRoom, flipRooms, innerDoorAt, isOutside, narrowAtWall, openingCentre, partyKeys, pieceAlign, pieceGap, pieceKeys, pieceThickness, removeBasement, setPieceAlign, removeTop, rotateRooms, setWallLength, splitStoreys, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
 import { polyArea } from '../engine/geom';
@@ -19,6 +19,7 @@ const GROUPS: Array<{ id: string; label: string; tools: ToolDef[]; list?: 'glazi
   { id: 'select', label: 'Select', tools: [['select', 'Select', '↖']] },
   { id: 'room', label: 'Draw a room', tools: [['box', 'Box room', '▭'], ['room', 'Polygon room', '⬠']] },
   { id: 'cut', label: 'Cut', tools: [['split', 'Split room', '✂'], ['join', 'Delete wall section', '⌫']] },
+  { id: 'stairs', label: 'Stairs', tools: [['stairs', 'Stairwell', '☰']] },
   { id: 'window', label: 'Window', tools: [['window', 'Window', '▬']], list: 'glazing' },
   { id: 'door', label: 'Door', tools: [['door', 'Door', '▯']], list: 'door' },
   { id: 'heat', label: 'Heating', tools: [['radiator', 'Radiator', '≣'], ['ufh', 'UFH zone', '▦']] },
@@ -34,6 +35,7 @@ const HINT: Record<Tool, string> = {
   split: 'Click two points to draw a line across a room; it is cut in two along the line, with its windows, walls and emitters shared out.',
   join: 'Click a wall between two rooms to take it out: they become one room, keeping the first room\'s name and settings. Doors between them go; windows, heaters and wall build-ups carry over.',
   corner: 'Click a wall to add a corner there, then drag it.',
+  stairs: 'On the floor the stairs go up from, drag out the hole they rise through (or click its corners), inside the room below and the room above. The two rooms then share their air through it. Drag it by its tag; Delete removes it.',
   window: 'Click an outside wall to place a window, then drag it along the wall or to another wall.',
   door: 'Click an outside wall to place a door, or a wall between two rooms for an inside door; an open doorway goes between two rooms only. Pick the type from the list beside the button. Drag it along or to another wall.',
   radiator: 'Click inside a heated room. A radiator snaps to the nearest wall; drag it to move it.',
@@ -471,7 +473,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
     // The run it comes off, when that is on the same floor: it can follow its floor or ceiling.
     const upSame = house.heating.pipes?.find((x) => x.id === p.parent && x.leg && x.leg.storey === p.leg?.storey);
     const em = p.emitter ? house.heating.emitters.find((x) => x.id === p.emitter) : undefined, tail = em && p.leg ? valveTail(house, p.leg.storey, viaOf(house, p), em.kind) : 0;
-    const emName = (id: string) => { const e = house.heating.emitters.find((x) => x.id === id); return e ? `${house.rooms.find((r) => r.id === e.room)?.name ?? e.room} ${e.kind === 'ufh' ? 'UFH' : e.kind === 'towel' ? 'towel rail' : 'radiator'}` : id; };
+    const emName = (id: string) => { const e = house.heating.emitters.find((x) => x.id === id); return e ? `${house.rooms.find((r) => r.id === e.room)?.name ?? e.room} ${e.kind === 'ufh' ? 'UFH' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : 'radiator'}` : id; };
     const setRun = (patch: Partial<typeof p>) => upd((h) => { const x = h.heating.pipes?.find((q) => q.id === p.id); if (x) Object.assign(x, patch); });
     return (
       <>
@@ -547,7 +549,13 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
     const set = (patch: Partial<typeof e>) => upd((h) => { const x = h.heating.emitters.find((q) => q.id === e.id); if (x) Object.assign(x, patch); });
     return (
       <>
-        <div className="eyebrow">{e.kind === 'ufh' ? 'Underfloor loop' : e.kind === 'towel' ? 'Towel rail' : 'Radiator'} · {house.rooms.find((r) => r.id === e.room)?.name}</div>
+        <div className="eyebrow">{EMITTER_NAME[e.kind]} · {house.rooms.find((r) => r.id === e.room)?.name}</div>
+        {e.kind !== 'ufh' && <label className="hf"><span className="eyebrow">Kind</span>
+          <select className="select" value={e.kind} onChange={(ev) => { const k = ev.target.value as typeof e.kind; set(k === 'fancoil' && e.kind !== 'fancoil' ? { kind: k, rated: 2000 } : { kind: k }); }}>
+            {(['radiator', 'towel', 'fancoil'] as const).map((k) => <option key={k} value={k}>{EMITTER_NAME[k]}</option>)}
+          </select>
+        </label>}
+        {(e.kind === 'towel' || e.kind === 'fancoil') && <Num label="Rated output at ΔT50" unit="W" step={50} min={0} value={e.rated} onChange={(v) => set({ rated: Math.max(0, v) })} />}
         {e.kind === 'radiator' && <>
           <label className="hf"><span className="eyebrow">Type</span>
             <select className="select" value={e.type} onChange={(ev) => set({ type: ev.target.value as RadType })}>{(Object.keys(RAD_LABEL) as RadType[]).map((t) => <option key={t} value={t}>{RAD_LABEL[t]}</option>)}</select>

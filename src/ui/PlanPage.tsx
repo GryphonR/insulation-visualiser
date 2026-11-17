@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Pt } from '../engine/geom';
 import { DrawCanvas, GRID, NO_SEL } from './DrawCanvas';
-import type { EditField, Lens, OpPick, Sel, Tool } from './DrawCanvas';
+import type { EditField, Lens, OpPick, Sel, Tool, View as CanvasView } from './DrawCanvas';
 import { DrawMenu, GridSelect, Inspector, LayerSettings, LayerTabs, LensTabs, RoomFields, drawHint } from './DrawPanels';
 import { bandName } from '../engine/house-draw';
 import { planBounds } from './HousePlan';
@@ -30,6 +30,8 @@ export function PlanPage({ selected }: { selected?: string }) {
   const [lens, setLens] = useState<'loss' | 'temp' | 'cover' | 'none'>('loss');
   /** What is being edited: the plan, or the pipework. Floor and ceiling layers and the roof are plan only. */
   const [view, setView] = useState<Lens>('plan');
+  /** The canvas pan and zoom, the same on every floor and layer. */
+  const canvasView = useRef<CanvasView | null>(null);
   const [opPick, setOpPick] = useState<OpPick>({});
   const pickView = (v: Lens) => { setView(v); setSel(NO_SEL); setTool('select'); if (v === 'pipes' && (band != null || roofOn)) { setBand(null); setRoofOn(false); } };
   const [showBelow, setShowBelow] = useState(true);
@@ -74,11 +76,11 @@ export function PlanPage({ selected }: { selected?: string }) {
 
 
   const hint = drawHint(roofOn ? 'roof' : band != null, tool, view);
-  const inspectorTitle = roofSel ? 'Roof' : sel.zone ? (house.zones?.find((x) => x.id === sel.zone)?.ufh ? 'Underfloor heating zone' : 'Floor zone') : (sel.group?.length ?? 0) > 1 ? 'Rooms' : sel.walls.length ? 'Walls' : sel.item?.k === 'op' ? 'Window or door' : sel.item?.k === 'plant' ? 'Heating plant' : sel.item?.k === 'pipe' ? 'Pipe run' : 'Heat emitter';
+  const inspectorTitle = roofSel ? 'Roof' : sel.zone ? (() => { const zz = house.zones?.find((x) => x.id === sel.zone); return zz?.ufh ? 'Underfloor heating zone' : zz?.buildup === 'open-stairwell' ? 'Stairwell' : 'Floor zone'; })() : (sel.group?.length ?? 0) > 1 ? 'Rooms' : sel.walls.length ? 'Walls' : sel.item?.k === 'op' ? 'Window or door' : sel.item?.k === 'plant' ? 'Heating plant' : sel.item?.k === 'pipe' ? 'Pipe run' : 'Heat emitter';
 
   return (
     <div className="plan-stage">
-        <DrawCanvas key={`${shown}-${band}-${roofOn}`} house={house} storey={shown} band={band ?? undefined} roof={roofOn} tool={measure ? 'select' : tool} setTool={setTool} sel={sel} setSel={setSel} upd={upd} below={showBelow} sticky={sticky} grid={grid} snapOn={snapOn} onEdit={editSel} lens={view} opPick={opPick} zoomStart={<GridSelect grid={grid} setGrid={setGrid} />}
+        <DrawCanvas key={`${shown}-${band}-${roofOn}`} house={house} storey={shown} band={band ?? undefined} roof={roofOn} tool={measure ? 'select' : tool} setTool={setTool} sel={sel} setSel={setSel} upd={upd} below={showBelow} sticky={sticky} grid={grid} snapOn={snapOn} onEdit={editSel} lens={view} opPick={opPick} viewRef={canvasView} zoomStart={<GridSelect grid={grid} setGrid={setGrid} />}
           underlay={traceUnderlay(house, trace, storey, imagery)}
           overlay={measure ? (to, _S, from) => (
             <g>

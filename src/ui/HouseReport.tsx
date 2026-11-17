@@ -1,8 +1,9 @@
 import { useMemo, useRef, useState } from 'react';
-import { MONTHS, customMaterialsIn } from '../engine/data';
+import { MONTHS } from '../engine/data';
+import { projectFileText } from '../engine/projects';
 import { FUEL_LABEL, SOURCE_LABEL, buildupU, effText, isHeatPump, tariff } from '../engine/house';
 import type { House } from '../engine/house';
-import { RAD_LABEL, ratedOf } from '../engine/house-heating';
+import { EMITTER_NAME, RAD_LABEL, ratedOf } from '../engine/house-heating';
 import type { Project } from '../engine/house-scenarios';
 import { download } from '../lib/util';
 import { Chip } from './controls';
@@ -20,7 +21,7 @@ export function HouseReport({ house, scenarioName, project, onImport }: { house:
   const fileRef = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState('');
   const emit = (id: string) => house.heating.emitters.filter((e) => e.room === id)
-    .map((e) => (e.kind === 'radiator' ? `${e.len}×${e.height} ${RAD_LABEL[e.type].split(' ')[0]}` : e.kind === 'towel' ? `Towel rail ${fmt(ratedOf(e))} W` : `UFH ${fmt(e.area, 1)} m²`)).join(', ');
+    .map((e) => (e.kind === 'radiator' ? `${e.len}×${e.height} ${RAD_LABEL[e.type].split(' ')[0]}` : e.kind === 'towel' || e.kind === 'fancoil' ? `${EMITTER_NAME[e.kind]} ${fmt(ratedOf(e))} W` : `UFH ${fmt(e.area, 1)} m²`)).join(', ');
   const heated = res.rooms.filter((r) => r.room.heated);
   const usedB = house.buildups.filter((b) => res.rooms.some((r) => r.faces.some((f) => f.buildup.id === b.id)));
 
@@ -50,7 +51,7 @@ export function HouseReport({ house, scenarioName, project, onImport }: { house:
           <div className="chips">
             <button type="button" className="btn-primary" onClick={() => window.print()}>Print / save PDF</button>
             <button type="button" className="btn-secondary" onClick={csv}>Room table (CSV)</button>
-            <button type="button" className="btn-secondary" onClick={() => download('house-project.json', JSON.stringify({ ...project, materials: customMaterialsIn(project.scenarios.flatMap((s) => s.house.buildups.flatMap((b) => b.layers))) }, null, 1), 'application/json')}>Export project (JSON)</button>
+            <button type="button" className="btn-secondary" onClick={() => download('house-project.json', projectFileText(project), 'application/json')}>Export project (JSON)</button>
             <button type="button" className="btn-secondary" onClick={() => fileRef.current?.click()}>Import project…</button>
             <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = ''; }} />
           </div>
@@ -101,6 +102,7 @@ export function HouseReport({ house, scenarioName, project, onImport }: { house:
           <h2>Heat source and running</h2>
           <p className="small">{SOURCE_LABEL[house.hp.source]}{isHeatPump(house.hp.source) ? '' : ` on ${FUEL_LABEL[house.hp.fuel].toLowerCase()}`}, {house.hp.capacity} kW at {res.Tout} °C ({res.hp.spare >= 0 ? `${fmt(res.hp.spare * 100)}% spare` : `${fmt(-res.hp.spare * 100)}% short`}). Flow {fmt(res.heat.designFlow, 1)} °C on the design day ({house.heating.control === 'ideal' ? 'ideal weather compensation' : house.heating.control === 'curve' ? 'weather compensation curve' : 'fixed flow'}){res.heat.gov ? `, set by ${house.rooms.find((r) => r.id === res.heat.gov!.id)?.name}` : ''}. {effText(house.hp.source, res.hp.designEff)} on the design day, {effText(house.hp.source, res.hp.seasonal)} over the year.</p>
           <p className="small">{fmt(res.hp.kwh)} kWh {isHeatPump(house.hp.source) ? 'electricity' : FUEL_LABEL[house.hp.fuel].toLowerCase()} a year for space heating, about £{fmt(res.hp.cost)} at {tariff(house.hp).p}p/kWh{tariff(house.hp).standing ? ' plus the gas standing charge' : ' (standing charges not included)'}, and {fmt(res.hp.co2)} kgCO₂ at {tariff(house.hp).co2} kg/kWh.</p>
+          {res.cool && <p className="small">Cooling: {fmt(res.cool.kwh)} kWh electricity a year to take out {fmt(res.cool.removed)} kWh, about £{fmt(res.cool.cost)}, peaking at {fmt(res.cool.peakW / 1000, 1)} kW.</p>}
           <p className="small muted">How the efficiency is worked out: {sourceWhy(house.hp)} Space heating only; hot water, pumps and backup heaters are not included.</p>
           <table className="h-table months-t"><thead><tr><th />{MONTHS.map((m) => <th key={m} className="n">{m}</th>)}</tr></thead>
             <tbody><tr><td>Heat kWh</td>{res.months.map((m, i) => <td key={i} className="n mono">{fmt(m.heat)}</td>)}</tr><tr><td>{isHeatPump(house.hp.source) ? 'COP' : 'Efficiency %'}</td>{res.months.map((m, i) => <td key={i} className="n mono">{m.heat > 0 ? (isHeatPump(house.hp.source) ? fmt(m.eff, 1) : fmt(m.eff * 100)) : '—'}</td>)}</tr></tbody>

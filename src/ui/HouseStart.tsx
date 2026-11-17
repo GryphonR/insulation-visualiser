@@ -1,12 +1,10 @@
 import { useState } from 'react';
 import type { House } from '../engine/house';
-import { DEMOS } from '../engine/house-demos';
-import type { Project } from '../engine/house-scenarios';
 import { AGE_BANDS, TEMPLATES, newHouse } from '../engine/house-templates';
 import { Chip } from './controls';
 
 /** Board 0a: start a project from a template, the house's age and what the EPC says. */
-export function HouseStart({ onCreate, onCancel, onDemo }: { onCreate: (h: House) => void; onCancel?: () => void; onDemo?: (p: Project) => void }) {
+export function HouseStart({ onCreate, onCancel }: { onCreate: (h: House) => void; onCancel?: () => void }) {
   const [name, setName] = useState('');
   const [postcode, setPostcode] = useState('');
   const [template, setTemplate] = useState('semi');
@@ -48,10 +46,6 @@ export function HouseStart({ onCreate, onCancel, onDemo }: { onCreate: (h: House
       <div className="chips">
         <button type="button" className="btn-primary" onClick={() => onCreate({ ...house, name: name.trim() || house.name, climate: postcode.trim() ? { ...house.climate, postcode: postcode.trim(), auto: true } : house.climate })}>Create project</button>
       </div>
-      {onDemo && <>
-        <div className="eyebrow">Or open a demo house</div>
-        <div className="chips">{DEMOS.map((d) => <button key={d.id} type="button" className="btn-secondary" onClick={() => onDemo(d.make())}>{d.label}</button>)}</div>
-      </>}
     </section>
   );
 }

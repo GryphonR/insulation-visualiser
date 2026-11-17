@@ -2,6 +2,7 @@
 import type { House, Room } from './house';
 import type { Pt } from './geom';
 import type { Pipe } from './house-pipes';
+import type { Controls } from './house-controls';
 import { loopLayout } from './house-ufh';
 import type { Corner, LoopPattern, LoopRect } from './house-ufh';
 
@@ -21,10 +22,10 @@ export const loopMax = (e: Pick<Emitter, 'pipe'>) => UFH_PIPES[e.pipe ?? 16] ?? 
 const qMaxFloor = (Troom: number) => 8.92 * Math.max(0, 29 - Troom) ** 1.1;
 
 export interface Emitter {
-  id: string; room: string; kind: 'radiator' | 'towel' | 'ufh'; zone: string;
+  id: string; room: string; kind: 'radiator' | 'towel' | 'ufh' | 'fancoil'; zone: string;
   /** Radiator: panel type, length and height in mm. */
   type: RadType; len: number; height: number;
-  /** Towel rail: rated output at ΔT50, W. */
+  /** Towel rail or fan coil: rated heat output at ΔT50, W. */
   rated: number;
   /** UFH loop: heated area m², pipe spacing mm, covering, tail length to the manifold m. */
   area: number; spacing: number; cover: string; tail: number;
@@ -63,10 +64,50 @@ export interface Heating {
   /** Pipe runs from the heat pump (board 3), and the pump's available head at the design flow, kPa. */
   pipes?: Pipe[];
   pumpHead?: number;
+  /** Valves on the runs and the modes that set them (board 3b, the system diagram). Unset: no valves, everything open. */
+  controls?: Controls;
+  /** Hot water cylinder coil reheat, W: what the coil takes while the cylinder heats. Unset: 0 (not counted). */
+  coilW?: number;
+  /** Cooling from a reversible heat pump. */
+  cooling?: Cooling;
 }
 
+/** A reversible heat pump's cooling: on, output at A35/W18 (kW), EER there, room setpoint, chilled flow and its rise, °C / K. */
+export interface Cooling { on: boolean; capacity: number; eer: number; setpoint: number; flow: number; dT: number }
+export const COOLING_DEFAULT: Cooling = { on: true, capacity: 5, eer: 3.5, setpoint: 25, flow: 18, dT: 3 };
+/** Indoor humidity taken for the dew point in cooling. shortcut: a fixed 60% (UK summer indoors); use a humidity input if the planner gains one. */
+export const COOL_RH = 0.6;
+/** Dew point, °C, from air temperature and relative humidity (0–1), Magnus formula. */
+export function dewPoint(T: number, rh = COOL_RH): number {
+  const g = Math.log(Math.max(0.01, rh)) + (17.62 * T) / (243.12 + T);
+  return (243.12 * g) / (17.62 - g);
+}
+/** Cooling is in use: a heat pump with cooling switched on. */
+export const coolingOn = (h: Pick<House, 'hp' | 'heating'>) => (h.hp.source === 'ashp' || h.hp.source === 'gshp') && !!h.heating.cooling?.on;
+/** EER at outside Te: rated at 35 °C, about 2.5% better per K cooler. shortcut: linear in Te, held to 0.5–1.6× rated; use datasheet points if cooling gains them. */
+export const coolEer = (c: Cooling, Te: number) => c.eer * Math.min(1.6, Math.max(0.5, 1 + 0.025 * (35 - Te)));
+/** Emitters that can cool: underfloor loops and fan coils. Radiators and towel rails only sweat. */
+export const canCool = (e: Pick<Emitter, 'kind'>) => e.kind === 'ufh' || e.kind === 'fancoil';
+export const EMITTER_NAME: Record<Emitter['kind'], string> = { radiator: 'Radiator', towel: 'Towel rail', ufh: 'Underfloor loop', fancoil: 'Fan coil' };
+
+/**
+ * Heat an emitter takes out of a room in cooling, W, at chilled flow `flow` and room air `Troom`. A fan coil is linear in
+ * mean water to air (rated/50 W/K; sensible only, the condensate drained). A UFH loop has a weaker surface coefficient in
+ * cooling (0.6× heating) and its surface is held at 19 °C or 1 K over the dew point, whichever is higher (EN 1264-5).
+ */
+export function emitterCool(e: Emitter, flow: number, Troom: number, h: Pick<House, 'heating'>): number {
+  const dT = h.heating.cooling?.dT ?? 3, mean = flow + dT / 2;
+  if (e.kind === 'fancoil') return (e.rated / 50) * Math.max(0, Troom - mean);
+  if (e.kind !== 'ufh') return 0;
+  const k = 0.6 * (UFH_K[e.spacing] ?? 6.0), q = (Troom - mean) / (1 / k + (COVERS[e.cover] ?? 0.05));
+  const qMax = 7 * Math.max(0, Troom - Math.max(19, dewPoint(Troom) + 1));
+  return Math.max(0, Math.min(q, qMax)) * loopArea(e);
+}
+export const roomCool = (h: Pick<House, 'heating'>, room: string, flow: number, Troom: number) =>
+  h.heating.emitters.filter((e) => e.room === room).reduce((t, e) => t + emitterCool(e, flow, Troom, h), 0);
+
 export const radRated = (e: Pick<Emitter, 'type' | 'len' | 'height'>) => (RAD_PER_M[e.type] ?? 1700) * (e.len / 1000) * (e.height / 600) ** 0.9;
-export const ratedOf = (e: Emitter) => (e.kind === 'radiator' ? radRated(e) : e.kind === 'towel' ? e.rated : 0);
+export const ratedOf = (e: Emitter) => (e.kind === 'radiator' ? radRated(e) : e.kind === 'towel' || e.kind === 'fancoil' ? e.rated : 0);
 /** Loop length: from the drawn route and tails when the loop is on the plan, else area ÷ spacing plus tails. */
 export const loopLength = (e: Emitter, h?: Pick<House, 'heating'>) => (h && loopLayout(h, e)?.total) || (e.area * 1000) / (e.spacing || 150) + 2 * e.tail;
 /** Heated floor area of a loop: its drawn rectangle, or the area entered. */
@@ -84,6 +125,8 @@ export function emitterOut(e: Emitter, flow: number, Troom: number, h: Pick<Hous
     return Math.max(0, Math.min(q, qMaxFloor(Troom))) * loopArea(e);
   }
   const mean = flow - dT / 2;
+  // A fan coil's forced convection is close to linear in the temperature difference.
+  if (e.kind === 'fancoil') return e.rated * Math.max(0, (mean - Troom) / 50);
   return ratedOf(e) * Math.max(0, (mean - Troom) / 50) ** 1.3;
 }
 

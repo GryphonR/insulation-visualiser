@@ -298,7 +298,7 @@ export function EnergyPage() {
   const s = house.hp.source, hp = isHeatPump(s), tf = tariff(house.hp), sheet = activeSheet(house.hp);
   return (
     <div className="house">
-          <Card title="Running cost" note={`Space heating only; hot water comes later. ${res.annualFrom === 'year' ? 'From the typical-year run, hour by hour.' : 'Estimate while the typical year runs…'} To compare heat sources, make a scenario with a different one.`}>
+          <Card title="Running cost" note={`Space heating only (cooling, if on, is shown on its own); hot water comes later. ${res.annualFrom === 'year' ? 'From the typical-year run, hour by hour.' : 'Estimate while the typical year runs…'} To compare heat sources, make a scenario with a different one.`}>
             <p className="small">{SOURCE_LABEL[s]}{hp ? '' : ` on ${FUEL_LABEL[house.hp.fuel].toLowerCase()}`}, {house.hp.capacity} kW, max flow {house.hp.maxFlow} °C.{' '}
               <a href={href('heating')}>Change the heat source in Heating ›</a></p>
             <h3 className="eyebrow">Your prices</h3>
@@ -323,6 +323,7 @@ export function EnergyPage() {
               <Tile head="Energy bought" why={WHY.bought} value={fmt(res.hp.kwh)} unit={`kWh ${hp ? 'electricity' : FUEL_LABEL[house.hp.fuel].toLowerCase()}`} />
               <Tile head="Running cost" why={WHY.cost(house.hp)} value={`£${fmt(res.hp.cost)}`} unit={tf.standing ? `/yr incl. £${fmt(tf.standing)} standing` : '/yr'} />
               <Tile head="Carbon" why={WHY.carbon} value={fmt(res.hp.co2)} unit="kgCO₂/yr" />
+              {res.cool && <Tile head="Cooling" why="Electricity the heat pump bought for cooling over the typical year, at each hour's EER, on the same tariff; not included in the heating figures beside it." value={`£${fmt(res.cool.cost)}`} unit={`/yr · ${fmt(res.cool.kwh)} kWh for ${fmt(res.cool.removed)} kWh taken out`} />}
             </div>
             <div className="h-table-wrap">
               <table className="h-table months-t">

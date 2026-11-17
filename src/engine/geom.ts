@@ -143,3 +143,12 @@ export function overlapArea3(p: Pt[], q: Pt[], r: Pt[]): number {
   }
   return s;
 }
+
+/** How far a wall face (offset `o` along normal `n`) runs past its corner along `dir` to meet the neighbouring wall's matching face (offset `o2` along `n2`, running along `d2`).
+ *  Positive past the corner (an outside corner), negative short of it (an inside one). */
+export function faceReach(dir: Pt, n: Pt, o: number, d2: Pt, n2: Pt, o2: number): number {
+  const det = d2[0] * dir[1] - dir[0] * d2[1];
+  if (Math.abs(det) < 0.2) return 0; // nearly straight on: nothing to meet
+  const rx = n2[0] * o2 - n[0] * o, ry = n2[1] * o2 - n[1] * o, lim = 4 * Math.max(Math.abs(o), Math.abs(o2), 0.05);
+  return Math.max(-lim, Math.min(lim, (d2[0] * ry - rx * d2[1]) / det)); // kept short at sharp corners, where faces meet far off
+}

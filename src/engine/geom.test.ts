@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { centroid, compass, dropSpikes, edges, overlapAreaPoly, polyArea, selfIntersects, sharedSpan, triangulate } from './geom';
+import { centroid, compass, dropSpikes, edges, faceReach, overlapAreaPoly, polyArea, selfIntersects, sharedSpan, triangulate } from './geom';
 import type { Pt } from './geom';
 
 const rect = (x: number, y: number, w: number, d: number): Pt[] => [[x, y], [x + w, y], [x + w, y + d], [x, y + d]];
@@ -49,5 +49,23 @@ describe('dropSpikes', () => {
   it('keeps a straight-through corner and an ordinary outline', () => {
     expect(dropSpikes([[0, 0], [2, 0], [4, 0], [4, 3], [0, 3]])).toHaveLength(5);
     expect(dropSpikes(rect(0, 0, 4, 3))).toEqual(rect(0, 0, 4, 3));
+  });
+});
+
+describe('wall faces meeting at a corner', () => {
+  // The L's walls, drawn outward: 0.5 m on the long bottom wall, 0.1 m elsewhere.
+  const es = edges(L), out = (i: number) => es[i].n, at = (i: number, o: number, j: number, o2: number, end = true) =>
+    faceReach(end ? es[i].d : [-es[i].d[0], -es[i].d[1]], es[i].n, o, es[j].d, es[j].n, o2);
+
+  it('at an outside corner each face runs on to the other wall\'s face, so a thick wall stops at a thin one', () => {
+    expect(out(0)[1]).toBeLessThan(0); // the first wall's outside is away from the room
+    expect(at(0, 0.5, 1, 0.1)).toBeCloseTo(0.1); // thick wall: only as far as the thin wall's outer face
+    expect(at(1, 0.1, 0, 0.5, false)).toBeCloseTo(0.5); // thin wall: on to the thick wall's outer face
+    expect(at(0, 0, 1, 0)).toBeCloseTo(0); // the room-side faces meet at the corner itself
+  });
+
+  it('at an inside corner the outer face stops short, by the other wall\'s thickness', () => {
+    expect(at(2, 0.1, 3, 0.1)).toBeCloseTo(-0.1);
+    expect(at(2, 0, 3, 0)).toBeCloseTo(0);
   });
 });

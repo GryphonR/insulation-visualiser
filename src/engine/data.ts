@@ -82,6 +82,11 @@ const MIXES: Array<[string, string, string, string, number, number, number, numb
   ['x_stock_brick_lime', 'Solid brickwork, London stock + lime mortar (17%)', 'h_stock_brick', 'h_lime_putty_mortar', 0.17, 215, 102, 450],
   ['x_sandstone_rubble', 'Sandstone rubble + lime mortar (30%)', 'h_yorkshire_sandstone', 'h_lime_putty_mortar', 0.3, 500, 200, 1000],
   ['x_limestone_rubble', 'Limestone rubble + lime mortar (30%)', 'h_cotswold_limestone', 'h_lime_putty_mortar', 0.3, 500, 200, 1000],
+  // Coursed (squared) rubble: ~150 mm courses, ~300 mm stones, 12 mm joints ≈ 1 − 150·300/(162·312) ≈ 11%.
+  ['x_sandstone_coursed', 'Coursed sandstone + lime mortar (12%)', 'h_yorkshire_sandstone', 'h_lime_putty_mortar', 0.12, 400, 150, 900],
+  ['x_limestone_coursed', 'Coursed limestone + lime mortar (12%)', 'h_cotswold_limestone', 'h_lime_putty_mortar', 0.12, 400, 150, 900],
+  // Ashlar: 300 × 450 mm blocks with 5 mm joints ≈ 3%.
+  ['x_bath_ashlar', 'Bath stone ashlar + lime putty joints (3%)', 'h_bath_stone', 'h_lime_putty_mortar', 0.03, 300, 100, 900],
   ['x_stud_mw', 'Timber studs in mineral wool (15% timber)', 'mw', 'm_timber_500_kg_m', 0.15, 140, 50, 300],
   ['x_joist_mw', 'Joists or rafters in mineral wool (12% timber)', 'mw', 'm_timber_500_kg_m', 0.12, 150, 50, 300],
 ];

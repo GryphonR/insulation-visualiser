@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { maxWallGap, roomEdges } from './house';
 import { defaultHouse } from './house-default';
-import { OPEN_DOORWAY, addRoomAt, ensureOpenDoorway, joinRooms, unionOutline } from './house-draw';
+import { OPEN_DOORWAY, addRoomAt, ensureOpenDoorway, joinRooms, mergeRooms, unionOutline } from './house-draw';
 import { calcHouse } from './house';
 
 const blank = () => { const h = defaultHouse(); h.rooms = []; h.openings = []; h.heating.emitters = []; h.vent.devices = []; h.faceBuildup = {}; h.faceBoundary = {}; h.wallAlign = {}; return h; };
@@ -41,6 +41,18 @@ describe('joining rooms', () => {
     addRoomAt(h, 'b', box(3 + g, 0, 6, 4), 0);
     expect(joinRooms(h, 'a', 'b')).toBe(true);
     expect(h.rooms[0].poly).toEqual(box(0, 0, 6, 4));
+  });
+
+  it('merges a row of three, whichever order they were picked in; a room that touches none fails', () => {
+    const h = blank();
+    addRoomAt(h, 'a', box(0, 0, 3, 4), 0);
+    addRoomAt(h, 'b', box(3, 0, 6, 4), 0);
+    addRoomAt(h, 'c', box(6, 0, 9, 4), 0);
+    addRoomAt(h, 'far', box(20, 0, 23, 4), 0);
+    expect(mergeRooms(structuredClone(h), ['a', 'c', 'far'])).toBe(false);
+    expect(mergeRooms(h, ['a', 'c', 'b'])).toBe(true); // c only touches a once b is in
+    expect(h.rooms.map((r) => r.id)).toEqual(['a', 'far']);
+    expect(h.rooms[0].poly).toEqual(box(0, 0, 9, 4));
   });
 });
 

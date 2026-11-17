@@ -494,9 +494,14 @@ export function splitStoreys(h: House, id: string, newId: string, zoneId = `z-${
     if (o.to === id && isUp(o.room)) o.to = newId;
     else if (o.room === id && o.to && isUp(o.to)) o.room = newId;
   });
-  ensureOpenStairwell(h);
-  (h.zones ??= []).push({ id: zoneId, band: up, name: 'Stairwell', poly: roomPoly(r).map(([x, y]) => [+x.toFixed(3), +y.toFixed(3)] as Pt), buildup: OPEN_STAIRWELL });
+  addStairwell(h, zoneId, up, roomPoly(r));
   return zoneId;
+}
+
+/** An open stairwell `id` in the floor of storey `band` (the ceiling of the one below), with this plan outline. */
+export function addStairwell(h: House, id: string, band: number, poly: Pt[]): void {
+  ensureOpenStairwell(h);
+  (h.zones ??= []).push({ id, band, name: 'Stairwell', poly: poly.map(([x, y]) => [+x.toFixed(3), +y.toFixed(3)] as Pt), buildup: OPEN_STAIRWELL });
 }
 
 /** Copies of rooms (with their windows and doors, and optionally emitters) moved by `d`, onto `storey` if given. Returns the new room ids. */
@@ -752,4 +757,14 @@ export function joinRooms(h: House, a: string, b: string): boolean {
   h.vent.devices.forEach((d) => { if (d.room === b) d.room = a; });
   h.rooms = h.rooms.filter((r) => r.id !== b);
   return true;
+}
+
+/** Join several rooms into the first, taking out the walls between them, in whatever order they touch. False when one of them can't join: h may then be part merged, so try it on a copy first. */
+export function mergeRooms(h: House, ids: string[]): boolean {
+  const [a, ...rest] = ids;
+  for (let joined = true; rest.length && joined;) {
+    joined = false;
+    for (let i = 0; i < rest.length; i++) if (joinRooms(h, a, rest[i])) { rest.splice(i--, 1); joined = true; }
+  }
+  return !!a && !rest.length;
 }

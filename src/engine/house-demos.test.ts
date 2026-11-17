@@ -3,12 +3,31 @@ import { MAT } from './data';
 import { overlapAreaPoly, sharedSpan } from './geom';
 import { calcHouse, maxWallGap, onStorey, roomEdges, roomPoly } from './house';
 import { OPEN_STAIRWELL, innerDoorAt, partyKeys } from './house-draw';
+import { controlChecks } from './house-controls';
 import { DEMOS } from './house-demos';
 import { flowNeeded } from './house-heating';
 import { sizePipes } from './house-pipes';
+import { simulate } from './house-sim';
 import { runMoisture } from './moisture';
 
 describe('demo projects', () => {
+  it.each(DEMOS.map((d) => [d.label, d] as const))('%s: every scenario has a control plan for its source, with nothing flagged', (_, d) => {
+    for (const s of d.make().scenarios) {
+      const h = s.house, hp = h.hp.source === 'ashp' || h.hp.source === 'gshp';
+      expect(h.heating.controls?.plan, s.name).toBe(hp ? 'hp' : h.heating.cylinder ? 'splus' : 'combi');
+      expect(controlChecks(h), s.name).toEqual([]);
+      // Each circuit is piped on its own, so every valve sits on one run (a 3-port on one run per port), not on each branch off a shared trunk.
+      for (const v of h.heating.controls!.valves) expect([v.runs.length, v.b?.length ?? 0], `${s.name}: ${v.name}`).toEqual([1, v.kind === 'three' ? 1 : 0]);
+    }
+  });
+
+  it('Passivhaus: fan coils cool the living room and bedrooms in summer, the radiators are shut off', () => {
+    const h = DEMOS.find((d) => d.id === 'passivhaus')!.make().scenarios[0].house;
+    expect(h.heating.emitters.filter((e) => e.kind === 'fancoil').map((e) => e.room).sort()).toEqual(['bed1', 'bed2', 'living']);
+    expect(h.heating.controls!.modes.some((m) => m.water === 'chilled')).toBe(true);
+    expect(simulate(h, 'summer').coolKWh).toBeGreaterThan(0);
+  });
+
   for (const d of DEMOS) {
     it(`${d.label}: every material exists, every face has a build-up, and each scenario's rads keep up`, () => {
       const p = d.make();
@@ -70,8 +89,8 @@ describe('demo projects', () => {
       if (h.hp.source === 'ashp' || h.hp.source === 'gshp') expect(h.heating.cylinder, s.name).toBeTruthy();
       expect(r.unpiped, s.name).toEqual([]);
       expect(r.headOk, s.name).toBe(true);
-      // The first stub off the source (to its first tee) is the only run with no route on the plan.
-      for (const p of h.heating.pipes!.filter((x) => x.id !== 'P1')) expect(p.leg, `${s.name}: ${p.name}`).toBeTruthy();
+      // The first stub off the source (to its first tee) and the short headers a control plan adds for its valves are the only runs with no route on the plan.
+      for (const p of h.heating.pipes!.filter((x) => x.id !== 'P1' && !x.header)) expect(p.leg, `${s.name}: ${p.name}`).toBeTruthy();
     }
   });
 

@@ -182,6 +182,12 @@ svg.draw:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px;
   transform: translate(calc(var(--x) - 50%), calc(var(--y) - 50%)); animation: radial-in 160ms ease-out both; }
 .radial-item:hover, .radial-item:focus-visible { background: #fbe6d8; border-color: var(--accent); outline: none; }
 .radial-item[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+/* The choices of a menu item (build-ups), beside it. */
+.radial-list { position: absolute; z-index: 1; display: flex; flex-direction: column; min-width: 200px; max-width: 300px; max-height: 260px; overflow-y: auto; padding: 4px 0; border: 1.5px solid var(--ink); background: #fff; box-shadow: 0 2px 8px rgba(20, 33, 43, 0.2); }
+.radial-list button { padding: 6px 12px 6px 22px; border: 0; background: none; text-align: left; font-size: 13px; color: var(--ink); cursor: pointer; position: relative; }
+.radial-list button:hover, .radial-list button:focus-visible { background: #fbe6d8; outline: none; }
+.radial-list button[aria-checked="true"] { font-weight: 600; }
+.radial-list button[aria-checked="true"]::before { content: '✓'; position: absolute; left: 7px; color: var(--accent); }
 .radial-tip { position: absolute; left: 0; top: 14px; transform: translateX(-50%); padding: 2px 8px; background: var(--ink); color: #fff; font-size: 12px; white-space: nowrap; pointer-events: none; }
 .radial.down .radial-tip { top: auto; bottom: 14px; }
 /* Starts part-way out along its spoke, so nothing passes under the pointer and picks up a hover. */
@@ -326,3 +332,9 @@ svg.draw .vx.moving { fill: #c2410c; }
 /* A page showing one section: its cards flow across the grid (house-flow), or stack at full width (house-stack). */
 .house-flow > .house-col, .house-stack > .house-col { display: contents; }
 .house-stack { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+/* System diagram (board 3b) */
+.sx-bar { gap: 12px; flex-wrap: wrap; margin: 4px 0 10px; }
+.sx-wrap { overflow-x: auto; }
+.sx-hint { background: #eaf2fa; border-radius: 6px; padding: 8px 10px; }
+.sx-checks { margin: 8px 0 0; padding-left: 18px; }
+.sx-checks li { margin: 4px 0; }

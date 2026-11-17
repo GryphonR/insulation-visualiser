@@ -67,7 +67,6 @@ function Routes({ firstVisit }: { firstVisit: boolean }) {
       page = (
         <HouseStart
           onCancel={started ? () => go('plan') : undefined}
-          onDemo={(p) => { createProject(p); setStarted(true); go('plan'); }}
           onCreate={(h) => {
             createProject(newProject(h)); setStarted(true); go('plan');
           }} />

@@ -5,7 +5,8 @@ import { pointInPoly } from './geom';
 import type { Pt } from './geom';
 import { calcHouse, onStorey, roomEdges, roomPoly } from './house';
 import { emitterPose } from './house-draw';
-import { emitterOut, lpm } from './house-heating';
+import { canCool, emitterCool, emitterOut, lpm } from './house-heating';
+import { isCylRun, modesOf, openRuns } from './house-controls';
 import type { Emitter } from './house-heating';
 
 /** Pipe sizes: label → internal diameter, mm. */
@@ -35,17 +36,24 @@ export interface Pipe {
   typed?: boolean;
   /** Laid in the floor or the ceiling of its storey; unset, it follows the run it comes off on the same floor (else the floor). */
   via?: 'floor' | 'ceiling';
+  /** A short header a control plan put in so one valve shuts several runs; it goes when the plan is changed. */
+  header?: boolean;
 }
 
 export interface PipeRow {
   pipe: Pipe; loadW: number; flowLpm: number; v: number; paM: number; dp: number;
   ok: boolean; why: string[]; index: boolean;
+  /** The mode with the biggest flow through this run, which it is sized for (with no control plan, the one implicit mode). */
+  mode: string;
 }
+/** One mode's flows: l/min per run (open runs only), its index circuit and that circuit's pressure drop, Pa. */
+export interface ModeFlow { id: string; name: string; flow: Map<string, number>; v: Map<string, number>; indexDp: number; indexPath: string[] }
 export interface PipeResult {
   rows: PipeRow[]; indexDp: number; indexPath: string[]; head: number; headOk: boolean; unpiped: string[];
   /** Each emitter's design load, W. */ emitterW: Map<string, number>;
   /** Pa/m each run may lose: the pump head shared along the longest circuit, or the cap if lower. */ paMax: number; longest: number;
   /** The pump's share alone (Infinity before there are runs), and the cap. */ paPump: number; paCap: number;
+  /** Each mode's flows; the rows take the biggest flow in any mode, and the index circuit is the worst of any mode. */ modes: ModeFlow[];
 }
 
 /**
@@ -79,7 +87,7 @@ export function pipeFlow(flowLpm: number, idMM: number): { v: number; paM: numbe
 
 export function sizePipes(h: House, res: HouseResult): PipeResult {
   const pipes = h.heating.pipes ?? [], { paMax, longest, paPump, paCap } = paBudget(h);
-  const flow = res.heat.designFlow;
+  const flow = res.heat.designFlow, cool = h.heating.cooling;
   // Each emitter carries its share of its room's design loss (by output at the design flow).
   const load = new Map<string, number>();
   for (const r of res.rooms) {
@@ -87,38 +95,59 @@ export function sizePipes(h: House, res: HouseResult): PipeResult {
     const outs = ems.map((e) => emitterOut(e, flow, r.room.setpoint, h)), tot = outs.reduce((a, b) => a + b, 0);
     ems.forEach((e, i) => load.set(e.id, tot > 0 ? (r.totalW * outs[i]) / tot : 0));
   }
+  // In cooling, each cooling emitter at its full output at the chilled flow and the cooling setpoint.
+  const coolLoad = new Map(h.heating.emitters.filter(canCool).map((e) => [e.id, cool ? emitterCool(e, cool.flow, cool.setpoint, h) : 0]));
   const kids = (id: string) => pipes.filter((p) => p.parent === id);
-  const memo = new Map<string, number>();
-  const pipeLoad = (p: Pipe, seen = new Set<string>()): number => {
-    if (memo.has(p.id)) return memo.get(p.id)!;
-    if (seen.has(p.id)) return 0;
-    seen.add(p.id);
-    const w = (p.emitter ? load.get(p.emitter) ?? 0 : 0) + kids(p.id).reduce((a, c) => a + pipeLoad(c, seen), 0);
-    memo.set(p.id, w);
-    return w;
-  };
+  const byPipe = new Map(pipes.map((p) => [p.id, p]));
+  const ownLoad = (p: Pipe, chilled: boolean) => (p.emitter ? (chilled ? coolLoad.get(p.emitter) ?? 0 : load.get(p.emitter) ?? 0) : !chilled && isCylRun(p) ? h.heating.coilW ?? 0 : 0);
+  // Per mode: the load through each open run, its flow and pressure drop, and the mode's index circuit.
+  const modes = modesOf(h).filter((m) => m.water !== 'off').map((m) => {
+    const open = openRuns(h, m), chilled = m.water === 'chilled', dT = chilled ? cool?.dT ?? 3 : h.heating.dT;
+    const memo = new Map<string, number>();
+    const pipeLoad = (p: Pipe, seen = new Set<string>()): number => {
+      if (memo.has(p.id)) return memo.get(p.id)!;
+      if (seen.has(p.id) || !open.has(p.id)) return 0;
+      seen.add(p.id);
+      const w = ownLoad(p, chilled) + kids(p.id).reduce((a, c) => a + pipeLoad(c, seen), 0);
+      memo.set(p.id, w);
+      return w;
+    };
+    const W = new Map<string, number>(), F = new Map<string, number>(), V = new Map<string, number>(), DP = new Map<string, number>();
+    for (const p of pipes) {
+      if (!open.has(p.id)) continue;
+      const w = pipeLoad(p), f = lpm(w, dT), { v, paM } = pipeFlow(f, PIPE_SIZES[p.size] ?? 13.6);
+      W.set(p.id, w); F.set(p.id, f); V.set(p.id, v); DP.set(p.id, paM * runLength(h, p) * FITTINGS);
+    }
+    // Index circuit: the path from the source to an emitter (or a loaded cylinder coil) with the highest total pressure drop.
+    let indexDp = 0, indexPath: string[] = [];
+    for (const p of pipes) {
+      if (!open.has(p.id) || !(p.emitter || (isCylRun(p) && ownLoad(p, chilled) > 0))) continue;
+      if (chilled && !(p.emitter && (coolLoad.get(p.emitter) ?? 0) > 0)) continue;
+      const path: string[] = [];
+      let dp = EMITTER_DP;
+      for (let cur: Pipe | undefined = p; cur && path.length < 50; cur = cur.parent ? byPipe.get(cur.parent) : undefined) { path.unshift(cur.id); dp += (DP.get(cur.id) ?? 0) * 2; } // flow and return
+      if (dp > indexDp) { indexDp = dp; indexPath = path; }
+    }
+    return { id: m.id, name: m.name, W, flow: F, v: V, indexDp, indexPath };
+  });
   const rows: PipeRow[] = pipes.map((p) => {
-    const loadW = pipeLoad(p), flowLpm = lpm(loadW, h.heating.dT), id = PIPE_SIZES[p.size] ?? 13.6;
+    // Sized for the mode with the biggest flow through it.
+    const top = modes.reduce<(typeof modes)[number] | null>((b, m) => ((m.flow.get(p.id) ?? -1) > (b?.flow.get(p.id) ?? -1) ? m : b), null);
+    const loadW = top?.W.get(p.id) ?? 0, flowLpm = top?.flow.get(p.id) ?? 0, id = PIPE_SIZES[p.size] ?? 13.6;
     const { v, paM } = pipeFlow(flowLpm, id);
     const why: string[] = [];
     if (v > MAX_V(id)) why.push(`${v.toFixed(2)} m/s is over ${MAX_V(id)} m/s: noisy`);
     if (paM > paMax) why.push(`${Math.round(paM)} Pa/m is over the ${paMax < paCap ? "pump's" : ''} ${Math.round(paMax)} Pa/m limit`);
-    return { pipe: p, loadW, flowLpm, v, paM, dp: paM * runLength(h, p) * FITTINGS, ok: !why.length, why, index: false };
+    return { pipe: p, loadW, flowLpm, v, paM, dp: paM * runLength(h, p) * FITTINGS, ok: !why.length, why, index: false, mode: top?.name ?? '' };
   });
-  // Index circuit: the path from the heat pump to an emitter with the highest total pressure drop.
+  const worst = modes.reduce<(typeof modes)[number] | null>((b, m) => (m.indexDp > (b?.indexDp ?? -1) ? m : b), null);
+  const indexDp = worst?.indexDp ?? 0, indexPath = worst?.indexPath ?? [];
   const byId = new Map(rows.map((r) => [r.pipe.id, r]));
-  let indexDp = 0, indexPath: string[] = [];
-  for (const r of rows) {
-    if (!r.pipe.emitter) continue;
-    const path: string[] = [];
-    let dp = EMITTER_DP;
-    for (let cur: PipeRow | undefined = r; cur && path.length < 50; cur = cur.pipe.parent ? byId.get(cur.pipe.parent) : undefined) { path.unshift(cur.pipe.id); dp += cur.dp * 2; } // flow and return
-    if (dp > indexDp) { indexDp = dp; indexPath = path; }
-  }
   for (const id of indexPath) byId.get(id)!.index = true;
   const head = (h.heating.pumpHead ?? 40) * 1000;
   const piped = new Set(pipes.map((p) => p.emitter).filter(Boolean));
-  return { rows, indexDp, indexPath, head, headOk: indexDp <= head, unpiped: h.heating.emitters.filter((e) => !piped.has(e.id)).map((e) => e.id), emitterW: load, paMax, longest, paPump, paCap };
+  return { rows, indexDp, indexPath, head, headOk: indexDp <= head, unpiped: h.heating.emitters.filter((e) => !piped.has(e.id)).map((e) => e.id), emitterW: load, paMax, longest, paPump, paCap,
+    modes: modes.map(({ id, name, flow, v, indexDp, indexPath }) => ({ id, name, flow, v, indexDp, indexPath })) };
 }
 
 /** A pipe drawn on one storey's plan, as a path of points (m). */
@@ -172,7 +201,7 @@ export function routePipes(h: House): PipeRoute | null {
 export function emitterPort(h: House, e: Emitter): Pt | null {
   const ps = emitterPose(h, e);
   if (!ps || e.kind === 'ufh') return ps?.at ?? null;
-  const half = (e.kind === 'towel' ? 0.5 : e.len / 1000) / 2, a = (ps.ang * Math.PI) / 180, d: Pt = [Math.cos(a) * half, Math.sin(a) * half];
+  const half = (e.kind === 'towel' ? 0.5 : e.kind === 'fancoil' ? 0.9 : e.len / 1000) / 2, a = (ps.ang * Math.PI) / 180, d: Pt = [Math.cos(a) * half, Math.sin(a) * half];
   const ends: Pt[] = [[ps.at[0] - d[0], ps.at[1] - d[1]], [ps.at[0] + d[0], ps.at[1] + d[1]]].map((q) => [+q[0].toFixed(3), +q[1].toFixed(3)] as Pt);
   const src = h.heating.source?.at;
   return src && Math.hypot(ends[1][0] - src[0], ends[1][1] - src[1]) < Math.hypot(ends[0][0] - src[0], ends[0][1] - src[1]) ? ends[1] : ends[0];
@@ -193,7 +222,7 @@ export function autoPipes(h: House): Pipe[] {
     out.push({ id: branch, name: `To ${s.name.toLowerCase()}`, parent: 'P1', size: 'Cu 22 mm', length: 6 + 3 * si });
     for (const e of ems) {
       const room = h.rooms.find((r) => r.id === e.room)?.name ?? e.room;
-      out.push({ id: `P${++n}`, name: `${room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.id}`, parent: branch,
+      out.push({ id: `P${++n}`, name: `${room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}`, parent: branch,
         size: e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : si === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)', length: e.kind === 'ufh' ? 3 : 5, emitter: e.id });
     }
   });
@@ -215,7 +244,7 @@ function planPipes(h: House, route: PipeRoute): Pipe[] {
       const e = h.heating.emitters.find((x) => x.id === t.emitter), at = { leg: t.leg, ends: [hub, e ? `e:${e.id}` : 'cylinder'] as [string, string] };
       if (!e) { out.push({ id: `P${++n}`, name: 'Hot water cylinder coil', parent: branch, size: 'Cu 22 mm', length: m1(t.run), ...at }); continue; }
       const room = h.rooms.find((r) => r.id === e.room)?.name ?? e.room;
-      out.push({ id: `P${++n}`, name: `${room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.id}`, parent: branch,
+      out.push({ id: `P${++n}`, name: `${room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}`, parent: branch,
         size: e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : si === src.storey || si === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)', length: m1(t.run), emitter: e.id, ...at });
     }
   }
@@ -358,12 +387,54 @@ export function fitSize(flowLpm: number, feeds: string[], paMax = MAX_PA_M): str
   return list.find((k) => { const id = PIPE_SIZES[k]; if (id < min) return false; const { v, paM } = pipeFlow(flowLpm, id); return v <= MAX_V(id) && paM <= paMax; }) ?? list[list.length - 1];
 }
 
+/** The circuit a run feeding an emitter or the cylinder is on (a zone, hot water), or null for a run that feeds others. */
+export type CircuitOf = (p: Pipe) => string | null;
+
+/** The circuits of every end a run leads to, sorted and joined ('' when it leads to none). */
+function circuitsBelow(pipes: Pipe[], of: CircuitOf): Map<string, string> {
+  const memo = new Map<string, Set<string>>();
+  const walk = (p: Pipe, n: number): Set<string> => {
+    const got = memo.get(p.id);
+    if (got) return got;
+    const out = new Set<string>(), c = of(p);
+    if (c) out.add(c);
+    for (const k of n > 50 ? [] : pipes.filter((x) => x.parent === p.id)) for (const x of walk(k, n + 1)) out.add(x);
+    memo.set(p.id, out);
+    return out;
+  };
+  return new Map(pipes.map((p) => [p.id, [...walk(p, 0)].sort().join('|')]));
+}
+
+/**
+ * A run (a riser, a branch to another floor) feeding more than one circuit becomes one run per circuit along the same route, so each
+ * circuit can have its own valve: zoned systems run a flow and return per zone from the plant (edits h in place).
+ * shortcut: splits only runs whose own children each stay on one circuit (as autoPipes lays them); deeper mixed trunks stay shared.
+ */
+export function splitCircuits(h: House, of: CircuitOf): void {
+  const pipes = h.heating.pipes ?? [], below = circuitsBelow(pipes, of);
+  for (const X of [...pipes]) {
+    const kids = pipes.filter((p) => p.parent === X.id), cs = [...new Set(kids.map((k) => below.get(k.id) ?? ''))].filter(Boolean);
+    if (!X.parent || cs.length < 2 || kids.some((k) => (below.get(k.id) ?? '').includes('|'))) continue;
+    for (const c of cs.slice(1)) {
+      let n = pipes.length + 1;
+      while (pipes.some((p) => p.id === `P${n}`)) n++;
+      const Y: Pipe = { ...structuredClone(X), id: `P${n}`, name: `${X.name}, ${c}` };
+      pipes.push(Y);
+      for (const k of kids) if (below.get(k.id) === c) { k.parent = Y.id; if (k.ends?.[0] === `tee:${X.id}`) k.ends = [`tee:${Y.id}`, k.ends[1]]; }
+    }
+    X.name = `${X.name}, ${cs[0]}`;
+  }
+  h.heating.pipes = pipes;
+}
+
 /**
  * Runs that leave the same point in the same direction share a pipe: the shared stretch becomes one run, sized for the flow of
  * everything beyond it, and the runs branch off its far end (a tee). Repeats down the tree. Returns how many shared runs were made (edits h in place).
+ * With `of`, only runs on the same circuits share, so a valve can shut one circuit without the others.
  */
-export function combineRuns(h: House, res: HouseResult = calcHouse(h)): number {
+export function combineRuns(h: House, res: HouseResult = calcHouse(h), of?: CircuitOf): number {
   const pipes = h.heating.pipes ?? [], made: Pipe[] = [];
+  const circ = of ? circuitsBelow(pipes, of) : null;
   const nextId = () => { let n = pipes.length + 1; while (pipes.some((p) => p.id === `P${n}`)) n++; return `P${n}`; };
   const short = (p: Pipe): string[] => (p.leg && pipes.some((c) => c.parent === p.id) ? pipes.filter((c) => c.parent === p.id).flatMap(short) : [p.name.replace(/ e\d+$/, '')]);
   const group = (parent: string | null) => {
@@ -374,7 +445,7 @@ export function combineRuns(h: House, res: HouseResult = calcHouse(h)): number {
       if (!pts || pts.length < 2) continue;
       const dx = pts[1][0] - pts[0][0], dy = pts[1][1] - pts[0][1], first = Math.hypot(dx, dy);
       if (first < 1e-3) continue;
-      const key = `${p.leg.storey}|${p.ends[0]}|${Math.round((dx / first) * 1000)}|${Math.round((dy / first) * 1000)}`;
+      const key = `${p.leg.storey}|${p.ends[0]}|${Math.round((dx / first) * 1000)}|${Math.round((dy / first) * 1000)}|${circ?.get(p.id) ?? ''}`;
       buckets.set(key, [...(buckets.get(key) ?? []), { p, pts, first }]);
     }
     for (const g of buckets.values()) {
@@ -494,7 +565,7 @@ export function attachments(h: House, storey: number): Array<{ id: string; at: P
   (hs.risers ?? []).forEach((r, i) => out.push({ id: r.id, at: r.at, label: `Riser ${i + 1}` }));
   for (const e of hs.emitters) {
     const r = h.rooms.find((x) => x.id === e.room), at = r?.storey === storey ? emitterPort(h, e) ?? undefined : undefined;
-    if (r && at) out.push({ id: `e:${e.id}`, at, label: `${r.name} ${e.kind === 'ufh' ? 'UFH manifold' : e.kind === 'towel' ? 'towel rail' : 'radiator'}` });
+    if (r && at) out.push({ id: `e:${e.id}`, at, label: `${r.name} ${e.kind === 'ufh' ? 'UFH manifold' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : 'radiator'}` });
   }
   return out;
 }
@@ -622,7 +693,7 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
   const e = B?.id.startsWith('e:') ? h.heating.emitters.find((x) => x.id === B.id.slice(2)) : undefined, room = e && h.rooms.find((r) => r.id === e.room)?.name;
   const id = nextId(all);
   all.push({ id, parent, leg: { storey, pts }, ends: [start, B?.id ?? ''], length: m1(pathLen(pts)),
-    name: e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.id}` : B ? 'Hot water cylinder coil' : 'Main',
+    name: e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}` : B ? 'Hot water cylinder coil' : 'Main',
     size: e ? (e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : storey === src.storey || storey === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)') : 'Cu 22 mm',
     ...(e ? { emitter: e.id } : {}), ...(via ? { via } : {}) });
   return { id };

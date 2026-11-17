@@ -2,17 +2,18 @@ import { useMemo } from 'react';
 import { MONTHS } from '../engine/data';
 import { SOURCE_LABEL, effText, isHeatPump, roomArea } from '../engine/house';
 import type { House } from '../engine/house';
-import { COVERS, RAD_LABEL, UFH_SPACINGS, autoEmitters, emitterOut, loopLength, loopMax, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
+import { COOLING_DEFAULT, COVERS, RAD_LABEL, canCool, dewPoint, emitterCool, UFH_SPACINGS, autoEmitters, emitterOut, loopLength, loopMax, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
 import type { Emitter, RadType, Zone } from '../engine/house-heating';
 import { Chip } from './controls';
 import { HouseUfh } from './HouseUfh';
 import { MAX_PA_M, MAX_V, PIPE_SIZES, autoPipes, combineRuns, removeRun, runLength, sizePipes } from '../engine/house-pipes';
 import { addEmitter } from '../engine/house-draw';
-import { Why, fmt, uid, NumInput } from './hform';
+import { Card, Num, Why, fmt, uid, NumInput } from './hform';
 import { WHY, sourceWhy } from './assumptions';
 import { useProject } from './project';
 import { href } from './route';
 import { HeatSourceCard } from './HouseSettings';
+import { coolingLoad } from '../engine/house-sim';
 
 const ZCOL = ['#c2410c', '#1f6fb5', '#1f7a4d', '#7a45b8', '#b45309', '#be185d'];
 
@@ -61,6 +62,8 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
     <div className={layout}>
       <div className="house-col">
         {show('system') && <HeatSourceCard />}
+        {show('system') && <CoolingCard />}
+        {show('system') && <CoolingLoadCard />}
         {show('system') && (
         <section className="card panel">
           <h2>Flow temperature</h2>
@@ -136,15 +139,15 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                         <td>
                           <select className="h-sel" value={e.kind === 'radiator' ? e.type : e.kind} aria-label="Emitter type" onChange={(ev) => {
                             const v = ev.target.value;
-                            setE(e.id, v === 'towel' || v === 'ufh' ? { kind: v } : { kind: 'radiator', type: v as RadType });
+                            setE(e.id, v === 'fancoil' ? { kind: v, rated: e.kind === 'fancoil' ? e.rated : 2000 } : v === 'towel' || v === 'ufh' ? { kind: v } : { kind: 'radiator', type: v as RadType });
                           }}>
                             {(Object.keys(RAD_LABEL) as RadType[]).map((t) => <option key={t} value={t}>{RAD_LABEL[t]}</option>)}
-                            <option value="towel">Towel rail</option><option value="ufh">UFH loop</option>
+                            <option value="towel">Towel rail</option><option value="fancoil">Fan coil</option><option value="ufh">UFH loop</option>
                           </select>
                         </td>
                         <td className="h-size">
                           {e.kind === 'radiator' && <><NumInput className="thk-input" aria-label="Length mm" value={e.len} step={100} min={300} onChange={(ev) => setE(e.id, { len: Number(ev.target.value) })} /> × <NumInput className="thk-input" aria-label="Height mm" value={e.height} step={50} min={300} onChange={(ev) => setE(e.id, { height: Number(ev.target.value) })} /> mm</>}
-                          {e.kind === 'towel' && <><NumInput className="thk-input" aria-label="Rated output W" value={e.rated} step={50} onChange={(ev) => setE(e.id, { rated: Number(ev.target.value) })} /> W at ΔT50</>}
+                          {(e.kind === 'towel' || e.kind === 'fancoil') && <><NumInput className="thk-input" aria-label="Rated output W" value={e.rated} step={50} onChange={(ev) => setE(e.id, { rated: Number(ev.target.value) })} /> W at ΔT50</>}
                           {e.kind === 'ufh' && <>
                             {e.fromZone
                               ? <span title="This room's part of the UFH zone drawn on the plan">{fmt(e.area, 1)} m² from {house.zones?.find((x) => x.id === e.fromZone)?.name ?? 'a UFH zone'} ·{' '}</span>
@@ -156,6 +159,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                             <br /><span className={`small ${loopLength(e, house) > loopMax(e) ? 'bad' : 'muted'}`}>loop {fmt(loopLength(e, house))} m{e.rect ? ', drawn' : ` incl. ${e.tail} m tails`}</span>
                           </>}
                           {e.kind !== 'ufh' && <span className="small muted"> · {fmt(ratedOf(e))} W at ΔT50</span>}
+                          {canCool(e) && c.cooling && <><br /><span className="small muted">cools {fmt(emitterCool(e, c.cooling.flow, c.cooling.setpoint, house))} W at {c.cooling.flow} °C flow</span></>}
                         </td>
                         <td>
                           <select className="h-sel" value={e.zone} aria-label="Zone" onChange={(ev) => setE(e.id, { zone: ev.target.value })}>
@@ -209,7 +213,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                   <span className="small mono">{z.kind === 'ufh' ? 'UFH' : 'RAD'} · {fmt(load)} W · {fmt(lpm(load, c.dT), 1)} l/min</span>
                   <button type="button" className="btn-link" onClick={() => upd((h) => { h.heating.zones = h.heating.zones.filter((x) => x.id !== z.id); h.heating.emitters.forEach((e) => { if (e.zone === z.id) e.zone = ''; }); })}>Delete</button>
                 </div>
-                <p className="small muted">{ems.length ? ems.map((e) => `${roomName(e.room)} ${e.kind === 'ufh' ? 'loop' : e.kind === 'towel' ? 'towel rail' : e.id}`).join(', ') : 'No emitters yet: pick this zone in the emitter table.'}</p>
+                <p className="small muted">{ems.length ? ems.map((e) => `${roomName(e.room)} ${e.kind === 'ufh' ? 'loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}`).join(', ') : 'No emitters yet: pick this zone in the emitter table.'}</p>
                 {z.kind === 'ufh' && (
                   <label className="small">Loop water:{' '}
                     <select className="h-sel" value={z.blend} onChange={(e) => setZ(z.id, { blend: Number(e.target.value) })}>
@@ -261,7 +265,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                           onChange={(e) => setP({ length: Math.max(0, Number(e.target.value) || 0), typed: true })} />
                           {p.leg && p.typed && <button type="button" className="btn-link small" title="Measure along the route on the plan again" onClick={() => setP({ typed: undefined })}>plan</button>}</td>
                         <td><select className="h-sel" value={p.emitter ?? ''} aria-label="Emitter at the end" onChange={(e) => setP({ emitter: e.target.value || undefined })}>
-                          <option value="">— (branch)</option>{c.emitters.map((e) => <option key={e.id} value={e.id}>{roomName(e.room)} {e.kind === 'ufh' ? 'UFH' : e.kind === 'towel' ? 'towel rail' : e.id}</option>)}
+                          <option value="">— (branch)</option>{c.emitters.map((e) => <option key={e.id} value={e.id}>{roomName(e.room)} {e.kind === 'ufh' ? 'UFH' : e.kind === 'fancoil' ? 'fan coil' : e.kind === 'towel' ? 'towel rail' : e.id}</option>)}
                         </select></td>
                         <td className="n mono">{fmt(r.loadW)}</td>
                         <td className="n mono">{fmt(r.flowLpm, 1)}</td>
@@ -305,5 +309,69 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
         )}
       </div>
     </div>
+  );
+}
+
+/** A reversible heat pump's cooling: switched on, its output and EER, the room setpoint and the chilled water. */
+function CoolingCard() {
+  const { house, upd } = useProject();
+  if (!isHeatPump(house.hp.source)) return null;
+  const c = house.heating.cooling, on = !!c?.on;
+  const set = (patch: Partial<NonNullable<typeof c>>) => upd((h) => { h.heating.cooling = { ...(h.heating.cooling ?? COOLING_DEFAULT), ...patch }; });
+  const cools = house.heating.emitters.filter(canCool), dew = c ? dewPoint(c.setpoint) : 0;
+  const ufh = cools.some((e) => e.kind === 'ufh');
+  return (
+    <Card title="Cooling" note="A reversible heat pump can send chilled water to fan coils and underfloor loops in summer. Radiators and towel rails cool very little and sweat, so they are shut off by valves on the System diagram.">
+      <label className="hf-lab small"><input type="checkbox" checked={on} onChange={(e) => set({ on: e.target.checked })} /> This heat pump also cools</label>
+      {on && c && <>
+        <div className="hf-row">
+          <Num label="Cooling output" unit="kW at A35/W18" step={0.5} min={0} value={c.capacity} onChange={(v) => set({ capacity: Math.max(0, v) })} />
+          <Num label="EER" unit="at A35/W18" step={0.1} min={1} value={c.eer} onChange={(v) => set({ eer: Math.max(1, v) })} />
+        </div>
+        <div className="hf-row">
+          <Num label="Cool rooms to" unit="°C" step={0.5} min={18} max={30} value={c.setpoint} onChange={(v) => set({ setpoint: v })} />
+          <Num label="Chilled flow" unit="°C" step={1} min={5} max={22} value={c.flow} onChange={(v) => set({ flow: v })} />
+          <Num label="Return − flow" unit="K" step={1} min={1} max={8} value={c.dT} onChange={(v) => set({ dT: Math.max(1, v) })} />
+        </div>
+        <p className="small muted">Dew point at {c.setpoint} °C and 60% humidity: {fmt(dew, 1)} °C. Underfloor surfaces are held above it (and at least 19 °C), which limits a floor to about {fmt(7 * Math.max(0, c.setpoint - Math.max(19, dew + 1)))} W/m².</p>
+        {ufh && c.flow < dew && <p className="small bad">The chilled flow is below the dew point: pipes and manifolds will sweat. Insulate them, or raise the flow.</p>}
+        <p className="small">{cools.length ? `${cools.length} emitter${cools.length > 1 ? 's' : ''} can cool (fan coils and underfloor loops).` : 'No emitter can cool yet: make a radiator a fan coil on the Emitters page, or add underfloor heating.'} Valves and the cooling mode are set on the <a href={href('schematic')}>System diagram ›</a></p>
+      </>}
+    </Card>
+  );
+}
+
+/** Design cooling load: each heated room held at the cooling setpoint through the summer peak day, room peaks and the whole-house peak. */
+function CoolingLoadCard() {
+  const { house, res } = useProject();
+  const load = useMemo(() => (isHeatPump(house.hp.source) ? coolingLoad(house, res) : null), [house, res]);
+  if (!load) return null;
+  const c = house.heating.cooling, on = !!c?.on;
+  const sum = load.rooms.reduce((t, r) => t + r.peakW, 0), area = load.rooms.reduce((t, r) => t + r.area, 0);
+  const hr = (k: number) => `${String(k).padStart(2, '0')}:00`;
+  const short = on && load.blockW > c!.capacity * 1000;
+  return (
+    <Card title="Design cooling load" note={`Heat to take out to hold every heated room at ${load.setpoint} °C all day on the summer peak day (clear sky, 15–29 °C outside, windows shut), after a month of such days so the walls and floors have warmed through. Each room's peak sizes its emitter; the whole house peaks lower than the sum because rooms peak at different times, and that figure sizes the heat pump. Sensible heat only: fan coils also remove some moisture. Times are solar time, about an hour behind the clock in summer.`}>
+      <p className="mono"><b>{fmt(load.blockW / 1000, 1)} kW</b> for the whole house at {hr(load.blockHour)} · {fmt(area > 0 ? load.blockW / area : 0)} W/m² · room peaks add to {fmt(sum / 1000, 1)} kW</p>
+      {on && <p className={short ? 'small bad' : 'small'}>{short ? `More than the heat pump's ${c!.capacity} kW of cooling: at the peak, rooms will run above ${load.setpoint} °C.` : `Within the heat pump's ${c!.capacity} kW of cooling.`}</p>}
+      <div className="h-table-wrap">
+        <table className="h-table">
+          <thead><tr><th>Room</th><th className="n">Peak W</th><th className="n">At</th><th className="n">W/m²</th><th className="n">Sun</th><th className="n">People, appliances</th><th className="n">Walls, roof, glass</th><th className="n">Air</th><th className="n">Stored heat, other</th>{on && <th className="n">Emitters W</th>}</tr></thead>
+          <tbody>
+            {load.rooms.map((r) => (
+              <tr key={r.id}>
+                <td>{r.name}</td>
+                <td className="n mono"><b>{fmt(r.peakW)}</b></td>
+                <td className="n mono">{r.peakW > 0 ? hr(r.hour) : '—'}</td>
+                <td className="n mono">{r.area > 0 ? fmt(r.peakW / r.area) : '—'}</td>
+                {[r.sun, r.inside, r.fabric, r.air, r.other].map((v, i) => <td key={i} className="n mono">{r.peakW > 0 ? fmt(v) : '—'}</td>)}
+                {on && <td className={`n mono${r.peakW > 0 && r.canW < r.peakW ? ' bad' : ''}`}>{r.canW > 0 ? fmt(r.canW) : '—'}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="small muted">The parts are at each room's peak hour. "Stored heat, other" is heat given back by warm walls and floors, the ground, the loft and neighbouring rooms; it can be negative when they soak heat up.{on && ' Emitters W is what each room’s fan coils and underfloor loops on chilled water take out at the setpoint; red where it falls short.'}</p>
+    </Card>
   );
 }

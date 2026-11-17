@@ -4,9 +4,12 @@ import { calcHouse, defaultTemp, roomEdges, roomPoly } from './house';
 import type { Buildup, Device, House, Opening, RoofSection, Room } from './house';
 import { CHIMNEY, FAN, addInnerDoors, defaultHouse, mainRoof } from './house-default';
 import { splitStoreys } from './house-draw';
-import { autoEmitters } from './house-heating';
+import { applyPlan } from './house-controls';
+import type { PlanKind } from './house-controls';
+import { COOLING_DEFAULT, autoEmitters } from './house-heating';
 import type { Plant } from './house-heating';
-import { autoPipes, combineRuns, runLength } from './house-pipes';
+import { autoPipes, combineRuns, runLength, splitCircuits } from './house-pipes';
+import type { CircuitOf } from './house-pipes';
 import { newProject } from './house-scenarios';
 import type { Project, Scenario } from './house-scenarios';
 import { newHouse } from './house-templates';
@@ -36,12 +39,15 @@ const at = (x: number, y: number, storey = 0): Plant => ({ at: [x, y], storey })
 
 /**
  * Pipework from the placed source (and cylinder): tries a riser in each corner of every room on the source's floor, keeps the one
- * that needs the least pipe, then lets overlapping runs share one pipe.
+ * that needs the least pipe, then lets overlapping runs share one pipe. With `of`, each circuit gets its own pipes (one up the riser
+ * per zone too), shared only within the circuit, so one valve can serve it.
  */
-function plumb(h: House) {
+function plumb(h: House, of?: CircuitOf) {
   const res = calcHouse(h), src = h.heating.source!;
   const lay = (q: [number, number]) => {
-    h.heating.risers = [{ id: 'rs1', at: q }]; h.heating.pipes = autoPipes(h); combineRuns(h, res);
+    h.heating.risers = [{ id: 'rs1', at: q }]; h.heating.pipes = autoPipes(h);
+    if (of) splitCircuits(h, of);
+    combineRuns(h, res, of);
     return h.heating.pipes!.reduce((t, p) => t + runLength(h, p), 0);
   };
   const spots = h.rooms.filter((r) => r.storey === src.storey).flatMap((r) => {
@@ -52,13 +58,26 @@ function plumb(h: House) {
   lay(spots.reduce((b, q) => { const m = lay(q); return m < b.m ? { q, m } : b; }, { q: spots[0], m: Infinity }).q);
 }
 
+/** Pipework (as `plumb`, a circuit per zone and one for hot water unless it is a combi), then the control plan's valves and modes on it. */
+function pipeAndValve(h: House, plan: PlanKind) {
+  const zone = (id: string) => h.heating.zones.find((z) => z.id === id)?.name ?? 'No zone';
+  plumb(h, plan === 'combi' ? undefined : (p) => {
+    const e = p.emitter && h.heating.emitters.find((x) => x.id === p.emitter);
+    return e ? zone(e.zone) : p.ends?.[1] === 'cylinder' ? 'Hot water' : null;
+  });
+  const err = applyPlan(h, plan);
+  if (err) throw new Error(`${h.name}: ${err}`);
+}
+
 /** As found on a 24 kW condensing gas combi: fixed 70 °C flow, 10 K drop, radiators sized for that. */
 function onGas(h: House) {
   h.hp = { ...h.hp, source: 'condensing', fuel: 'gas', maxFlow: 70, boilerEff: 84 };
   h.heating = { ...h.heating, control: 'fixed', dT: 10 };
   size(h);
   h.hp.capacity = 24;
-  plumb(h);
+  // A combi heats water itself; a boiler with a cylinder gets a zone valve per zone and one for hot water, and a typical 15 kW cylinder coil.
+  if (h.heating.cylinder) h.heating.coilW = 15000;
+  pipeAndValve(h, h.heating.cylinder ? 'splus' : 'combi');
 }
 
 /** A copy of the base with the upgrades applied, then radiators resized for a heat pump at `flow` °C on weather compensation. */
@@ -70,7 +89,9 @@ function upgrade(base: House, name: string, flow: number, edit: (h: House) => vo
   size(h);
   // Upsize only: a radiator already big enough stays as it is.
   h.heating.emitters = h.heating.emitters.map((e) => ({ ...e, len: Math.max(e.len, base.heating.emitters.find((b) => b.room === e.room)?.len ?? 0) }));
-  plumb(h);
+  // The coil reheat follows the new source, not the boiler's.
+  delete h.heating.coilW;
+  pipeAndValve(h, 'hp');
   return { id: 's1', name, kind: 'plan', parent: 'base', house: h };
 }
 
@@ -230,11 +251,11 @@ export function fiftiesSemi(): Project {
   h.openings = h.openings.filter((o) => o.to || o.side !== 'W');
   // Heat pump outside the utility on the east gable, the cylinder in the utility.
   h.heating.source = at(9.5, 6.0); h.heating.cylinder = at(8.6, 6.6);
-  plumb(h);
+  pipeAndValve(h, 'hp');
   return newProject(h);
 }
 
-/** A Passivhaus-standard detached house: super-insulated, triple glazed, airtight with MVHR, small heat pump. No upgrade. */
+/** A Passivhaus-standard detached house: super-insulated, triple glazed, airtight with MVHR, small heat pump, fan coils that also cool. No upgrade. */
 export function passivhaus(): Project {
   const h = newHouse({ template: 'det', age: '2007+', storeys: 2 });
   h.name = 'Passivhaus-type house';
@@ -267,9 +288,18 @@ export function passivhaus(): Project {
   h.hp = { ...h.hp, maxFlow: 35 };
   h.heating = { ...h.heating, control: 'ideal', dT: 5 };
   size(h);
+  // A big south glazing area overheats in summer: fan coils in the living room and bedrooms 1 and 2 heat and cool, rated for the
+  // room's loss at the 35 °C flow (output is linear in ΔT, 12.5 K here against 50 K rated). The other rooms keep radiators, shut off in cooling.
+  const loss = new Map(calcHouse(h).rooms.map((r) => [r.room.id, r.totalW]));
+  h.heating.emitters = h.heating.emitters.map((e) => (['living', 'bed1', 'bed2'].includes(e.room)
+    ? { ...e, kind: 'fancoil', zone: 'z1', rated: Math.max(1000, Math.ceil(((loss.get(e.room) ?? 0) * 50) / (35 - 2.5 - 20) / 250) * 250) } : { ...e, zone: 'z2' }));
+  // Zoned by what the emitters can do, so the radiator zone valve is also what shuts the radiators off in cooling.
+  h.heating.zones = h.heating.zones.map((z) => (z.id === 'z1' ? { ...z, name: 'Fan coils' } : z.id === 'z2' ? { ...z, name: 'Radiators' } : z));
+  // Fan coils drain their condensate, so they take the usual 7/12 °C chilled water rather than a flow held above the dew point.
+  h.heating.cooling = { ...COOLING_DEFAULT, capacity: h.hp.capacity, flow: 7, dT: 5 };
   // Outdoor unit by the plant room's north wall, the cylinder inside it.
   h.heating.source = at(1.2, -0.5); h.heating.cylinder = at(0.4, 0.4);
-  plumb(h);
+  pipeAndValve(h, 'hp');
   return newProject(h);
 }
 

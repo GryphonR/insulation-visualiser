@@ -48,6 +48,12 @@ export const GLAZING_LIBRARY: Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame'>>
   { name: 'Glass block', u: 3.5, g: 0.6, frame: 0.1 },
   { name: 'Patio / bifold doors, double glazed', u: 1.6, g: 0.63, frame: 0.25 },
   { name: 'Conservatory glazing', u: 2.0, g: 0.7, frame: 0.2 },
+  // Solar control glazing: a spectrally selective coating passes visible light but reflects much of the sun's
+  // near-infrared heat. g from typical maker data for neutral solar-control units (e.g. 70/40 and 50/25 types).
+  { name: 'Double glazed, solar control', u: 1.4, g: 0.4, frame: 0.3 },
+  { name: 'Double glazed, strong solar control (tinted look)', u: 1.4, g: 0.27, frame: 0.3 },
+  { name: 'Triple glazed, solar control', u: 0.9, g: 0.33, frame: 0.3 },
+  { name: 'Rooflight, solar control', u: 1.6, g: 0.35, frame: 0.2 },
 ];
 /** Typical external doors (U-values from SAP Table 6e and manufacturer data). */
 export const DOOR_LIBRARY: Array<Pick<Buildup, 'name' | 'u'>> = [
@@ -868,6 +874,8 @@ export interface HouseResult {
   months: Array<{ heat: number; Tout: number; flow: number; eff: number; bought: number }>;
   /** Heat source: heat per kWh bought on the design day and over the year, kWh bought, £/yr (standing charge included), kgCO2/yr, spare capacity. */
   hp: { designEff: number; seasonal: number; kwh: number; spare: number; cost: number; co2: number };
+  /** Cooling over a typical year (set by yearRes from a run with cooling): heat taken out and electricity bought, kWh, £/yr, kgCO2/yr, peak hour W. */
+  cool?: { removed: number; kwh: number; cost: number; co2: number; peakW: number };
   checks: Array<{ level: 'error' | 'warn'; text: string }>;
   heat: {
     designFlow: number;
