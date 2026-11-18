@@ -14,18 +14,21 @@ const CATS: Array<[string, string]> = [['all', 'All'], ['fav', '★ Favourites']
 const custom = (key: string) => !/^(preset:|g:|d:)/.test(key);
 
 /** Categories on the left, matching presets on the right, stars remembered across projects. Custom presets can be deleted. */
-export function PresetBrowser({ library, have, onAdd, onDelete, tools, actionLabel = 'Add', layeredOnly }: {
+export function PresetBrowser({ library, have, onAdd, onDelete, tools, actionLabel = 'Add', layeredOnly, onCat }: {
   library: Stackup[]; have: Set<string>; onAdd: (p: Preset, key: string) => void; onDelete?: (id: string) => void;
   actionLabel?: string;
   /** Walls and roofs only: for picking something to simulate. */
   layeredOnly?: boolean;
   /** Adds Simulate and Compare to each layered build-up, and a Compare button under the list. */
   tools?: boolean;
+  /** Told whenever the category changes. */
+  onCat?: (c: string) => void;
 }) {
   const [pick, setPick] = useState<string[]>([]);
   const togglePick = (k: string) => setPick((p) => (p.includes(k) ? p.filter((x) => x !== k) : p.length < 2 ? [...p, k] : p));
   const { fav, toggleBuildup } = useFavorites();
-  const [cat, setCat] = useState('all');
+  const [cat, setCatState] = useState('all');
+  const setCat = (c: string) => { setCatState(c); onCat?.(c); };
   const [q, setQ] = useState('');
   const cats = layeredOnly ? CATS.filter(([c]) => c !== 'glazing' && c !== 'door') : CATS;
   const items = useMemo<Item[]>(() => [
@@ -80,10 +83,14 @@ export function PresetBrowser({ library, have, onAdd, onDelete, tools, actionLab
 }
 
 /** Pick presets to add to the project. */
-export function AddBuildupModal({ library, have, onAdd, onCustom, onClose, title = 'Add build-up to project', actionLabel, layeredOnly }: {
+export function AddBuildupModal({ library, have, onAdd, onCustom, onCustomFixed, onClose, title = 'Add build-up to project', actionLabel, layeredOnly }: {
   library: Stackup[]; have: Set<string>; onAdd: (p: Preset, key: string) => void; onCustom?: () => void; onClose: () => void;
+  /** A window or door typed in by U-value (and g and frame share for glazing) rather than from layers. */
+  onCustomFixed?: (kind: 'glazing' | 'door') => void;
   title?: string; actionLabel?: string; layeredOnly?: boolean;
 }) {
+  const [cat, setCat] = useState('all');
+  const fixed = onCustomFixed && (cat === 'glazing' || cat === 'door') ? cat : null;
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal" role="dialog" aria-modal="true" aria-label={title} style={{ width: 'min(860px, 96vw)' }}>
@@ -94,10 +101,12 @@ export function AddBuildupModal({ library, have, onAdd, onCustom, onClose, title
           </button>
         </div>
         <div className="modal-body" style={{ padding: 0 }}>
-          <PresetBrowser library={library} have={have} onAdd={onAdd} actionLabel={actionLabel} layeredOnly={layeredOnly} />
+          <PresetBrowser library={library} have={have} onAdd={onAdd} actionLabel={actionLabel} layeredOnly={layeredOnly} onCat={setCat} />
         </div>
         <div className="modal-actions" style={{ justifyContent: 'space-between' }}>
-          {onCustom ? <button type="button" className="btn-secondary" onClick={onCustom}>Create a custom build-up…</button> : <span />}
+          {onCustom ? <button type="button" className="btn-secondary" onClick={() => (fixed ? onCustomFixed!(fixed) : onCustom())}>
+            Create a custom {fixed === 'glazing' ? 'window' : fixed === 'door' ? 'door' : 'build-up'}…
+          </button> : <span />}
           <button type="button" className="btn-primary" onClick={onClose}>{onCustom ? 'Done' : 'Cancel'}</button>
         </div>
       </div>

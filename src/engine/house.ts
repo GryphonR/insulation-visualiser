@@ -54,7 +54,42 @@ export const GLAZING_LIBRARY: Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame'>>
   { name: 'Double glazed, strong solar control (tinted look)', u: 1.4, g: 0.27, frame: 0.3 },
   { name: 'Triple glazed, solar control', u: 0.9, g: 0.33, frame: 0.3 },
   { name: 'Rooflight, solar control', u: 1.6, g: 0.35, frame: 0.2 },
+  ...glazedUnits(),
 ];
+/**
+ * Windows, French doors and bifolds in every frame × glass combination. Whole-unit U by EN ISO 10077-1:
+ * Uw = (1−f)·Ug + f·Uf + ψ·Lg/A, with typical centre-pane Ug/g (EN 673/410), frame Uf, and a warm-edge spacer.
+ * shortcut: one Uf per frame material whatever the glass, though triple units often sit in deeper frames; split it if a datasheet disagrees.
+ */
+function glazedUnits(): Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame'>> {
+  // [name, frame share by material, glass edge length per m² of unit]
+  const units: Array<[string, Record<string, number>, number]> = [
+    ['Window', { aluminium: 0.22, uPVC: 0.3, timber: 0.3 }, 3.0],
+    ['French doors', { aluminium: 0.22, uPVC: 0.3, timber: 0.28 }, 3.0],
+    ['Bifold doors', { aluminium: 0.25, uPVC: 0.35, timber: 0.32 }, 3.6],
+  ];
+  // [name, Uf W/m²K, spacer ψ W/mK]: thermally broken aluminium, multi-chamber uPVC, 68 mm softwood.
+  const frames: Array<[string, number, number]> = [['aluminium', 3.0, 0.06], ['uPVC', 1.3, 0.04], ['timber', 1.4, 0.04]];
+  // [name, Ug W/m²K, g]
+  const glass: Array<[string, number, number]> = [
+    ['double, clear air-filled', 2.8, 0.78],
+    ['double, low-e air-filled', 1.4, 0.63],
+    ['double, low-e argon', 1.1, 0.63],
+    ['double, low-e krypton', 1.0, 0.62],
+    ['double, vacuum (VIG)', 0.5, 0.6],
+    ['triple, low-e argon', 0.6, 0.5],
+    ['triple, low-e krypton', 0.5, 0.5],
+    // Same neutral solar-control coatings as the plain solar-control entries above.
+    ['double, solar control argon', 1.1, 0.4],
+    ['triple, solar control argon', 0.6, 0.33],
+  ];
+  const out: Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame'>> = [];
+  for (const [unit, share, edge] of units) for (const [fr, uf, psi] of frames) for (const [gl, ug, g] of glass) {
+    const f = share[fr];
+    out.push({ name: `${unit}, ${fr}, ${gl}`, u: Math.round(((1 - f) * ug + f * uf + psi * edge) * 100) / 100, g, frame: f });
+  }
+  return out;
+}
 /** Typical external doors (U-values from SAP Table 6e and manufacturer data). */
 export const DOOR_LIBRARY: Array<Pick<Buildup, 'name' | 'u'>> = [
   { name: 'Solid timber door', u: 3.0 },

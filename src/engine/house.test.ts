@@ -128,3 +128,19 @@ describe('whole-house model', () => {
     }));
   });
 });
+
+describe('glazed unit presets', () => {
+  it('covers every unit × frame × glass with sane whole-unit U', async () => {
+    const { GLAZING_LIBRARY } = await import('./house');
+    const units = GLAZING_LIBRARY.filter((g) => /^(Window|French doors|Bifold doors), /.test(g.name));
+    expect(units).toHaveLength(3 * 3 * 9);
+    expect(new Set(GLAZING_LIBRARY.map((g) => g.name)).size).toBe(GLAZING_LIBRARY.length);
+    const u = (n: string) => units.find((g) => g.name === n)!.u!;
+    expect(u('Window, uPVC, double, low-e argon')).toBeCloseTo(1.28, 2);
+    // Triple beats double, and timber/uPVC beat aluminium, in every pairing.
+    for (const t of ['Window', 'French doors', 'Bifold doors']) for (const f of ['aluminium', 'uPVC', 'timber']) {
+      expect(u(`${t}, ${f}, triple, low-e argon`)).toBeLessThan(u(`${t}, ${f}, double, low-e argon`));
+      if (f !== 'aluminium') expect(u(`${t}, ${f}, double, low-e argon`)).toBeLessThan(u(`${t}, aluminium, double, low-e argon`));
+    }
+  });
+});

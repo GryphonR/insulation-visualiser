@@ -204,6 +204,12 @@ export function BuildupsPage({ selected }: { selected?: string }) {
       {adding && (
         <AddBuildupModal library={library} have={new Set(house.buildups.map((x) => x.name))} onClose={() => setAdding(false)}
           onCustom={() => { setAdding(false); setCreating(true); }}
+          onCustomFixed={(k) => {
+            const id = uid('b');
+            // Starts from a typical modern unit; the Fixed values card below is where its own figures go.
+            upd((h) => { h.buildups.push(k === 'glazing' ? { id, name: 'Custom window', kind: k, layers: [], u: 1.4, g: 0.63, frame: 0.3 } : { id, name: 'Custom door', kind: k, layers: [], u: 1.4 }); });
+            setSel(id); setAdding(false);
+          }}
           onAdd={(p) => { const id = uid('b'); upd((h) => { h.buildups.push({ ...structuredClone(p), id }); }); setSel(id); }} />
       )}
       {creating && (
