@@ -15,7 +15,19 @@ Vite's `base` is set to `/insulation-visualiser/` (see `vite.config.ts`) so buil
 
 ## Deployment
 
-Pushing to `main` builds and deploys to GitHub Pages via `.github/workflows/deploy.yml` (Actions, not a `gh-pages` branch). Live at `https://<owner>.github.io/insulation-visualiser/`.
+Pushing to `main` builds and deploys to GitHub Pages via `.github/workflows/deploy.yml` (Actions, not a `gh-pages` branch). Live at `https://<owner>.github.io/insulation-visualiser/`. That build has no accounts: everything stays in the browser.
+
+### Cloud version (Cloudflare, with sign-in and sync)
+
+`npm run cf:build` builds with `--mode cloud` (served from `/`, sign-in on). A Worker (`worker/`) serves the app, runs sign-in with [Better Auth](https://better-auth.com) (email magic link, plus Google if it's configured), and stores each user's projects (minus traced plan images, which stay on the device), custom materials, library and favourites in D1. localStorage is still the working copy, and `src/engine/sync.ts` pushes and pulls in the background. When two devices edit the same project, both versions are kept.
+
+Local: copy `.dev.vars.example` to `.dev.vars`, run `npm run cf:db` once, then run `npm run cf:dev` and `npm run dev:cloud` together and open http://localhost:5173. Sign-in links print in the wrangler console.
+
+First deploy:
+1. `npx wrangler d1 create insuliser`, then put the id it prints into `wrangler.jsonc`.
+2. In `wrangler.jsonc`, set `BETTER_AUTH_URL` to the real origin and `MAIL_FROM` to an address on a domain verified with Resend.
+3. `npx wrangler secret put BETTER_AUTH_SECRET` (a long random string) and `RESEND_API_KEY`. For Google, also `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, with redirect URI `<origin>/api/auth/callback/google`.
+4. `npm run cf:deploy` (build, apply migrations, deploy).
 
 ## Layout
 

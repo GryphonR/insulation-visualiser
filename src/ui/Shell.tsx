@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { go, href } from './route';
 import { useProject } from './project';
 import { fmt } from './hform';
+import { Account } from './Account';
 
 export const SECTIONS = [
   { n: 1, id: 'buildups', label: 'Build-ups', to: 'buildups', routes: ['buildups', 'library', 'materials', 'compare-buildups', 'wall'] },
@@ -78,6 +79,7 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
         <div className="run">
           <button type="button" className="btn-secondary icon-only" disabled={!canUndo} onClick={undo} title="Undo (Ctrl+Z)" aria-label="Undo"><Arrow /></button>
           <button type="button" className="btn-secondary icon-only" disabled={!canRedo} onClick={redo} title="Redo (Ctrl+Y)" aria-label="Redo"><Arrow flip /></button>
+          <Account />
         </div>
       </header>
       {!saveOk && (

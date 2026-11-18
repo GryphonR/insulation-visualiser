@@ -2,10 +2,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-export default defineConfig({
-  // Served from https://<user>.github.io/insulation-visualiser/ (a project page, not a
-  // custom domain or user/org root page), so asset URLs need this subpath prefix.
-  base: '/insulation-visualiser/',
+// `--mode cloud` (see .env.cloud) builds for the Cloudflare Worker: served from the root, with sign-in and sync.
+// Otherwise it's the GitHub Pages build, served from https://<user>.github.io/insulation-visualiser/ with no accounts.
+export default defineConfig(({ mode }) => ({
+  base: mode === 'cloud' ? '/' : '/insulation-visualiser/',
   plugins: [react()],
-  test: { environment: 'node', include: ['src/**/*.test.ts'] },
-});
+  server: { proxy: { '/api': 'http://localhost:8787' } },
+  test: { environment: 'node', include: ['src/**/*.test.ts', 'worker/**/*.test.ts'] },
+}));

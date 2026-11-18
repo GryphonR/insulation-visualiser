@@ -1,0 +1,4 @@
+# Copy to .dev.vars for `wrangler dev`. Leave RESEND_API_KEY out locally: sign-in links print in the wrangler console.
+BETTER_AUTH_SECRET=any-long-random-string
+# GOOGLE_CLIENT_ID=
+# GOOGLE_CLIENT_SECRET=

@@ -96,6 +96,7 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
   // Another tab saved this project: take its version, so this tab's next save doesn't wipe out those edits.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
+      if (e.key?.startsWith('insulation-visualiser.project')) bump((n) => n + 1); // the list of projects may have changed
       if (e.key !== projectKey(projectId) || !e.newValue) return;
       const p = readStored(projectId);
       if (p) show(projectId, p);

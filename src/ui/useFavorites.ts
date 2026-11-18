@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { loadFavorites, saveFavorites } from '../engine/favorites';
+import { FAVORITES_KEY, loadFavorites, saveFavorites } from '../engine/favorites';
 
 const RECENT_MAX = 8;
 
@@ -7,6 +7,12 @@ const RECENT_MAX = 8;
 export function useFavorites() {
   const [fav, setFav] = useState(() => loadFavorites());
   useEffect(() => saveFavorites(fav), [fav]);
+  // Changed in another tab, or synced from another device.
+  useEffect(() => {
+    const f = (e: StorageEvent) => { if (e.key === FAVORITES_KEY) setFav(loadFavorites()); };
+    window.addEventListener('storage', f);
+    return () => window.removeEventListener('storage', f);
+  }, []);
 
   const toggleMaterial = (id: string) =>
     setFav((f) => ({ ...f, materials: f.materials.includes(id) ? f.materials.filter((x) => x !== id) : [...f.materials, id] }));

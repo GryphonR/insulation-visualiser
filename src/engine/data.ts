@@ -4,6 +4,7 @@ import { HERITAGE_MATERIALS } from './materials-heritage';
 import { BRANDED_MATERIALS } from './materials-branded';
 import { withMu } from './materials-mu';
 import { hex2rgb } from '../lib/util';
+import { stored } from './stored';
 
 export interface Material {
   id: string;
@@ -245,7 +246,7 @@ export const MASSES = [
   { id: 'heavy', label: 'Heavy (250)', c: 250 },
 ];
 
-const CUSTOM_MATERIALS_KEY = 'insulation-visualiser.materials.v1';
+export const CUSTOM_MATERIALS_KEY = 'insulation-visualiser.materials.v1';
 
 const regroup = () => {
   MATERIAL_GROUPS.splice(0, MATERIAL_GROUPS.length, ...Object.keys(MATERIAL_CATEGORIES)
@@ -291,6 +292,7 @@ export function deleteCustomMaterial(id: string): void {
 function persistCustom() {
   try {
     localStorage.setItem(CUSTOM_MATERIALS_KEY, JSON.stringify(customMaterials()));
+    stored(CUSTOM_MATERIALS_KEY);
   } catch {
     // Private browsing or full storage: the materials just won't persist.
   }

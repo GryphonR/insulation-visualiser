@@ -1,0 +1,14 @@
+{
+  // Build with `npm run cf:build` first: the app is served from dist/, and only /api/* reaches the Worker.
+  "name": "insuliser",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "directory": "dist", "run_worker_first": ["/api/*"] },
+  "d1_databases": [
+    // database_id comes from `npx wrangler d1 create insuliser`; local dev doesn't need it.
+    { "binding": "DB", "database_name": "insuliser", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "worker/migrations" }
+  ],
+  // Local dev goes through Vite's proxy, so links point at Vite. Change this to the real domain for a deploy.
+  "vars": { "BETTER_AUTH_URL": "http://localhost:5173", "MAIL_FROM": "Insuliser <signin@example.com>" }
+}

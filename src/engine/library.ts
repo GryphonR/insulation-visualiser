@@ -1,4 +1,5 @@
 import { MAT, PRESETS } from './data';
+import { stored } from './stored';
 import { DEFAULT_SCENARIO } from './scenario';
 import type { Scenario } from './scenario';
 import type { LayerInput } from './simulate';
@@ -22,7 +23,8 @@ export const BUILTIN_STACKUPS: Stackup[] = PRESETS.map((p) => ({
   builtin: true,
 }));
 
-const STORAGE_KEY = 'insulation-visualiser.library.v1';
+export const LIBRARY_KEY = 'insulation-visualiser.library.v1';
+const STORAGE_KEY = LIBRARY_KEY;
 
 /** Drops entries the simulator would crash on: no layers, or a material id that no longer exists. */
 export function validStackup(s: Stackup): boolean {
@@ -45,7 +47,10 @@ export function loadCustomStackups(): Stackup[] {
 
 export function saveCustomStackups(list: Stackup[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    const text = JSON.stringify(list);
+    if (localStorage.getItem(STORAGE_KEY) === text) return; // unchanged: nothing to sync
+    localStorage.setItem(STORAGE_KEY, text);
+    stored(STORAGE_KEY);
   } catch {
     // Private browsing, storage quota, etc. — the library just won't persist.
   }

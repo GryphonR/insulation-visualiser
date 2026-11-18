@@ -2,6 +2,7 @@
 import { hasSavedProject, loadProject, sanitizeProject } from './house-scenarios';
 import type { Project } from './house-scenarios';
 import { addImportedMaterials, customMaterialsIn } from './data';
+import { stored } from './stored';
 
 const IDX = 'insulation-visualiser.projects.v1';
 /** Storage key of one project's body (another tab's save shows up as a storage event on it). */
@@ -66,11 +67,15 @@ function store(id: string, project: Project, activate: boolean): boolean {
   i.items = [...i.items.filter((x) => x.id !== id), info];
   try { localStorage.setItem(projectKey(id), JSON.stringify({ ...project, number })); } catch { return false; }
   writeIndex(i);
+  stored(projectKey(id));
   return true;
 }
 
 /** Store a project under `id` and make it the open one. False if the browser refused (storage full or switched off). */
 export const saveProject = (id: string, project: Project): boolean => store(id, project, true);
+
+/** Store a project without opening it: one arriving from another device. */
+export const putStored = (id: string, project: Project): boolean => store(id, project, false);
 
 /** Change a stored project without opening it (false if it can't be read or stored). */
 export function updateStored(id: string, fn: (p: Project) => Project): boolean {
@@ -111,4 +116,5 @@ export function deleteStored(id: string): void {
   if (!i) return;
   try { localStorage.removeItem(projectKey(id)); } catch { /* ignore */ }
   writeIndex({ ...i, items: i.items.filter((x) => x.id !== id) });
+  stored(projectKey(id));
 }

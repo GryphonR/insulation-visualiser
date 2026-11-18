@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
-import { loadCustomStackups, saveCustomStackups } from './engine/library';
+import { LIBRARY_KEY, loadCustomStackups, saveCustomStackups } from './engine/library';
 import type { Stackup } from './engine/library';
 import { newProject } from './engine/house-scenarios';
 import { BuildupsPage } from './ui/BuildupsPage';
@@ -40,6 +40,12 @@ export default function App() {
   useEffect(() => {
     if (customStackups !== loadedStackups) saveCustomStackups(customStackups);
   }, [customStackups, loadedStackups]);
+  // Changed in another tab, or synced from another device.
+  useEffect(() => {
+    const f = (e: StorageEvent) => { if (e.key === LIBRARY_KEY) setCustomStackups(loadCustomStackups()); };
+    window.addEventListener('storage', f);
+    return () => window.removeEventListener('storage', f);
+  }, []);
 
   return (
     <ErrorScreen>

@@ -1,4 +1,7 @@
-const STORAGE_KEY = 'insulation-visualiser.favorites.v1';
+import { stored } from './stored';
+
+export const FAVORITES_KEY = 'insulation-visualiser.favorites.v1';
+const STORAGE_KEY = FAVORITES_KEY;
 
 export interface Favorites {
   /** Starred material ids. */
@@ -28,7 +31,10 @@ export function loadFavorites(): Favorites {
 
 export function saveFavorites(f: Favorites): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(f));
+    const text = JSON.stringify(f);
+    if (localStorage.getItem(STORAGE_KEY) === text) return; // unchanged: nothing to sync
+    localStorage.setItem(STORAGE_KEY, text);
+    stored(STORAGE_KEY);
   } catch {
     // Private browsing, storage quota, etc. — favourites just won't persist.
   }
