@@ -47,7 +47,7 @@ export function MaterialPickerModal({ value, title, onSelect, onClose, swapFrom 
   const { fav, toggleMaterial, pushRecent } = useFavorites();
   const hasFavMaterials = fav.materials.length > 0;
   const hasRecent = fav.recent.length > 0;
-  const [cat, setCat] = useState(() => (swapFrom ? MAT[value]?.cat ?? 'common' : hasFavMaterials ? FAV_CAT : MAT[value]?.cat ?? 'common'));
+  const [cat, setCat] = useState(() => (swapFrom ? MAT[value]?.cat ?? 'other' : hasFavMaterials ? FAV_CAT : MAT[value]?.cat ?? 'other'));
   const [query, setQuery] = useState('');
   const [role, setRole] = useState<Role | 'all'>(() => (swapFrom ? roleOf(MAT[swapFrom.mat]) : 'all'));
   const [sort, setSort] = useState<Sort>('default');
@@ -55,7 +55,7 @@ export function MaterialPickerModal({ value, title, onSelect, onClose, swapFrom 
   const oldR = swapFrom ? layerR(MAT[swapFrom.mat], swapFrom.t) : 0;
   const eq = (m: Material) => (swapFrom ? thicknessForR(m, oldR, swapFrom.t) : null);
 
-  const byId = (ids: string[]) => ids.map((id) => MAT[id]).filter((m): m is Material => !!m);
+  const byId = (ids: string[]) => ids.map((id) => MAT[id]).filter((m): m is Material => !!m && !m.retired);
   const q = query.trim().toLowerCase();
   let items: Material[] = q
     ? MATERIALS.filter((m) => m.name.toLowerCase().includes(q))

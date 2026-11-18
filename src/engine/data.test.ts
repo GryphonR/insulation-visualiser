@@ -2,6 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { blend, canonId, ID_ALIASES, MAT, MATERIAL_CATEGORIES, MATERIAL_GROUPS, MATERIALS, PRESETS } from './data';
 
 describe('material library', () => {
+  it('traces every branded product to a dated manufacturer document that gives its thermal figure', () => {
+    const branded = MATERIALS.filter((m) => m.brand);
+    expect(branded.length).toBeGreaterThan(0);
+    for (const m of branded) {
+      const s = m.src!;
+      expect(s, m.id).toBeTruthy();
+      expect(s.url, m.id).toMatch(/^https:\/\//);
+      expect(s.checked, m.id).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(s.doc.length, m.id).toBeGreaterThan(10);
+      expect(s.verified.includes(m.R != null ? 'R' : 'k'), m.id).toBe(true);
+      for (const f of s.verified) expect(m[f], `${m.id}.${f}`).not.toBeUndefined();
+    }
+  });
+
   it('has no duplicate ids', () => {
     const ids = MATERIALS.map((m) => m.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -40,7 +54,7 @@ describe('material library', () => {
     const grouped = MATERIAL_GROUPS.flatMap((g) => g.items);
     expect(grouped.length).toBe(MATERIALS.length);
     for (const m of MATERIALS) {
-      expect(MATERIAL_CATEGORIES[m.cat ?? 'common']).toBeTruthy();
+      expect(MATERIAL_CATEGORIES[m.cat ?? 'other']).toBeTruthy();
     }
   });
 
@@ -60,6 +74,17 @@ describe('retired material ids', () => {
       expect(MAT[old]).toBe(MAT[id]);
       expect(canonId(old)).toBe(id);
     }
+  });
+});
+
+describe('retired materials', () => {
+  it('still load with their own figures for old saves, but are out of the library', () => {
+    const old = MAT.m_kingspan_alphacore_pad;
+    expect(old.retired).toBe(true);
+    expect(old.k).toBe(0.02);
+    expect(old.mu).toBeGreaterThan(1);
+    expect(MATERIALS.some((m) => m.retired)).toBe(false);
+    expect(MATERIAL_GROUPS.flatMap((g) => g.items).some((m) => m.retired)).toBe(false);
   });
 });
 

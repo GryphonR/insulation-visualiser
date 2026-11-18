@@ -47,6 +47,40 @@ def classify(name):
         return 'other-fluid'
     return 'other'
 
+# The type group shown in the dropdowns (data.ts MATERIAL_CATEGORIES). classify() above still drives
+# colour and thickness range, so regrouping never changes how a material looks or its slider.
+def group(name, cls):
+    n = name.lower()
+    if cls == 'cavity':
+        return 'cavity'
+    if re.search(r'carpet|linoleum|underlay|tiles, cork|roof tile|bitumen felt|asphalt', n):
+        return 'finish'
+    if re.search(r'brick|clinker|aerated concrete|thermalite|concrete hollow', n):
+        return 'brick'
+    if re.search(r'perlite insulation|insulating plaster', n) or cls == 'plaster':
+        return 'plaster'
+    if re.search(r'concrete|screed|mortar|cement, sand|lime, sand|sand/gravel', n):
+        return 'concrete'
+    if 'clay/silt' in n:
+        return 'earth'
+    if re.search(r'alphacore|foam glass|perlite', n):
+        return 'ins-special'
+    if re.search(r'wool|isover|k-roc', n) and 'wood wool' not in n:
+        return 'ins-natural' if 'sheep' in n else 'ins-wool'
+    if ' osb ' in n:
+        return 'timber'
+    if 'epdm' in n:
+        return 'membrane'
+    if 'asbestos' in n:
+        return 'other'
+    if re.search(r'therma fleece|cork|agepan|wood fibre insulation', n):
+        return 'ins-natural'
+    if cls == 'insulation':
+        return 'ins-foam'
+    if cls in ('timber', 'stone', 'membrane'):
+        return cls
+    return 'other'
+
 CATEGORY_LABEL = {
     'cavity': 'Air layers',
     'metal': 'Metals',
@@ -171,39 +205,39 @@ for o in out:
 
 lines = []
 lines.append('// Auto-generated from a pasted materials table (thermal conductivity, density, specific')
-lines.append('// heat). Grouped by category for the dropdowns via `cat`, which must match a label in')
-lines.append('// MATERIAL_CATEGORIES below. Regenerate with scripts/gen-materials.py if the source table')
+lines.append('// heat). Grouped by type for the dropdowns via `cat`, which must match a label in')
+lines.append('// MATERIAL_CATEGORIES in data.ts. Regenerate with scripts/gen-materials.py if the source table')
 lines.append("// changes — don't hand-edit entries here.")
 lines.append('//')
 lines.append('// A few notes on where the numbers needed a judgement call:')
 lines.append('// - The "N cm ... Air layer" rows give an effective conductivity that is only valid at')
 lines.append('//   that exact thickness (cavity convection depends on the gap width), so each one is')
 lines.append('//   locked to its stated thickness (min = max = that value) rather than given a slider.')
-lines.append('// - A handful of rows (the Kingspan AlphaCore pair) had no specific heat capacity in the')
-lines.append('//   source table; they\'re given 1400 J/kgK, in line with similar PIR-type boards.')
+lines.append('// - Branded rows in the table are unsourced, so they go to RETIRED_MATERIALS: kept so old saves')
+lines.append('//   still load and simulate, but hidden from the library and flagged for replacement. Checked')
+lines.append('//   branded products live in materials-branded.ts. (The AlphaCore pair had no specific heat; 1400 assumed.)')
 lines.append('// - `cat` is a loose grouping for the dropdown and colour, guessed from the material name —')
 lines.append('//   it has no effect on the physics.')
 lines.append("import type { Material } from './data';")
 lines.append('')
+RETIRED = re.compile(r'^(agepan|isover|kingspan|therma fleece|thermalite)', re.I)
+def row(o, extra=''):
+    return "  { id: %s, name: %s, k: %s, rho: %s, cp: %s, col: %s, t: %s, min: %s, max: %s, step: %s, cat: %s%s }," % (
+        json.dumps(o['id']), json.dumps(o['name']), o['k'], o['rho'], o['cp'], json.dumps(o['col']),
+        o['t'], o['min'], o['max'], o['step'], json.dumps(group(o['name'], o['cat'])), extra)
+
 lines.append('export const EXTRA_MATERIALS: Material[] = [')
 for c in cat_order:
-    items = by_cat[c]
+    items = [o for o in by_cat[c] if not RETIRED.match(o['name'])]
     if not items:
         continue
     lines.append(f'  // {CATEGORY_LABEL[c]}')
-    for o in items:
-        lines.append(
-            "  { id: %s, name: %s, k: %s, rho: %s, cp: %s, col: %s, t: %s, min: %s, max: %s, step: %s, cat: %s }," % (
-                json.dumps(o['id']), json.dumps(o['name']), o['k'], o['rho'], o['cp'], json.dumps(o['col']),
-                o['t'], o['min'], o['max'], o['step'], json.dumps(c),
-            )
-        )
+    lines += [row(o) for o in items]
 lines.append('];')
 lines.append('')
-lines.append('export const MATERIAL_CATEGORIES: Record<string, string> = {')
-for c in cat_order:
-    lines.append(f'  {json.dumps(c)}: {json.dumps(CATEGORY_LABEL[c])},')
-lines.append('};')
+lines.append('export const RETIRED_MATERIALS: Material[] = [')
+lines += [row(o, ', retired: true') for o in out if RETIRED.match(o['name'])]
+lines.append('];')
 
 text = '\n'.join(lines)
 with open('../src/engine/materials-extra.ts', 'w', encoding='utf-8') as f:

@@ -171,7 +171,7 @@ export function BuildupsPage({ selected }: { selected?: string }) {
                         return (
                           <tr key={i} style={hov === i ? { background: '#fbe6d8' } : undefined} onMouseEnter={() => setHov(i)}>
                             <td><span className="mono small" style={{ display: 'inline-grid', placeItems: 'center', width: 22, height: 22, border: '1px solid var(--ink)', background: x?.col }}>{i + 1}</span></td>
-                            <td>{x?.name ?? m}</td>
+                            <td>{x?.name ?? m}{x?.retired && <div className="small warn">No longer in the library: Edit to replace it</div>}</td>
                             <td className="n mono">{t}</td>
                             <td className="n mono">{x?.k ?? '—'}</td>
                             <td className="n mono">{fmt(layerR(m, t), 2)}</td>

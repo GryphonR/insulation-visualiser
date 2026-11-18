@@ -178,6 +178,7 @@ export function Builder({ layers, onChange, library, onPreset, nextId }: Props) 
                   <Icon d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 8.5h6.6l.7-8.5M6.8 7v4M9.2 7v4" stroke="#a02828" />
                 </button>
               </div>
+              {m.retired && <p className="small warn" role="status">No longer in the materials library: its figures weren't from a datasheet. Kept so the results don't change; replace it with ✎.</p>}
               <div className="layer-mid">
                 <input type="range" aria-label={`Thickness of layer ${i + 1}`} min={m.min} max={m.max} step={m.step} value={L.t}
                   onChange={(e) => edit((ls) => { ls[i].t = Number(e.target.value); })} />

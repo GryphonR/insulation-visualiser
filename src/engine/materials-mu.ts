@@ -16,45 +16,57 @@ export const MU_CLOSED = 1e6;
 
 type Rule = [RegExp, number, number?];
 
-// Rules for the generated (m_*) materials, by category; first match wins, then the "*" default.
+// Rules for the generated (m_*) materials, by type group (cat); first match wins, no match = no data.
+// Lookaheads keep a few rows out of their group's rules where the old source table gave them none
+// (stone-wool-filled hollow brick, EPS-aggregate concrete, perlite mortar/plaster).
+const INSULATION: Rule[] = [
+  [/polystyrene_beads/, 3],
+  [/xps/, 150],
+  [/eps|polystyrene/, 60],
+  [/alphacore|kooltherm|thermawall|polyurethane_pu_foam/, 50],
+  [/k_roc|rock_wool|glass_wool|isover|sheeps_wool/, 1],
+  [/agepan_dwd/, 11],
+  [/agepan_(thd|udp)|wood_fibre/, 5, 3],
+  [/foam_glass/, MU_CLOSED],
+  [/cork/, 5],
+  [/perlite_(loose|board)/, 5],
+];
 const RULES: Record<string, Rule[]> = {
   cavity: [[/./, 1]],
-  glass: [[/./, MU_CLOSED]],
-  metal: [[/./, MU_CLOSED]],
-  insulation: [
-    [/concrete_eps/, 15, 10],
-    [/polystyrene_beads/, 3],
-    [/xps/, 150],
-    [/eps|polystyrene/, 60],
-    [/alphacore|kooltherm|thermawall|polyurethane_pu_foam/, 50],
-    [/k_roc|rock_wool|glass_wool|isover|sheeps_wool/, 1],
-    [/agepan_dwd/, 11],
-    [/agepan_(thd|udp)|wood_fibre/, 5, 3],
-    [/foam_glass/, MU_CLOSED],
-    [/cork/, 5],
-    [/perlite_(loose|board)/, 5],
+  other: [
+    [/glass|aluminium|brass|copper|crni|gold|iron|lead|molybdenum|steel|zinc/, MU_CLOSED],
+    [/asbestos/, 50],
   ],
+  'ins-foam': INSULATION, 'ins-wool': INSULATION, 'ins-natural': INSULATION, 'ins-special': INSULATION,
   membrane: [
-    [/bitumen|asphalt|pvc|polyvinyl/, 50000],
+    [/bitumen|pvc|polyvinyl/, 50000],
     [/butyl/, 200000],
     [/rubber|epdm|butadiene/, 10000],
     [/silicone/, 5000],
-    [/linoleum/, 1000],
-    [/asbestos/, 50],
     [/./, 10000], // other plastics: est.
   ],
-  masonry: [
+  finish: [
+    [/cork/, 5],
+    [/bitumen|asphalt/, 50000],
+    [/linoleum/, 1000],
+    [/roof_tile_clay/, 30],
+    [/roof_tile/, 100, 60],
+  ],
+  brick: [
     [/aerated_concrete|thermalite/, 10, 6],
+    [/^(?!.*stone_wool).*(brick|clinker)/, 16, 10],
+  ],
+  concrete: [
+    [/concrete_eps/, 15, 10],
     [/lightweight_concrete|light_gravel|expanded_shale|expanded_clay/, 15, 10],
     [/concrete_(1800|2000)kg/, 100, 60],
     [/reinforced|concrete_crushed|concrete_2[2-4]00kg/, 130, 80],
-    [/roof_tile_clay|tiles_clay/, 30],
-    [/tile/, 100, 60],
-    [/brick|clinker/, 16, 10],
     [/light_mortar|lime_cement|cement_lime_mortar/, 15, 10],
     [/cement|one_coat|^m_mortar$/, 25, 15],
-    [/sand_gravel|clay_silt/, 50],
+    [/lime_sand/, 10, 6],
+    [/sand_gravel/, 50],
   ],
+  earth: [[/clay_silt/, 50]],
   stone: [
     [/marble|crystalline/, 10000],
     [/limestone_hard|sedimentary/, 200, 150],
@@ -64,7 +76,7 @@ const RULES: Record<string, Rule[]> = {
   plaster: [
     [/lime_hemp/, 5],
     [/cement_lime|ext_rendering|coloured/, 15, 10],
-    [/./, 10, 6], // gypsum / lime / general-purpose plasters
+    [/^(?!.*perlite)/, 10, 6], // gypsum / lime / general-purpose plasters
   ],
   timber: [
     [/wood_wool/, 3, 2],
@@ -75,11 +87,6 @@ const RULES: Record<string, Rule[]> = {
     [/osb/, 50, 30],
     [/timber|wood/, 50, 20],
   ],
-  other: [
-    [/cement_sand/, 25, 15],
-    [/lime_sand/, 10, 6],
-    [/epdm/, 10000],
-  ],
 };
 
 // Curated common materials and the heritage set, by id: [dry, wet?].
@@ -87,7 +94,7 @@ const BY_ID: Record<string, [number, number?]> = {
   // curated
   brick: [16, 10], earth: [10, 6], dblock: [100, 60], pb: [10, 4], ply: [100, 50], cavity: [1], vgap: [1],
   cavity_le1: [1], cavity_le2: [1], vgap_le1: [1], pir: [60], pir_foil: [MU_CLOSED], eps: [60], mw: [1], wf: [5, 3],
-  tlx: [MU_CLOSED], boostr: [MU_CLOSED], hemp: [5],
+  hemp: [5],
   // building stones (est. mid-range except where EN ISO 10456 classes apply)
   h_portland_limestone: [40, 25], h_bath_stone: [15, 10], h_cotswold_limestone: [40, 25], h_magnesian_limestone: [40, 25],
   h_purbeck_limestone: [200, 150], h_mountain_limestone: [250, 200], h_chalk_clunch: [8, 6],
@@ -133,27 +140,31 @@ const HYG_BY_ID: Record<string, Hyg> = {
   h_granite: DENSE_STONE, h_whinstone: DENSE_STONE, h_flint: DENSE_STONE, h_slate: [0.001, 20, 1], h_rubble_wall: [0.1, 180, 8],
 };
 const HYG_RULES: Record<string, Array<[RegExp, Hyg]>> = {
-  masonry: [
+  brick: [
     [/aerated_concrete|thermalite/, AAC],
-    [/lightweight_concrete|light_gravel|expanded_shale|expanded_clay/, [0.03, 300, 20]],
-    [/clinker|engineering/, [0.01, 60, 2]],
-    [/brick/, BRICK],
-    [/light_mortar|lime_cement|cement_lime/, LIME_CEMENT],
-    [/concrete|tile_concrete/, CONCRETE],
-    [/roof_tile_clay/, [0.1, 150, 3]],
-    [/cement|one_coat|^m_mortar$/, CEMENT],
+    [/clinker/, [0.01, 60, 2]],
+    [/^(?!.*stone_wool).*brick/, BRICK],
+    [/concrete_hollow_stone/, CONCRETE],
   ],
+  concrete: [
+    [/lightweight_concrete|light_gravel|expanded_shale|expanded_clay/, [0.03, 300, 20]],
+    [/light_mortar|lime_cement|cement_lime/, LIME_CEMENT],
+    [/^(?!.*eps).*concrete/, CONCRETE],
+    [/cement|one_coat|^m_mortar$/, CEMENT],
+    [/lime_sand/, LIME],
+  ],
+  finish: [[/roof_tile_concrete/, CONCRETE], [/roof_tile_clay/, [0.1, 150, 3]]],
   plaster: [[/lime_hemp/, HEMPCRETE], [/cement_lime|ext_rendering|coloured/, LIME_CEMENT], [/gypsum|general_purpose|^m_plaster$/, GYPSUM]],
   stone: [[/marble|crystalline/, DENSE_STONE], [/limestone_hard|sedimentary/, [0.01, 60, 2]], [/sandstone/, SANDSTONE], [/porous/, [0.15, 230, 4]]],
-  other: [[/cement_sand/, CEMENT], [/lime_sand/, LIME]],
 };
 /** Wood products: slow capillary uptake across the grain; about 15% moisture by mass at 80% RH. */
 const timberHyg = (m: Material): Hyg => [0.002, 600, 0.15 * m.rho];
 
 export function withMu(m: Material): Material {
-  const hit = BY_ID[m.id] ?? RULES[m.cat ?? '']?.find(([re]) => re.test(m.id))?.slice(1);
+  const gen = m.id.startsWith('m_'); // the group rules are only for the generated table
+  const hit = BY_ID[m.id] ?? (gen ? RULES[m.cat ?? '']?.find(([re]) => re.test(m.id))?.slice(1) : undefined);
   let out: Material = hit ? { ...m, mu: hit[0], muWet: hit[1] ?? hit[0] } : m;
-  const hyg = HYG_BY_ID[m.id] ?? HYG_RULES[m.cat ?? '']?.find(([re]) => re.test(m.id))?.[1] ?? (m.cat === 'timber' && !/wood_wool|cement_bonded/.test(m.id) ? timberHyg(m) : undefined);
+  const hyg = HYG_BY_ID[m.id] ?? (gen ? HYG_RULES[m.cat ?? '']?.find(([re]) => re.test(m.id))?.[1] : undefined) ?? (m.cat === 'timber' && !/wood_wool|cement_bonded/.test(m.id) ? timberHyg(m) : undefined);
   if (hyg) out = { ...out, A: hyg[0], wf: hyg[1], w80: hyg[2] };
   return m.cat === 'timber' || HYGRO.test(m.id) ? { ...out, hygro: HYGRO_CRIT } : out;
 }

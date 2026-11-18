@@ -102,10 +102,11 @@ export function MaterialsPage() {
   const [creating, setCreating] = useState<false | 'material' | 'mix'>(false);
   const copy = (m: Material) => {
     const id = uid('cm');
-    save({ ...m, id, name: `${m.name} (custom)` });
+    const { brand: _b, src: _s, ...rest } = m; // a copy is no longer the verified product
+    save({ ...rest, id, name: `${m.name} (custom)` });
     setSel(id);
   };
-  const rows = MATERIALS.filter((m) => (cat === 'all' || (m.cat ?? 'common') === cat) && m.name.toLowerCase().includes(q.toLowerCase()));
+  const rows = MATERIALS.filter((m) => (cat === 'all' || (cat === 'branded' ? !!m.brand : (m.cat ?? 'other') === cat)) && m.name.toLowerCase().includes(q.toLowerCase()));
   const s = MAT[sel] ?? MATERIALS[0];
   const usedBy = (id: string) => house.buildups.filter((b) => b.layers.some(([m]) => m === id));
   const inUse = usedBy(s.id);
@@ -126,6 +127,7 @@ export function MaterialsPage() {
           <input className="srch" aria-label="Search materials" placeholder="Search materials" value={q} onChange={(e) => setQ(e.target.value)} />
           <select className="select" aria-label="Group" value={cat} onChange={(e) => setCat(e.target.value)}>
             <option value="all">All groups</option>
+            <option value="branded">Branded products (with datasheets)</option>
             {Object.entries(MATERIAL_CATEGORIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
           <span className="mono small muted">{rows.length} of {MATERIALS.length}</span>
@@ -139,7 +141,8 @@ export function MaterialsPage() {
               {rows.map((m) => (
                 <tr key={m.id} className={m.id === s.id ? 'on' : ''} onClick={() => setSel(m.id)} style={{ cursor: 'pointer' }}>
                   <td><span style={{ display: 'inline-block', width: 14, height: 14, border: '1px solid var(--ink)', background: m.col, verticalAlign: 'middle', marginRight: 8 }} aria-hidden="true" />
-                    <button type="button" className="btn-link" aria-pressed={m.id === s.id} onClick={() => setSel(m.id)}>{m.name}</button></td>
+                    <button type="button" className="btn-link" aria-pressed={m.id === s.id} onClick={() => setSel(m.id)}>{m.name}</button>
+                    {m.src && <span className="small muted" title={`Figures from ${m.src.doc}`}> · datasheet</span>}</td>
                   <td className="n mono">{m.k ?? '—'}</td><td className="n mono">{m.R ?? '—'}</td><td className="n mono">{m.rho}</td><td className="n mono">{m.cp}</td>
                   <td className="n mono">{m.mu ?? '—'}</td><td className="n mono">{usedBy(m.id).length || '—'}</td>
                 </tr>
@@ -173,6 +176,7 @@ export function MaterialsPage() {
             </div>
           )}
           <p className="small">Volumetric heat capacity <b className="mono">{fmt((s.rho * s.cp) / 1000)} kJ/m³K</b>{s.k ? <> · R per 100 mm <b className="mono">{fmt(0.1 / s.k, 2)} m²K/W</b></> : null}</p>
+          {s.src && <Source m={s} />}
           <p className="small">Default thickness {s.t} mm (range {s.min}–{s.max}). Vapour resistance μ {s.mu ?? 'not given'}.</p>
           <div className="chips">
             <button type="button" className="btn-primary" onClick={() => copy(s)}>Duplicate as custom</button>
@@ -185,6 +189,23 @@ export function MaterialsPage() {
       </aside>
       {creating === 'mix' && <MixModal onCancel={() => setCreating(false)} onSave={(m) => { save(m); setSel(m.id); setCreating(false); }} />}
       {creating === 'material' && <MaterialModal onCancel={() => setCreating(false)} onSave={(m) => { save(m); setSel(m.id); setCreating(false); }} />}
+    </div>
+  );
+}
+
+const FIELD: Partial<Record<keyof Material, string>> = { k: 'λ', R: 'R', rho: 'ρ', cp: 'c', mu: 'μ', t: 'thickness', min: 'thickness range', max: 'thickness range' };
+const fields = (keys: Array<keyof Material>) => [...new Set(keys.map((k) => FIELD[k] ?? k))].join(', ');
+
+/** Where a branded product's figures come from, and which ones are assumptions. */
+function Source({ m }: { m: Material }) {
+  const s = m.src!;
+  const assumed = (['k', 'R', 'rho', 'cp', 'mu'] as const).filter((k) => m[k] != null && !s.verified.includes(k));
+  return (
+    <div className="small">
+      <div className="eyebrow">{m.brand} · datasheet</div>
+      <p><a href={s.url} target="_blank" rel="noopener noreferrer">{s.doc}</a>, read {s.checked}.</p>
+      <p>From the document: {fields(s.verified)}.{assumed.length > 0 && <> Assumed (not in it): {fields([...assumed])}.</>}</p>
+      {s.note && <p className="muted">{s.note}</p>}
     </div>
   );
 }

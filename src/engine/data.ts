@@ -1,6 +1,7 @@
 import { COMMON_MATERIALS } from './materials-common';
-import { EXTRA_MATERIALS, MATERIAL_CATEGORIES as EXTRA_CATEGORIES } from './materials-extra';
-import { HERITAGE_MATERIALS, HERITAGE_CATEGORIES } from './materials-heritage';
+import { EXTRA_MATERIALS, RETIRED_MATERIALS } from './materials-extra';
+import { HERITAGE_MATERIALS } from './materials-heritage';
+import { BRANDED_MATERIALS } from './materials-branded';
 import { withMu } from './materials-mu';
 import { hex2rgb } from '../lib/util';
 
@@ -21,7 +22,7 @@ export interface Material {
   min: number;
   max: number;
   step: number;
-  /** Loose grouping for the material dropdown (an optgroup label, via MATERIAL_CATEGORIES). */
+  /** Type group for the material dropdown: a key of MATERIAL_CATEGORIES. No effect on the physics. */
   cat?: string;
   /** Air layer ventilated to outside (e.g. tile batten gap): exchanges heat with outdoor air. */
   vent?: boolean;
@@ -36,9 +37,26 @@ export interface Material {
   w80?: number;
   /** A layer of two materials side by side (bricks and mortar, studs in insulation): b takes share f of the face. The other properties are the blend, from blend(). */
   mix?: { a: string; b: string; f: number };
+  /** Manufacturer, for a branded product (materials-branded.ts). */
+  brand?: string;
+  /** No longer in the library (unsourced): still simulates in old saves, but the UI asks for a replacement. */
+  retired?: boolean;
+  /** Where a branded product's figures come from: the document, its link, when it was read, and which fields it gives. */
+  src?: MaterialSource;
 }
 
-export const MATERIALS: Material[] = [...COMMON_MATERIALS, ...EXTRA_MATERIALS, ...HERITAGE_MATERIALS].map(withMu);
+export interface MaterialSource {
+  /** Document title with its issue or version and date, as printed. */
+  doc: string;
+  url: string;
+  /** Date the figures were last read from the document, YYYY-MM-DD. */
+  checked: string;
+  /** Fields printed in the document (or worked out directly from printed figures). The rest are assumptions. */
+  verified: Array<keyof Material>;
+  note?: string;
+}
+
+export const MATERIALS: Material[] = [...COMMON_MATERIALS, ...BRANDED_MATERIALS, ...EXTRA_MATERIALS, ...HERITAGE_MATERIALS].map(withMu);
 
 /** Curated ids retired in favour of the equivalent generated/heritage material; saved projects may still carry them. */
 export const ID_ALIASES: Record<string, string> = {
@@ -47,7 +65,7 @@ export const ID_ALIASES: Record<string, string> = {
 };
 export const canonId = (id: string): string => ID_ALIASES[id] ?? id;
 
-export const MAT: Record<string, Material> = Object.fromEntries(MATERIALS.map((m) => [m.id, m]));
+export const MAT: Record<string, Material> = Object.fromEntries([...MATERIALS, ...RETIRED_MATERIALS.map(withMu)].map((m) => [m.id, m]));
 // Lookups by a retired id still resolve, so old saves, favourites and library entries keep simulating.
 for (const [old, id] of Object.entries(ID_ALIASES)) MAT[old] = MAT[id];
 
@@ -96,8 +114,24 @@ for (const [id, name, a, b, f, t, min, max] of MIXES) {
   MAT[id] = m;
 }
 
-/** Category id -> dropdown group label, in display order (the common/curated set first). */
-export const MATERIAL_CATEGORIES: Record<string, string> = { common: 'Common build-up materials', mixed: 'Mixed layers (two materials side by side)', ...HERITAGE_CATEGORIES, ...EXTRA_CATEGORIES };
+/** Category id -> dropdown group label, in display order. Grouped by what a material is, whichever file it comes from. */
+export const MATERIAL_CATEGORIES: Record<string, string> = {
+  brick: 'Brick & block',
+  concrete: 'Concrete, mortar & screed',
+  stone: 'Natural stone',
+  earth: 'Earth, straw, hemp & thatch',
+  timber: 'Timber & wood-based boards',
+  plaster: 'Plaster, plasterboard & render',
+  'ins-foam': 'Insulation: foam boards (PIR, phenolic, EPS, XPS)',
+  'ins-wool': 'Insulation: mineral & glass wool',
+  'ins-natural': 'Insulation: natural & bio-based',
+  'ins-special': 'Insulation: multifoil, aerogel & mineral',
+  cavity: 'Air layers & cavities',
+  membrane: 'Plastics, rubber & membranes',
+  finish: 'Floor & roof finishes',
+  other: 'Glass, metals & other',
+  mixed: 'Mixed layers (two materials side by side)',
+};
 
 export interface MaterialGroup {
   cat: string;
@@ -107,7 +141,7 @@ export interface MaterialGroup {
 
 /** MATERIALS grouped by `cat`, in MATERIAL_CATEGORIES order,. */
 export const MATERIAL_GROUPS: MaterialGroup[] = Object.keys(MATERIAL_CATEGORIES)
-  .map((cat) => ({ cat, label: MATERIAL_CATEGORIES[cat], items: MATERIALS.filter((m) => (m.cat ?? 'common') === cat) }))
+  .map((cat) => ({ cat, label: MATERIAL_CATEGORIES[cat], items: MATERIALS.filter((m) => (m.cat ?? 'other') === cat) }))
   .filter((g) => g.items.length > 0);
 
 export interface Preset {
@@ -215,7 +249,7 @@ const CUSTOM_MATERIALS_KEY = 'insulation-visualiser.materials.v1';
 
 const regroup = () => {
   MATERIAL_GROUPS.splice(0, MATERIAL_GROUPS.length, ...Object.keys(MATERIAL_CATEGORIES)
-    .map((cat) => ({ cat, label: MATERIAL_CATEGORIES[cat], items: MATERIALS.filter((m) => (m.cat ?? 'common') === cat) }))
+    .map((cat) => ({ cat, label: MATERIAL_CATEGORIES[cat], items: MATERIALS.filter((m) => (m.cat ?? 'other') === cat) }))
     .filter((g) => g.items.length > 0));
 };
 
