@@ -6,6 +6,7 @@ import { Chip } from './controls';
 import { Card, Num, Why, fmt, NumInput } from './hform';
 import { WHY, sourceWhy } from './assumptions';
 import { useProject } from './project';
+import { withPostcode } from '../engine/house-scenarios';
 import { href } from './route';
 import { RoofSectionFields, newRoof } from './HouseRoof';
 
@@ -13,13 +14,13 @@ const ROOM_TYPES = Object.keys(ROOM_TEMPS) as RoomType[];
 
 /** Climate and room temperatures: where the house is and what it is held at. */
 export function SitePage() {
-  const { house, upd, res } = useProject();
+  const { house, upd, res, setProject } = useProject();
   return (
     <div className="house-grid">
       <div className="house-col">
           <Card title="Climate" note="MCS design conditions: the nearest weather station and region to the postcode, altitude, and degree days for the postcode area.">
             <div className="hf-row">
-              <label className="hf"><span className="eyebrow">Postcode</span><input className="h-text short" value={house.climate.postcode} onChange={(e) => upd((h) => { h.climate.postcode = e.target.value; })} /></label>
+              <label className="hf"><span className="eyebrow">Postcode (all scenarios)</span><input className="h-text short" value={house.climate.postcode} onChange={(e) => setProject((p) => withPostcode(p, e.target.value))} /></label>
               <label className="small"><input type="checkbox" checked={house.climate.auto !== false} onChange={(e) => upd((h) => {
                 // Turning the lookup off keeps whatever it had found, ready to adjust by hand.
                 if (!e.target.checked) { h.climate.station = res.climate.station; h.climate.region = res.climate.region; }

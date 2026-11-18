@@ -105,3 +105,4 @@ input[type='range'], input[type='checkbox'], input[type='radio'] { accent-color:
 .node { border: var(--bw) solid var(--ink); background: var(--card); }
 .node.on { border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); background: #fdf3ea; }
 .shape-ed, .outline-ed { border-radius: 0; border-color: var(--ink); }
+.panel > .section-head:first-child .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }

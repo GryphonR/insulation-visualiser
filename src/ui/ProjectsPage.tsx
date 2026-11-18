@@ -6,6 +6,7 @@ import type { ProjectInfo } from '../engine/projects';
 import { download } from '../lib/util';
 import { go, href } from './route';
 import { useProject } from './project';
+import { withPostcode } from '../engine/house-scenarios';
 
 const when = (t: number) => new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -34,8 +35,8 @@ function Modal({ title, onClose, children, actions, wide }: { title: string; onC
 }
 
 /** Edit a project's name and the customer's details. */
-function DetailsModal({ info, onSave, onClose }: { info: ProjectInfo; onSave: (d: { name: string; customer: string; address: string }) => void; onClose: () => void }) {
-  const [d, setD] = useState({ name: info.name, customer: info.customer ?? '', address: info.address ?? '' });
+function DetailsModal({ info, onSave, onClose }: { info: ProjectInfo; onSave: (d: { name: string; customer: string; address: string; postcode: string }) => void; onClose: () => void }) {
+  const [d, setD] = useState({ name: info.name, customer: info.customer ?? '', address: info.address ?? '', postcode: info.postcode ?? '' });
   const field = (k: keyof typeof d, label: string, multi?: boolean) => (
     <label className="hf"><span className="eyebrow">{label}</span>
       {multi
@@ -49,6 +50,7 @@ function DetailsModal({ info, onSave, onClose }: { info: ProjectInfo; onSave: (d
       {field('name', 'Project name')}
       {field('customer', 'Customer (optional)')}
       {field('address', 'Address (optional)', true)}
+      {field('postcode', 'Postcode: sets the weather for every scenario')}
     </Modal>
   );
 }
@@ -93,7 +95,6 @@ export function ProjectsPage() {
           {STEPS.map(([to, t, d], i) => <li key={to}><span className="n">{i + 1}</span><span><b>{t}</b><span className="small muted">{d}</span></span></li>)}
         </ol>
         <div className="chips">
-          <button type="button" className="btn-primary" onClick={() => go('start')}>+ New project</button>
           <button type="button" className="btn-secondary" onClick={() => setDialog({ kind: 'demo' })}>Try a demo house</button>
         </div>
         <p className="small muted">New to heat loss? <a href={href('learn')}>Learn</a> walks through the ideas behind each step.</p>
@@ -105,7 +106,7 @@ export function ProjectsPage() {
           <div className="chips">
             <button type="button" className="btn-secondary" onClick={() => fileRef.current?.click()}>Import…</button>
             <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = ''; }} />
-            <button type="button" className="btn-secondary" onClick={() => setDialog({ kind: 'demo' })}>Demos…</button>
+            <button type="button" className="btn-primary" onClick={() => go('start')}>+ New project</button>
           </div>
         </div>
         {msg && <p className="small" role="status">{msg}</p>}
@@ -116,7 +117,7 @@ export function ProjectsPage() {
               <li key={p.id} className={now ? 'on' : ''}>
                 <button type="button" className="proj-main" onClick={() => (now ? go('plan') : open(p.id))}>
                   <span className="proj-title"><b>{p.name}</b>{p.number && <span className="proj-no mono">{p.number}</span>}{now && <span className="proj-now">Open</span>}</span>
-                  {(p.customer || p.address) && <span className="small">{[p.customer, p.address?.replace(/\s*\n\s*/g, ', ')].filter(Boolean).join(' · ')}</span>}
+                  <span className="small">{[p.customer, p.address?.replace(/\s*\n\s*/g, ', '), p.postcode?.toUpperCase()].filter(Boolean).join(' · ')}</span>
                   <span className="small muted">{p.rooms} room{p.rooms === 1 ? '' : 's'} · {p.scenarios} scenario{p.scenarios === 1 ? '' : 's'} · saved {when(p.updated)}</span>
                 </button>
                 <div className="proj-more">
@@ -153,10 +154,13 @@ export function ProjectsPage() {
       )}
       {dialog?.kind === 'details' && (
         <DetailsModal info={dialog.p} onClose={close}
-          onSave={(d) => editProject(dialog.p.id, (q) => ({
-            ...q, customer: trim(d.customer), address: trim(d.address),
-            scenarios: q.scenarios.map((s, i) => (i === 0 ? { ...s, house: { ...s.house, name: d.name.trim() || s.house.name } } : s)),
-          }))} />
+          onSave={(d) => editProject(dialog.p.id, (p) => {
+            const q = d.postcode.trim() ? withPostcode(p, d.postcode.trim()) : p;
+            return {
+              ...q, customer: trim(d.customer), address: trim(d.address),
+              scenarios: q.scenarios.map((s, i) => (i === 0 ? { ...s, house: { ...s.house, name: d.name.trim() || s.house.name } } : s)),
+            };
+          })} />
       )}
       {dialog?.kind === 'delete' && (
         <Modal title="Delete project" onClose={close}
