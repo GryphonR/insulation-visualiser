@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { DOOR_LIBRARY, GLAZING_LIBRARY, buildupU } from '../engine/house';
+import { DOOR_LIBRARY, GLAZING_LIBRARY, buildupU, listedAs } from '../engine/house';
 import type { Buildup, BuildupKind } from '../engine/house';
 import type { Stackup } from '../engine/library';
 import { fmt } from './hform';
@@ -36,8 +36,8 @@ export function PresetBrowser({ library, have, onAdd, onDelete, tools, actionLab
     ...GLAZING_LIBRARY.map((g): Item => ({ key: `g:${g.name}`, preset: { kind: 'glazing', layers: [], ...g } })),
     ...DOOR_LIBRARY.map((d): Item => ({ key: `d:${d.name}`, preset: { kind: 'door', layers: [], ...d } })),
   ].filter((i) => !layeredOnly || i.preset.layers.length > 0), [library, layeredOnly]);
-  const shown = items.filter((i) => (cat === 'all' || (cat === 'fav' ? fav.buildups.includes(i.key) : i.preset.kind === (cat as BuildupKind))) && i.preset.name.toLowerCase().includes(q.toLowerCase()));
-  const count = (c: string) => items.filter((i) => (c === 'all' || (c === 'fav' ? fav.buildups.includes(i.key) : i.preset.kind === c))).length;
+  const shown = items.filter((i) => (cat === 'all' || (cat === 'fav' ? fav.buildups.includes(i.key) : listedAs(i.preset) === (cat as BuildupKind))) && i.preset.name.toLowerCase().includes(q.toLowerCase()));
+  const count = (c: string) => items.filter((i) => (c === 'all' || (c === 'fav' ? fav.buildups.includes(i.key) : listedAs(i.preset) === c))).length;
 
   return (
     <div style={{ display: 'flex', minHeight: 360 }}>
@@ -58,7 +58,7 @@ export function PresetBrowser({ library, have, onAdd, onDelete, tools, actionLab
                 return (
                   <div key={i.key} className="lib-row" style={{ display: 'grid', gap: 8, gridTemplateColumns: `auto 1fr 70px ${tools ? '84px 90px ' : ''}96px${onDelete ? ' 84px' : ''}`, alignItems: 'center', cursor: 'default' }}>
                     <button type="button" className="btn-link" style={{ fontSize: 16 }} aria-pressed={starred} aria-label={`${starred ? 'Unstar' : 'Star'} ${i.preset.name}`} onClick={() => toggleBuildup(i.key)}>{starred ? '★' : '☆'}</button>
-                    <span><b style={{ fontWeight: 500 }}>{i.preset.name}</b> <span className="small muted">· {i.preset.kind}</span></span>
+                    <span><b style={{ fontWeight: 500 }}>{i.preset.name}</b> <span className="small muted">· {i.preset.door ? 'glazed door' : i.preset.kind}</span></span>
                     <span className="mono small">U {fmt(buildupU({ id: '', ...i.preset }), 2)}</span>
                     {tools && (i.preset.layers.length > 0 ? <>
                       <label className="small" style={{ display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={pick.includes(i.key)} disabled={!pick.includes(i.key) && pick.length >= 2} onChange={() => togglePick(i.key)} />Compare</label>

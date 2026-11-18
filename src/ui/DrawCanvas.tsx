@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { maxWallGap, onStorey, pairKey, roofEdgesOf, roofOutlines, roofParts, roofStorey, roomEdges, roomPoly } from '../engine/house';
+import { listedAs, maxWallGap, onStorey, pairKey, roofEdgesOf, roofOutlines, roofParts, roofStorey, roomEdges, roomPoly } from '../engine/house';
 import type { Buildup, House, Room } from '../engine/house';
 import { roofLines } from '../engine/house-roof';
 import { freezeOutline, newRoof } from './HouseRoof';
@@ -304,7 +304,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     if (hit) { const e = roomEdges(room)[hit.edge]; return { room, at: [hit.at[0] - e.n[0] * 0.2, hit.at[1] - e.n[1] * 0.2] as Pt, ang: (Math.atan2(e.d[1], e.d[0]) * 180) / Math.PI }; }
     return { room, at: [snap(p[0]), snap(p[1])] as Pt, ang: 0 };
   };
-  const isDoorOp = (o: { buildup: string }) => house.buildups.find((x) => x.id === o.buildup)?.kind === 'door';
+  const isDoorOp = (o: { buildup: string }) => { const b = house.buildups.find((x) => x.id === o.buildup); return !!b && listedAs(b) === 'door'; };
   /** Where a window or door of width `w` goes for a pointer position: on an outside wall, or (`inner`) a door on a wall shared with another room. */
   const openingAt = (p: Pt, w: number, inner = false, only?: string): { room: Room; edge: number; t: number; to?: string } | null => {
     const hit = nearestWall(house, storey, p, 0.6, { outside: true, room: only });
@@ -318,7 +318,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   /** A window or door at a pointer position (on room `only`'s walls, if given), selected once placed. */
   const placeOpening = (p: Pt, door: boolean, only?: string) => {
     const w = door ? 0.9 : 1.2, at = openingAt(p, w, door, only), want = door ? opPick.door : opPick.glazing, gap = door && want === OPEN_DOORWAY;
-    const b = gap ? undefined : house.buildups.find((x) => x.id === want && x.kind === (door ? 'door' : 'glazing')) ?? house.buildups.find((x) => x.kind === (door ? 'door' : 'glazing') && x.id !== OPEN_DOORWAY);
+    const b = gap ? undefined : house.buildups.find((x) => x.id === want && listedAs(x) === (door ? 'door' : 'glazing')) ?? house.buildups.find((x) => listedAs(x) === (door ? 'door' : 'glazing') && x.id !== OPEN_DOORWAY);
     if (!at) { setNote(door ? 'Doors go on outside walls, or on a wall shared with another room, in a clear stretch wide enough.' : 'Windows go on outside walls, in a clear stretch wide enough for them.'); return; }
     if (gap && !at.to) { setNote('An opening goes on a wall between two rooms.'); return; }
     if (!gap && !b) { setNote(`Add a ${door ? 'door' : 'glazing'} build-up first.`); return; }
@@ -1272,7 +1272,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
             const o = house.openings.find((x) => x.id === on.id), door = !!o && isDoorOp(o);
             return { title: `${door ? 'Door' : 'Window'} actions`, tip: o ? `${o.name} · ${o.w} × ${o.h} m` : '', items: [
               edit('Width and height', '↔', 'size'),
-              choices(door ? 'Door type' : 'Glazing', house.buildups.filter((b) => b.kind === (door ? 'door' : 'glazing')), o?.buildup,
+              choices(door ? 'Door type' : 'Glazing', house.buildups.filter((b) => listedAs(b) === (door ? 'door' : 'glazing')), o?.buildup,
                 (id) => upd((h) => { const x = h.openings.find((q) => q.id === on.id); if (x) x.buildup = id; })),
               { label: 'Delete', glyph: '✕', run: () => { upd((h) => { h.openings = h.openings.filter((x) => x.id !== on.id); }); setSel(NO_SEL); } },
             ] };
