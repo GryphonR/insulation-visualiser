@@ -25,11 +25,11 @@ export function HouseStart({ onCreate, onCancel }: { onCreate: (h: House, job: {
       </div>
       <div className="hf-row">
         <label className="hf"><span className="eyebrow">Project name</span><input className="h-text" placeholder={house.name} value={name} onChange={(e) => setName(e.target.value)} /></label>
-        <label className="hf"><span className="eyebrow">Postcode (sets weather and ground temperature)</span><input className="h-text short" placeholder="e.g. B15 2TT" value={postcode} onChange={(e) => setPostcode(e.target.value)} /></label>
       </div>
       <div className="hf-row">
         <label className="hf"><span className="eyebrow">Customer (optional)</span><input className="h-text" autoComplete="off" value={customer} onChange={(e) => setCustomer(e.target.value)} /></label>
         <label className="hf grow"><span className="eyebrow">Address (optional)</span><input className="h-text" autoComplete="off" value={address} onChange={(e) => setAddress(e.target.value)} /></label>
+        <label className="hf"><span className="eyebrow">Postcode (sets the weather)</span><input className="h-text short" autoComplete="off" placeholder="e.g. B15 2TT" value={postcode} onChange={(e) => setPostcode(e.target.value)} /></label>
       </div>
       <div className="eyebrow">House type</div>
       <div className="chips">{TEMPLATES.map((t) => <Chip key={t.id} on={template === t.id} onClick={() => setTemplate(t.id)}>{t.label}</Chip>)}</div>

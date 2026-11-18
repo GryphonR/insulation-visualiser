@@ -185,6 +185,10 @@ export function newProject(house: House = defaultHouse()): Project {
   return { v: 1, active: 'base', scenarios: [{ id: 'base', name: 'As built', kind: 'base', parent: null, house }] };
 }
 
+/** The site's postcode is the project's: every scenario is the same house in the same place, so it sets them all. */
+export const withPostcode = (p: Project, postcode: string): Project =>
+  ({ ...p, scenarios: p.scenarios.map((s) => ({ ...s, house: { ...s.house, climate: { ...s.house.climate, postcode } } })) });
+
 /** A project read from storage or a file, with unusable scenarios dropped and older houses upgraded; null if nothing usable. */
 export function sanitizeProject(p: unknown): Project | null {
   const q = p as Project | null;
