@@ -141,7 +141,7 @@ export function VentPage() {
 
 /** Storeys, ground and loft. */
 export function StoreysPage() {
-  const { house, upd, res } = useProject();
+  const { house, upd, res, setProject } = useProject();
   return (
     <div className="house-grid">
       <div className="house-col">
