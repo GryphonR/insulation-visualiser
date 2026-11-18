@@ -30,10 +30,14 @@ export interface Buildup {
   /** Ground floors only: slab on ground (default) or suspended timber over a ventilated void. */
   floorType?: 'solid' | 'suspended';
   /** Glazing only: total solar transmittance of the glass, and the share of the opening that is frame. */
-  g?: number; frame?: number;}
+  g?: number; frame?: number;
+  /** Glazing only: a glazed door (French, bifold, patio). Listed and placed with doors, but gains sun like a window. */
+  door?: boolean;}
+/** Which list a build-up shows in: glazed doors go with doors. */
+export const listedAs = (b: Pick<Buildup, 'kind' | 'door'>): BuildupKind => (b.kind === 'glazing' && b.door ? 'door' : b.kind);
 
 /** Board 2c glazing library: typical U and g by type (SAP 10.2 Table 6b/6c style values). */
-export const GLAZING_LIBRARY: Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame'>> = [
+export const GLAZING_LIBRARY: Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame' | 'door'>> = [
   { name: 'Single glazed, timber frame', u: 4.8, g: 0.85, frame: 0.3 },
   { name: 'Double glazed, before 2002', u: 2.8, g: 0.76, frame: 0.3 },
   { name: 'Double glazed, 2002–2021', u: 2.0, g: 0.72, frame: 0.3 },
@@ -46,7 +50,7 @@ export const GLAZING_LIBRARY: Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame'>>
   { name: 'Double glazed, aluminium', u: 1.8, g: 0.67, frame: 0.2 },
   { name: 'Triple glazed, passive-house frame', u: 0.7, g: 0.5, frame: 0.3 },
   { name: 'Glass block', u: 3.5, g: 0.6, frame: 0.1 },
-  { name: 'Patio / bifold doors, double glazed', u: 1.6, g: 0.63, frame: 0.25 },
+  { name: 'Patio / bifold doors, double glazed', u: 1.6, g: 0.63, frame: 0.25, door: true },
   { name: 'Conservatory glazing', u: 2.0, g: 0.7, frame: 0.2 },
   // Solar control glazing: a spectrally selective coating passes visible light but reflects much of the sun's
   // near-infrared heat. g from typical maker data for neutral solar-control units (e.g. 70/40 and 50/25 types).
@@ -61,7 +65,7 @@ export const GLAZING_LIBRARY: Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame'>>
  * Uw = (1−f)·Ug + f·Uf + ψ·Lg/A, with typical centre-pane Ug/g (EN 673/410), frame Uf, and a warm-edge spacer.
  * shortcut: one Uf per frame material whatever the glass, though triple units often sit in deeper frames; split it if a datasheet disagrees.
  */
-function glazedUnits(): Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame'>> {
+function glazedUnits(): Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame' | 'door'>> {
   // [name, frame share by material, glass edge length per m² of unit]
   const units: Array<[string, Record<string, number>, number]> = [
     ['Window', { aluminium: 0.22, uPVC: 0.3, timber: 0.3 }, 3.0],
@@ -83,10 +87,10 @@ function glazedUnits(): Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame'>> {
     ['double, solar control argon', 1.1, 0.4],
     ['triple, solar control argon', 0.6, 0.33],
   ];
-  const out: Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame'>> = [];
+  const out: Array<Pick<Buildup, 'name' | 'u' | 'g' | 'frame' | 'door'>> = [];
   for (const [unit, share, edge] of units) for (const [fr, uf, psi] of frames) for (const [gl, ug, g] of glass) {
     const f = share[fr];
-    out.push({ name: `${unit}, ${fr}, ${gl}`, u: Math.round(((1 - f) * ug + f * uf + psi * edge) * 100) / 100, g, frame: f });
+    out.push({ name: `${unit}, ${fr}, ${gl}`, u: Math.round(((1 - f) * ug + f * uf + psi * edge) * 100) / 100, g, frame: f, ...(unit === 'Window' ? {} : { door: true }) });
   }
   return out;
 }

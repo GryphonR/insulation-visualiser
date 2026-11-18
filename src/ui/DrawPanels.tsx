@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { CIBSE_ACH, SHADING, defaultTemp, onStorey, roomEdges, roomHeight } from '../engine/house';
+import { CIBSE_ACH, SHADING, defaultTemp, listedAs, onStorey, roomEdges, roomHeight } from '../engine/house';
 import type { Buildup, BuildupKind, House, HouseResult, Room, RoomType } from '../engine/house';
 import { EMITTER_NAME, RAD_LABEL, UFH_PIPES, UFH_SPACINGS, loopLength, loopMax } from '../engine/house-heating';
 import type { RadType } from '../engine/house-heating';
@@ -149,7 +149,7 @@ function BuildupSelect({ label, value, options, onPick }: { label: string; value
     </select>
   );
 }
-const ofKind = (h: House, ...k: BuildupKind[]) => h.buildups.filter((b) => k.includes(b.kind));
+const ofKind = (h: House, ...k: BuildupKind[]) => h.buildups.filter((b) => k.includes(listedAs(b)));
 
 const ZONE_KINDS: BuildupKind[] = ['floor', 'roof'];
 
@@ -427,7 +427,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
     const o = house.openings.find((x) => x.id === sel.item!.id);
     if (!o) return null;
     const set = (patch: Partial<typeof o>) => upd((h) => { const x = h.openings.find((q) => q.id === o.id); if (x) Object.assign(x, patch); });
-    const kind = house.buildups.find((b) => b.id === o.buildup)?.kind ?? 'glazing';
+    const ob = house.buildups.find((b) => b.id === o.buildup), kind = ob ? listedAs(ob) : 'glazing';
     // No bigger than the wall it is in.
     const oRoom = house.rooms.find((x) => x.id === o.room), maxW = oRoom ? roomEdges(oRoom)[wallIndex(house, o)]?.len ?? 20 : 20, maxH = oRoom ? roomHeight(house, oRoom) : 3;
     return (
@@ -441,7 +441,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
         <label className="hf"><span className="eyebrow">{kind === 'door' ? 'Door type' : 'Glazing'}</span>
           <select className="select" value={o.buildup} onChange={(e) => set({ buildup: e.target.value })}>{ofKind(house, kind === 'door' ? 'door' : 'glazing').map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
         </label>
-        {kind === 'glazing' && <label className="hf"><span className="eyebrow">Shading</span>
+        {ob?.kind !== 'door' && <label className="hf"><span className="eyebrow">Shading</span>
           <select className="select" value={o.shade ?? 'none'} onChange={(e) => set({ shade: e.target.value as keyof typeof SHADING })}>{Object.entries(SHADING).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}</select>
         </label>}
         <button type="button" className="btn-secondary" onClick={() => upd((h) => {

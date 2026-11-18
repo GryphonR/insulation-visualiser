@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { BUILTIN_STACKUPS, layersFromTuples } from '../engine/library';
 import { DEFAULT_SCENARIO, runScenario } from '../engine/scenario';
 import { MAT } from '../engine/data';
-import { buildupU } from '../engine/house';
+import { buildupU, listedAs } from '../engine/house';
 import type { Buildup, BuildupKind } from '../engine/house';
 import { AddBuildupModal } from './AddBuildupModal';
 import { Card, Num, fmt, uid } from './hform';
@@ -73,8 +73,8 @@ export function BuildupsPage({ selected }: { selected?: string }) {
     setEditing(false);
   };
 
-  const shown = house.buildups.filter((x) => (kind === 'all' || x.kind === kind) && x.name.toLowerCase().includes(q.toLowerCase()));
-  const groups = [...new Set(shown.map((x) => x.kind))];
+  const shown = house.buildups.filter((x) => (kind === 'all' || listedAs(x) === kind) && x.name.toLowerCase().includes(q.toLowerCase()));
+  const groups = [...new Set(shown.map(listedAs))];
   const thick = b ? b.layers.reduce((a, [, t]) => a + t, 0) : 0;
   const R = b ? 1 / buildupU(b) : 0;
   // Same typical-day run the layer editor uses: decrement and delay barely depend on weather.
@@ -106,7 +106,7 @@ export function BuildupsPage({ selected }: { selected?: string }) {
             {groups.map((g) => (
               <div key={g}>
                 <div className="eyebrow" style={{ padding: '10px 12px 4px' }}>{KIND_GROUP[g]}</div>
-                {shown.filter((x) => x.kind === g).map((x) => (
+                {shown.filter((x) => listedAs(x) === g).map((x) => (
                   <button key={x.id} type="button" className={x.id === sel ? 'lib-row on' : 'lib-row'} aria-pressed={x.id === sel} onClick={() => setSel(x.id)}>
                     <span style={{ fontWeight: 500, color: isUsed(x.id) ? 'var(--ink)' : 'var(--muted)' }}>{x.name}</span><span className="mono small">U {fmt(buildupU(x), 2)}</span>
                     <span className="mono small muted">{usedCount(x.id) || 'not used'}</span>

@@ -137,6 +137,11 @@ describe('glazed unit presets', () => {
     expect(new Set(GLAZING_LIBRARY.map((g) => g.name)).size).toBe(GLAZING_LIBRARY.length);
     const u = (n: string) => units.find((g) => g.name === n)!.u!;
     expect(u('Window, uPVC, double, low-e argon')).toBeCloseTo(1.28, 2);
+    // French doors and bifolds list with doors, but stay glazing so they gain sun.
+    const { listedAs } = await import('./house');
+    const kindOf = (n: string) => listedAs({ kind: 'glazing', ...units.find((g) => g.name === n)! });
+    expect(kindOf('Bifold doors, timber, triple, low-e argon')).toBe('door');
+    expect(kindOf('Window, timber, triple, low-e argon')).toBe('glazing');
     // Triple beats double, and timber/uPVC beat aluminium, in every pairing.
     for (const t of ['Window', 'French doors', 'Bifold doors']) for (const f of ['aluminium', 'uPVC', 'timber']) {
       expect(u(`${t}, ${f}, triple, low-e argon`)).toBeLessThan(u(`${t}, ${f}, double, low-e argon`));
