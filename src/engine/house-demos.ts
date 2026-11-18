@@ -305,10 +305,10 @@ export function passivhaus(): Project {
 
 
 // Oldest first, as listed on the start screen.
-export const DEMOS: Array<{ id: string; label: string; make: () => Project }> = [
-  { id: 'cottage', label: 'Stone cottage', make: stoneCottage },
-  { id: 'victorian', label: 'Victorian terrace', make: victorianTerrace },
-  { id: '1950s', label: '1950s semi', make: fiftiesSemi },
-  { id: 'semi2000', label: 'Early-2000s semi', make: newBuildSemi },
-  { id: 'passivhaus', label: 'Passivhaus-type', make: passivhaus },
+export const DEMOS: Array<{ id: string; label: string; blurb: string; make: () => Project }> = [
+  { id: 'cottage', label: 'Stone cottage', blurb: 'Pre-1919 detached, solid stone, nothing insulated, on gas. Upgrade: breathable insulating plaster, loft wool, heat pump.', make: stoneCottage },
+  { id: 'victorian', label: 'Victorian terrace', blurb: 'Solid-brick mid-terrace on gas. Upgrade: internal wall insulation, loft and underfloor, draught-proofing, heat pump.', make: victorianTerrace },
+  { id: '1950s', label: '1950s semi', blurb: 'The 1950–66 default house as a semi with its party wall, on gas.', make: fiftiesSemi },
+  { id: 'semi2000', label: 'Early-2000s semi', blurb: 'Partial-fill cavity on gas. Upgrade: heat pump, bigger radiators, loft top-up and draught-stripping.', make: newBuildSemi },
+  { id: 'passivhaus', label: 'Passivhaus-type', blurb: 'Super-insulated, triple glazed and airtight with MVHR; a small heat pump and fan coils that also cool.', make: passivhaus },
 ];

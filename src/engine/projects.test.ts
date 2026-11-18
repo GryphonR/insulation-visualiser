@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { defaultHouse } from './house-default';
 import { newProject } from './house-scenarios';
-import { deleteStored, listProjects, loadActive, openStored, parseProjectFile, projectFileText, rawStored, saveProject, storedProjectsUsing } from './projects';
+import { deleteStored, listProjects, loadActive, openStored, parseProjectFile, projectFileText, rawStored, saveProject, storedProjectsUsing, updateStored } from './projects';
 
 // Tests run in Node: a Map stands in for the browser's storage, with a switch to make it refuse writes.
 let full = false;
@@ -65,5 +65,20 @@ describe('projects in browser storage', () => {
     expect(back?.scenarios[0].house.name).toBe('Alpha');
     expect(parseProjectFile('{"v":1,"scenarios":[]}')).toBeNull();
     expect(() => parseProjectFile('not json')).toThrow();
+  });
+
+  it('gives each project a job number that sticks, renumbers an imported copy, and keeps customer details', () => {
+    saveProject('a', { ...named('Alpha'), customer: 'Ms Jones', address: '1 High St' });
+    saveProject('a', named('Alpha, edited'));
+    const a = listProjects().find((p) => p.id === 'a')!;
+    expect(a.number).toMatch(/^P\d\d-0001$/);
+    expect(openStored('a')?.number).toBe(a.number);
+    const copy = parseProjectFile(projectFileText(openStored('a')!))!;
+    expect(copy.number).toBe(a.number);
+    saveProject('b', copy);
+    expect(listProjects().find((p) => p.id === 'b')!.number).toMatch(/-0002$/);
+    expect(updateStored('a', (p) => ({ ...p, customer: 'Mr Smith', address: '2 Low Rd' }))).toBe(true);
+    expect(loadActive().id).toBe('b');
+    expect(listProjects().find((p) => p.id === 'a')).toMatchObject({ number: a.number, customer: 'Mr Smith', address: '2 Low Rd' });
   });
 });

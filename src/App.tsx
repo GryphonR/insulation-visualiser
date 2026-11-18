@@ -2,7 +2,6 @@ import { Suspense, lazy, useEffect, useState } from 'react';
 import { loadCustomStackups, saveCustomStackups } from './engine/library';
 import type { Stackup } from './engine/library';
 import { newProject } from './engine/house-scenarios';
-import { hasSaved } from './engine/projects';
 import { BuildupsPage } from './ui/BuildupsPage';
 import { ErrorScreen } from './ui/ErrorScreen';
 import { EnergyPage, SitePage, StoreysPage, VentPage } from './ui/HouseSettings';
@@ -41,23 +40,21 @@ export default function App() {
   useEffect(() => {
     if (customStackups !== loadedStackups) saveCustomStackups(customStackups);
   }, [customStackups, loadedStackups]);
-  const [firstVisit] = useState(() => !hasSaved());
 
   return (
     <ErrorScreen>
       <ProjectProvider customStackups={customStackups} setCustomStackups={setCustomStackups}>
-        <Routes firstVisit={firstVisit} />
+        <Routes />
       </ProjectProvider>
     </ErrorScreen>
   );
 }
 
-function Routes({ firstVisit }: { firstVisit: boolean }) {
+function Routes() {
   const parts = useRoute();
   const { house, active, ordered, project, setProject, setHouse, createProject } = useProject();
-  const [started, setStarted] = useState(!firstVisit);
-  // No hash: a first visit starts a project; otherwise open the build-ups (step 1).
-  const route = parts[0] ?? (started ? 'buildups' : 'start');
+  // No hash: the projects screen is where the app opens.
+  const route = parts[0] ?? 'projects';
   const arg = parts[1], arg2 = parts[2];
   useEffect(() => { window.scrollTo(0, 0); }, [route, route === 'wall' ? '' : arg]); // Simulate rewrites its ids as you pick build-ups
 
@@ -66,9 +63,9 @@ function Routes({ firstVisit }: { firstVisit: boolean }) {
     case 'start':
       page = (
         <HouseStart
-          onCancel={started ? () => go('plan') : undefined}
-          onCreate={(h) => {
-            createProject(newProject(h)); setStarted(true); go('plan');
+          onCancel={() => go('projects')}
+          onCreate={(h, job) => {
+            createProject({ ...newProject(h), ...job }); go('plan');
           }} />
       );
       break;

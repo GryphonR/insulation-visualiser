@@ -4,8 +4,10 @@ import { AGE_BANDS, TEMPLATES, newHouse } from '../engine/house-templates';
 import { Chip } from './controls';
 
 /** Board 0a: start a project from a template, the house's age and what the EPC says. */
-export function HouseStart({ onCreate, onCancel }: { onCreate: (h: House) => void; onCancel?: () => void }) {
+export function HouseStart({ onCreate, onCancel }: { onCreate: (h: House, job: { customer?: string; address?: string }) => void; onCancel?: () => void }) {
   const [name, setName] = useState('');
+  const [customer, setCustomer] = useState('');
+  const [address, setAddress] = useState('');
   const [postcode, setPostcode] = useState('');
   const [template, setTemplate] = useState('semi');
   const [age, setAge] = useState('1950-66');
@@ -24,6 +26,10 @@ export function HouseStart({ onCreate, onCancel }: { onCreate: (h: House) => voi
       <div className="hf-row">
         <label className="hf"><span className="eyebrow">Project name</span><input className="h-text" placeholder={house.name} value={name} onChange={(e) => setName(e.target.value)} /></label>
         <label className="hf"><span className="eyebrow">Postcode (sets weather and ground temperature)</span><input className="h-text short" placeholder="e.g. B15 2TT" value={postcode} onChange={(e) => setPostcode(e.target.value)} /></label>
+      </div>
+      <div className="hf-row">
+        <label className="hf"><span className="eyebrow">Customer (optional)</span><input className="h-text" autoComplete="off" value={customer} onChange={(e) => setCustomer(e.target.value)} /></label>
+        <label className="hf grow"><span className="eyebrow">Address (optional)</span><input className="h-text" autoComplete="off" value={address} onChange={(e) => setAddress(e.target.value)} /></label>
       </div>
       <div className="eyebrow">House type</div>
       <div className="chips">{TEMPLATES.map((t) => <Chip key={t.id} on={template === t.id} onClick={() => setTemplate(t.id)}>{t.label}</Chip>)}</div>
@@ -44,7 +50,7 @@ export function HouseStart({ onCreate, onCancel }: { onCreate: (h: House) => voi
       <div className="chips">{AGE_BANDS.map((a) => <Chip key={a.id} on={age === a.id} onClick={() => setAge(a.id)}>{a.label}</Chip>)}</div>
       <p className="small muted">Starts with {house.buildups.length} build-ups for a house of this age ({house.buildups.slice(0, 5).map((b) => b.name).join('; ')}) and {house.storeys.length} storey{house.storeys.length > 1 ? 's' : ''}, with no rooms.</p>
       <div className="chips">
-        <button type="button" className="btn-primary" onClick={() => onCreate({ ...house, name: name.trim() || house.name, climate: postcode.trim() ? { ...house.climate, postcode: postcode.trim(), auto: true } : house.climate })}>Create project</button>
+        <button type="button" className="btn-primary" onClick={() => onCreate({ ...house, name: name.trim() || house.name, climate: postcode.trim() ? { ...house.climate, postcode: postcode.trim(), auto: true } : house.climate }, { customer: customer.trim() || undefined, address: address.trim() || undefined })}>Create project</button>
       </div>
     </section>
   );

@@ -48,7 +48,7 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
   return (
     <div className={route === 'plan' ? 'shell fill' : route === 'schematic' ? 'shell wide' : 'shell'}>
       <header className="top">
-        <a className="brand" href={href('buildups')}>
+        <a className="brand" href={href('projects')}>
           <span className="logo" aria-hidden="true"><span /><span /><span /></span>Insuliser
         </a>
         <div className="ctx">

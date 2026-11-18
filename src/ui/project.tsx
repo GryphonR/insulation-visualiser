@@ -6,7 +6,7 @@ import { yearRes } from '../engine/house-sim';
 import { useYearSims } from './useYearSim';
 import type { House, HouseResult } from '../engine/house';
 import { chain, newProject } from '../engine/house-scenarios';
-import { deleteStored, hasSaved, listProjects, loadActive, newProjectId, openStored, projectKey, rawStored, readStored, saveProject } from '../engine/projects';
+import { deleteStored, hasSaved, listProjects, loadActive, newProjectId, openStored, projectKey, rawStored, readStored, saveProject, updateStored } from '../engine/projects';
 import { download } from '../lib/util';
 import type { ProjectInfo } from '../engine/projects';
 import type { Project, Scenario } from '../engine/house-scenarios';
@@ -37,6 +37,8 @@ interface Ctx {
   openProject: (id: string) => void;
   createProject: (p: Project) => void;
   deleteProject: (id: string) => void;
+  /** Change any stored project; the open one goes through undo like any other edit. */
+  editProject: (id: string, fn: (p: Project) => Project) => void;
   /** False once the browser has refused to store the latest edit. */
   saveOk: boolean;
 }
@@ -88,6 +90,9 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
     const p = next && openStored(next.id);
     if (next && p) show(next.id, p); else createProject(newProject());
   };
+  const editProject = (id: string, fn: (p: Project) => Project) => {
+    if (id === projectId) setProject(fn); else { updateStored(id, fn); bump((n) => n + 1); }
+  };
   // Another tab saved this project: take its version, so this tab's next save doesn't wipe out those edits.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
@@ -136,7 +141,7 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
   const value: Ctx = {
     project, setProject, active, house: active.house, setHouse, upd, res: results.get(active.id)!, results, ordered, depth,
     undo, redo, canUndo: hist.past.length > 0, canRedo: hist.future.length > 0, customStackups, setCustomStackups,
-    projects, projectId, openProject, createProject, deleteProject, saveOk,
+    projects, projectId, openProject, createProject, deleteProject, editProject, saveOk,
   };
   return <C.Provider value={value}>{children}</C.Provider>;
 }

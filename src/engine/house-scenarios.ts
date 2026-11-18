@@ -8,7 +8,8 @@ export type Seg = string | { id: string };
 export interface Change { key: string; path: Seg[]; from: unknown; to: unknown }
 export interface Scenario { id: string; name: string; kind: 'base' | 'plan' | 'whatif'; parent: string | null; house: House }
 /** Tracing images and satellite placement are drawing aids shared by every scenario, so they live here once, not in each house. */
-export interface Project { v: 1; scenarios: Scenario[]; active: string; trace?: TraceSettings }
+/** `number` is the job number, given when the project is first stored; customer and address are the installer's optional job details. */
+export interface Project { v: 1; scenarios: Scenario[]; active: string; trace?: TraceSettings; number?: string; customer?: string; address?: string }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
@@ -197,7 +198,8 @@ export function sanitizeProject(p: unknown): Project | null {
   const ids = new Set(scenarios.map((s) => s.id));
   scenarios.forEach((s, i) => { if (i > 0 && (!s.parent || !ids.has(s.parent))) s.parent = scenarios[0].id; if (i === 0) s.parent = null; });
   if (!scenarios.length) return null;
-  return { v: 1, scenarios, active: scenarios.some((s) => s.id === q.active) ? q.active : scenarios[0].id, ...(trace ? { trace } : {}) };
+  const job = Object.fromEntries((['number', 'customer', 'address'] as const).filter((k) => typeof q[k] === 'string' && q[k]).map((k) => [k, q[k]]));
+  return { v: 1, scenarios, active: scenarios.some((s) => s.id === q.active) ? q.active : scenarios[0].id, ...(trace ? { trace } : {}), ...job };
 }
 
 /** True once a project (or an older single-house save) has been stored: false on a first visit, which opens the start screen. */
