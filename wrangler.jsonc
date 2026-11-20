@@ -4,11 +4,15 @@
   "main": "worker/index.ts",
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat"],
-  "assets": { "directory": "dist", "run_worker_first": ["/api/*"] },
+  "assets": { "directory": "dist", "run_worker_first": ["/api/*"], "not_found_handling": "404-page" },
+  // www is here for its DNS record and certificate; the zone's redirect rule sends it to insuliser.uk,
+  // and the zone's Always Use HTTPS setting upgrades http.
+  "routes": [{ "pattern": "insuliser.uk", "custom_domain": true }, { "pattern": "www.insuliser.uk", "custom_domain": true }],
+  "workers_dev": false,
+  "observability": { "enabled": true },
   "d1_databases": [
-    // database_id comes from `npx wrangler d1 create insuliser`; local dev doesn't need it.
-    { "binding": "DB", "database_name": "insuliser", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "worker/migrations" }
+    { "binding": "DB", "database_name": "insuliser", "database_id": "9fee8293-811c-433e-8566-59ac15340142", "migrations_dir": "worker/migrations" }
   ],
-  // Local dev goes through Vite's proxy, so links point at Vite. Change this to the real domain for a deploy.
-  "vars": { "BETTER_AUTH_URL": "http://localhost:5173", "MAIL_FROM": "Insuliser <signin@example.com>" }
+  // Production values. Local dev overrides BETTER_AUTH_URL in .dev.vars (see .dev.vars.example).
+  "vars": { "BETTER_AUTH_URL": "https://insuliser.uk", "MAIL_FROM": "Insuliser <signin@insuliser.uk>" }
 }
