@@ -695,6 +695,14 @@ export const maxWallGap = (h: House) =>
   Math.min(0.6, Math.max(0, ...h.buildups.filter((b) => b.kind === 'wall').map((b) => b.layers.reduce((s, [, mm]) => s + mm, 0) / 1000)) + 0.02);
 
 export const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+/**
+ * The face key of a stretch of inside wall between rooms `a` and `b` on storey `s`: its own once the wall has been split there
+ * (keyed by `oe`, the edge of the pair's first room it lies on), else the one the whole pair shares.
+ */
+export const insideKey = (h: Pick<House, 'faceBuildup'>, a: string, b: string, s: number, oe: string): string => {
+  const pk = `iw:${pairKey(a, b)}:${s}`, seg = `${pk}:${oe}`;
+  return h.faceBuildup[seg] != null ? seg : pk;
+};
 
 /** Bp: the ground floor's B′, m. junctions: count the floor-to-wall junctions, and note each kind here (unset on a preliminary pass). */
 interface Ctx { Bp: number; junctions?: Map<string, Junction> }
@@ -736,11 +744,11 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
           const span = sharedSpan(e, f, 0.02, wallGap);
           if (!span) continue;
           cuts.push(span);
-          const key = `iw:${pairKey(r.id, o.id)}:${s}`, b = B(key, 'intWall');
+          const pk = `iw:${pairKey(r.id, o.id)}:${s}`, key = insideKey(h, r.id, o.id, s, r.id < o.id ? e.id : f.id), b = B(key, 'intWall');
           // Inside doors between this pair come out of the first stretch of shared wall, on the storey where both rooms exist.
-          const doors = s === Math.max(r.storey, o.storey) && !doorsDone.has(key)
+          const doors = s === Math.max(r.storey, o.storey) && !doorsDone.has(pk)
             ? h.openings.filter((d) => d.to && ((d.room === r.id && d.to === o.id) || (d.room === o.id && d.to === r.id))) : [];
-          doorsDone.add(key);
+          doorsDone.add(pk);
           const doorA = Math.min(doors.reduce((t, d) => t + openingArea(d, e.len, rh), 0), (span[1] - span[0]) * wallH(e, s, false));
           faces.push({ key, label: `${named} wall`, kind: 'wall', side, az, to: { k: 'room', id: o.id }, area: (span[1] - span[0]) * wallH(e, s, false) - doorA, buildup: b, U: buildupU(b, FILMS.intWall), along: { edge: e.idx, storey: s, t: [span] } });
           for (const d of doors) {

@@ -18,7 +18,7 @@ type ToolDef = [Tool, string, string];
 const GROUPS: Array<{ id: string; label: string; tools: ToolDef[]; list?: 'glazing' | 'door' }> = [
   { id: 'select', label: 'Select', tools: [['select', 'Select', '↖']] },
   { id: 'room', label: 'Draw a room', tools: [['box', 'Box room', '▭'], ['room', 'Polygon room', '⬠']] },
-  { id: 'cut', label: 'Cut', tools: [['split', 'Split room', '✂'], ['join', 'Delete wall section', '⌫']] },
+  { id: 'cut', label: 'Cut', tools: [['split', 'Split room', '✂'], ['corner', 'Split wall', '⫶'], ['join', 'Delete wall section', '⌫']] },
   { id: 'stairs', label: 'Stairs', tools: [['stairs', 'Stairwell', '☰']] },
   { id: 'window', label: 'Window', tools: [['window', 'Window', '▬']], list: 'glazing' },
   { id: 'door', label: 'Door', tools: [['door', 'Door', '▯']], list: 'door' },
@@ -34,7 +34,7 @@ const HINT: Record<Tool, string> = {
   box: 'Drag out a rectangular room, or click one corner then the opposite corner.',
   split: 'Click two points to draw a line across a room; it is cut in two along the line, with its windows, walls and emitters shared out.',
   join: 'Click a wall between two rooms to take it out: they become one room, keeping the first room\'s name and settings. Doors between them go; windows, heaters and wall build-ups carry over.',
-  corner: 'Click a wall to add a corner there, then drag it.',
+  corner: 'Click a wall where its build-up changes: it splits in two there, and each part takes its own build-up (the part past the split is selected). An inside wall splits on both sides. A tick marks each split; double-click it to join the two parts again.',
   stairs: 'On the floor the stairs go up from, drag out the hole they rise through (or click its corners), inside the room below and the room above. The two rooms then share their air through it. Drag it by its tag; Delete removes it.',
   window: 'Click an outside wall to place a window, then drag it along the wall or to another wall.',
   door: 'Click an outside wall to place a door, or a wall between two rooms for an inside door; an open doorway goes between two rooms only. Pick the type from the list beside the button. Drag it along or to another wall.',

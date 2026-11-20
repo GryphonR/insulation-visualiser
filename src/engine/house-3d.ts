@@ -1,6 +1,6 @@
 // The house as triangles for a 3D view: rooms (floors, walls, ceilings, each tagged with its heat-loss face), the outside
 // shell, the roofs, windows, doors and dormers. Coordinates: X = plan x (east), Y = height, Z = plan y (south); metres.
-import { ceilingCap, extWallThickness, onStorey, pairKey, placeDormer, roofOver, roofParts, roomEdges, roomPoly } from './house';
+import { ceilingCap, extWallThickness, insideKey, onStorey, placeDormer, roofOver, roofParts, roomEdges, roomPoly } from './house';
 import type { House, Room } from './house';
 import { wallPieces } from './house-draw';
 import { footprint, roofAt } from './house-roof';
@@ -102,7 +102,7 @@ export function house3d(h: House): Surf[] {
           const at = (u: number): Pt => [e.a[0] + e.d[0] * u - e.n[0] * WALL_IN, e.a[1] + e.d[1] * u - e.n[1] * WALL_IN];
           const a = at(pc.span[0]), b = at(pc.span[1]);
           const topZ = s < t ? () => Z[s + 1] : (p: Pt) => zt + ceil([p[0] - e.n[0] * 0.01, p[1] - e.n[1] * 0.01]).z;
-          const key = pc.other ? `iw:${pairKey(r.id, pc.other)}:${s}` : `w:${r.id}:${e.id}:${s}`;
+          const key = pc.other ? insideKey(h, r.id, pc.other, s, pc.oe!) : `w:${r.id}:${e.id}:${s}`;
           add({ kind: 'wall', tris: strip(a, b, () => Z[s], topZ), storey: s, room: r.id, key, label: `${r.name} ${pc.other ? 'inside' : 'outside'} wall` });
           if (pc.other) continue;
           // The same stretch on the outside face of the wall, just proud of the shell, so it can take the room's colour: up through the

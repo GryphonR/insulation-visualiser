@@ -7,7 +7,7 @@ import { Chip } from './controls';
 import { Num, fmt, uid, NumInput } from './hform';
 
 type Upd = (fn: (h: House) => void) => void;
-const FORMS: Array<[RoofForm, string]> = [['gable', 'Gable'], ['hip', 'Hipped'], ['mono', 'Monopitch'], ['flat', 'Flat'], ['custom', 'Each edge']];
+export const FORMS: Array<[RoofForm, string]> = [['gable', 'Gable'], ['hip', 'Hipped'], ['mono', 'Monopitch'], ['flat', 'Flat'], ['custom', 'Each edge']];
 
 /** A new roof section: hipped, on the top storey's wall plate, over a drawn outline (or following the rooms when none). */
 export function newRoof(h: House, poly?: Pt[]): RoofSection {

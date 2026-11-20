@@ -3,10 +3,10 @@ import type { CSSProperties, ReactNode } from 'react';
 import { listedAs, maxWallGap, onStorey, pairKey, roofEdgesOf, roofOutlines, roofParts, roofStorey, roomEdges, roomPoly } from '../engine/house';
 import type { Buildup, House, Room } from '../engine/house';
 import { roofLines } from '../engine/house-roof';
-import { freezeOutline, newRoof } from './HouseRoof';
+import { FORMS, freezeOutline, newRoof } from './HouseRoof';
 import { centroid, dropSpikes, faceReach, pointInPoly, polyArea, selfIntersects, sharedSpan } from '../engine/geom';
 import type { Pt } from '../engine/geom';
-import { OPEN_DOORWAY, addEmitter, addFloorZone, addStairwell, OPEN_STAIRWELL, ensureOpenDoorway, joinRooms, addRoomAt, cutPlan, deleteRoom, emitterPose, flushDelta, innerDoorAt, innerWallThickness, insertCorner, isOutside, joinedCorners, mergeRooms, moveCorners, nearestWall, openingCentre, pieceAlign, pieceGap, pieceKeys, pieceSeg, pieceThickness, problems, removeCorner, roomAt, splitRoom, stretchAtWall, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
+import { OPEN_DOORWAY, addEmitter, addFloorZone, addStairwell, OPEN_STAIRWELL, ensureOpenDoorway, joinRooms, addRoomAt, cutPlan, deleteRoom, emitterPose, flushDelta, parallelSnap, innerDoorAt, innerWallThickness, insertCorner, isOutside, joinedCorners, mapCorners, turnToWall, mergeRooms, moveCorners, nearestWall, openingCentre, pieceAlign, pieceGap, pieceKeys, pieceSeg, pieceThickness, problems, removeCorner, roomAt, splitRoom, splitWall, stretchAtWall, wallGhosts, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
 import type { WallPiece } from '../engine/house-draw';
 import { planBounds } from './HousePlan';
 import { attachments, dragSegment, drawRun, feedsFrom, joinRun, livePath, removeRun, routePipes, splitSegment, squareInto, unpiped, voidName, voidOf, wallSnap } from '../engine/house-pipes';
@@ -32,13 +32,16 @@ export const removePlant = (h: { heating: Heating }, id: string) => {
   if (id === 'source' || id === 'cylinder') delete h.heating[id]; else h.heating.risers = h.heating.risers?.filter((r) => r.id !== id);
 };
 /** What a right-click menu is for. */
-type MenuFor = { k: 'wall'; wall: WallRef } | { k: 'room'; id: string } | { k: 'corner'; room: string; idx: number } | { k: 'op' | 'em'; id: string } | { k: 'pipe'; id: string; seg: number };
+type MenuFor = { k: 'wall'; wall: WallRef } | { k: 'room'; id: string } | { k: 'corner'; room: string; idx: number } | { k: 'op' | 'em'; id: string } | { k: 'pipe'; id: string; seg: number }
+  | { k: 'plant'; id: string } | { k: 'zone'; id: string } | { k: 'zcorner'; id: string; idx: number };
 /** A field of the selection that the side panel can be opened on: its dropdown (build-up, glazing or radiator type), its first size, or a room's name. */
 export type EditField = 'type' | 'size' | 'name' | 'via';
 
 export const GRID = 0.05;
 const S = 48, MAGNET = 0.15, ALIGN = 0.15, FLUSH = 0.2;
 const near = (a: Pt, b: Pt, d = 0.011) => Math.hypot(a[0] - b[0], a[1] - b[1]) < d;
+/** The edge of outline `pz` within 0.5 m of `q`, nearest first; -1 if none. */
+const nearZoneEdge = (pz: Pt[], q: Pt) => { let best = { i: -1, d: 0.5 }; pz.forEach((a, i) => { const b = pz[(i + 1) % pz.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, u = Math.max(0, Math.min(1, ((q[0] - a[0]) * (b[0] - a[0]) + (q[1] - a[1]) * (b[1] - a[1])) / (L * L))), d = Math.hypot(q[0] - a[0] - u * (b[0] - a[0]), q[1] - a[1] - u * (b[1] - a[1])); if (d < best.d) best = { i, d }; }); return best.i; };
 export interface View { x: number; y: number; w: number }
 
 /** A view of the whole plan with a margin, never smaller than 16 m wide so an empty plan has room to draw in. `ratio` is the canvas height over its width. */
@@ -168,7 +171,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     // Right-clicking a room in a picked group keeps the group, so the menu can act on all of them.
     else if (on.k === 'room') setSel(sel.group?.includes(on.id) ? { ...NO_SEL, room: on.id, group: sel.group } : { ...NO_SEL, room: on.id });
     else if (on.k === 'corner') setSel({ ...NO_SEL, room: on.room });
-    else if (on.k === 'pipe') setSel({ ...NO_SEL, item: { k: 'pipe', id: on.id } });
+    else if (on.k === 'pipe' || on.k === 'plant') setSel({ ...NO_SEL, item: { k: on.k, id: on.id } });
+    else if (on.k === 'zone' || on.k === 'zcorner') setSel({ ...NO_SEL, zone: on.id });
     else setSel({ ...NO_SEL, room: (on.k === 'op' ? house.openings : house.heating.emitters).find((x) => x.id === on.id)?.room ?? '', item: { k: on.k, id: on.id } });
     setMenuTip('');
     setSub(null);
@@ -192,7 +196,9 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
    */
   /** The gap that leaves room for a default inside wall between two rooms. */
   const innerT = innerWallThickness(house);
-  const magnet = (p: Pt, skip?: Array<[string, number]>, anchors: Pt[] = [], diag?: Pt): Pt => {
+  /** Walls the last snap with `from` turned parallel to, to highlight. */
+  let parRefs: Array<[Pt, Pt]> = [];
+  const magnet = (p: Pt, skip?: Array<[string, number]>, anchors: Pt[] = [], diag?: Pt, from: Pt[] = []): Pt => {
     let best: Pt | null = null, bd = MAGNET;
     for (const r of [...onThis, ...ghost]) roomPoly(r).forEach((q, i) => {
       const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
@@ -207,6 +213,16 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     if (diag) {
       const dx = x - diag[0], dy = y - diag[1];
       if (dx && dy && Math.abs(Math.abs(dx) - Math.abs(dy)) < ALIGN) { const m = (Math.abs(dx) + Math.abs(dy)) / 2; x = diag[0] + Math.sign(dx) * m; y = diag[1] + Math.sign(dy) * m; }
+    }
+    if (from.length) {
+      // The walls being drawn or dragged turn parallel to a nearby skewed wall they nearly follow (not to the walls moving with them).
+      const moving = (r: Room, i: number) => skip?.some(([id, j]) => id === r.id && j === i);
+      const walls = [...onThis, ...ghost].flatMap((r) => roomPoly(r).flatMap((q, i, ps): Array<[Pt, Pt]> => {
+        const j = (i + 1) % ps.length;
+        return moving(r, i) || moving(r, j) ? [] : [[q, ps[j]]];
+      })).concat(draft.slice(1).map((q, i): [Pt, Pt] => [draft[i], q]));
+      const ps = parallelSnap([x, y], from, walls);
+      if (ps.refs.length) { parRefs = ps.refs; return ps.p; }
     }
     return [x, y];
   };
@@ -236,14 +252,24 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       return [g[0] + f[0], g[1] + f[1]];
     }
     const [id, i] = d.verts[0], poly = roomPoly(house.rooms.find((r) => r.id === id)!);
-    const t = d.free ? magnet(want, d.verts, [poly[(i + poly.length - 1) % poly.length], poly[(i + 1) % poly.length]]) : [snap(want[0]), snap(want[1])] as Pt;
+    const nb = [poly[(i + poly.length - 1) % poly.length], poly[(i + 1) % poly.length]], t = d.free ? magnet(want, d.verts, nb, undefined, nb) : [snap(want[0]), snap(want[1])] as Pt;
     return [t[0] - d.base[0], t[1] - d.base[1]];
+  };
+  /** Where a corner goes in a drag: slid by `delta`, and a whole room also turned to line up with a nearly parallel wall beside it. */
+  const moveMap = (d: Extract<Drag, { k: 'move' }>): ((q: Pt) => Pt) => {
+    const dl = delta(d), slid = (q: Pt): Pt => [q[0] + dl[0], q[1] + dl[1]];
+    if (!d.room || loose.current) return slid;
+    const ids = new Set(d.verts.map(([id]) => id));
+    const t = turnToWall(onThis.filter((r) => ids.has(r.id)).map((r) => roomPoly(r).map(slid)), onThis.filter((r) => !ids.has(r.id)).map(roomPoly), innerT);
+    if (!t) return slid;
+    parRefs = [t.ref];
+    return (q) => t.map(slid(q));
   };
   const polyOf = (r: Room): Pt[] => {
     const p = roomPoly(r);
     if (drag?.k !== 'move' || !drag.verts.some(([id]) => id === r.id)) return p;
-    const dl = delta(drag);
-    return p.map((q, i) => (drag.verts.some(([id, j]) => id === r.id && j === i) ? [q[0] + dl[0], q[1] + dl[1]] as Pt : q));
+    const f = moveMap(drag);
+    return p.map((q, i) => (drag.verts.some(([id, j]) => id === r.id && j === i) ? f(q) : q));
   };
 
   // A floor or ceiling layer shows all its zones; a storey shows the underfloor heating zones in its floor and the stairwells up from it and down to it.
@@ -404,7 +430,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
 
   /** The next corner of the room being drawn for a pointer position: square or 45 degrees to what is drawn, or the typed length. */
   const draftPt = (p: Pt): Pt => {
-    const last = draft[draft.length - 1], q = magnet(p, undefined, draft, last), L = Number(typed);
+    const last = draft[draft.length - 1], q = magnet(p, undefined, draft, last, last ? [last] : []), L = Number(typed);
     if (!last || !(L > 0)) return q;
     const d = Math.hypot(q[0] - last[0], q[1] - last[1]);
     return d < 1e-6 ? [+(last[0] + L).toFixed(3), last[1]] : [+(last[0] + ((q[0] - last[0]) * L) / d).toFixed(3), +(last[1] + ((q[1] - last[1]) * L) / d).toFixed(3)];
@@ -473,11 +499,22 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       return;
     }
     if (tool === 'corner') {
+      // Split a wall: a corner on the straight line, so each part has a face (and build-up) of its own.
       const hit = nearestWall(house, storey, p, 0.4);
-      if (!hit) return;
+      if (!hit) { setNote('Click on a wall to split it there.'); return; }
       const e0 = roomEdges(house.rooms.find((r) => r.id === hit.room)!)[hit.edge];
       const q: Pt = Math.abs(e0.d[1]) < 1e-9 ? [snap(hit.at[0]), hit.at[1]] : Math.abs(e0.d[0]) < 1e-9 ? [hit.at[0], snap(hit.at[1])] : hit.at;
-      upd((h) => insertCorner(h, hit.room, hit.edge, q));
+      const t = (q[0] - e0.a[0]) * e0.d[0] + (q[1] - e0.a[1]) * e0.d[1];
+      if (t < 0.1 || t > e0.len - 0.1) { setNote('Too close to a corner to split the wall there.'); return; }
+      // Select the stretch just past the split, to pick its build-up.
+      const next = structuredClone(house);
+      splitWall(next, hit.room, hit.edge, q, storey);
+      const pc = wallPieces(next, hit.room, hit.edge + 1, storey).find((x) => x.span[0] < 0.01);
+      upd((h) => splitWall(h, hit.room, hit.edge, q, storey));
+      setSel({ room: hit.room, walls: [{ room: hit.room, edge: hit.edge + 1, ...(pc ? { span: pc.span, ...(pc.other ? { other: pc.other, gap: pc.gap } : {}) } : {}) }], item: null });
+      if (!sticky) setTool('select');
+      // Straight to the new part's build-up in the panel, after the click has focused the canvas.
+      setTimeout(() => onEdit?.('type'));
       return;
     }
     if (tool === 'window' || tool === 'door') { placeOpening(p, tool === 'door'); return; }
@@ -564,6 +601,12 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     if (!d.moved) return;
     if (d.k === 'move') {
       const dl = delta(d);
+      if (d.room) {
+        // A slide or a turn moves at least one of two points.
+        const f = moveMap(d), moved = (q: Pt) => { const r = f(q); return Math.hypot(r[0] - q[0], r[1] - q[1]) > 1e-9; };
+        if (moved([0, 0]) || moved([1, 0])) upd((h) => mapCorners(h, d.verts, f));
+        return;
+      }
       if (!dl[0] && !dl[1]) return;
       upd((h) => moveCorners(h, d.verts, dl));
     } else if (d.k === 'zone') {
@@ -599,7 +642,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   /** Tools that take an outline corner by corner. */
   const outline = tool === 'room' || area;
   const key = (e: React.KeyboardEvent) => {
-    if ((planSel || (pipeSel && sel.item?.k === 'pipe')) && !zoneMode && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) {
+    if (tool === 'select' && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) {
       // The keyboard way to the menu: for the selected wall, window, door, emitter or room, opened at its middle.
       e.preventDefault();
       const t = ((): { on: MenuFor; at: Pt } | null => {
@@ -621,7 +664,10 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
           const em = house.heating.emitters.find((x) => x.id === sel.item!.id), ps = em && emitterPose(house, em);
           return ps ? { on: { k: 'em', id: em.id }, at: ps.at } : null;
         }
-        const r = onThis.find((x) => x.id === sel.room);
+        if (sel.item?.k === 'plant') { const pl = plantOf(house, sel.item.id); return pl ? { on: { k: 'plant', id: sel.item.id }, at: pl.at } : null; }
+        const zn = zones.find((x) => x.id === sel.zone);
+        if (zn) return { on: { k: 'zone', id: zn.id }, at: centroid(zn.poly) };
+        const r = !zoneMode && onThis.find((x) => x.id === sel.room);
         return r ? { on: { k: 'room', id: r.id }, at: centroid(roomPoly(r)) } : null;
       })(), m = svgRef.current?.getScreenCTM();
       if (!t || !m) return;
@@ -727,6 +773,15 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   const cornerAt = tool === 'corner' && hv ? nearestWall(house, storey, hv, 0.4) : null;
   const cursor = drag?.k === 'pan' && drag.moved ? 'grabbing' : tool === 'select' ? 'default' : 'crosshair';
   const dragPoly = drag?.k === 'move' ? onThis.filter((r) => drag.verts.some(([id]) => id === r.id)) : [];
+  // Sets the wall a dragged room is turning to match, for the highlight (the wall layer that also asks may be memoised).
+  if (drag?.k === 'move' && drag.room) moveMap(drag);
+  // The inside wall a room being moved or drawn would snap to: shown off each neighbour's wall it comes near, so the gap reads as a wall.
+  const segs = (ps: Pt[], closed: boolean) => (closed ? ps : ps.slice(0, -1)).map((q, i): [Pt, Pt] => [q, ps[(i + 1) % ps.length]]);
+  const rectOf = (a: Pt, b: Pt): Pt[] => [a, [b[0], a[1]], b, [a[0], b[1]]];
+  const boxEnd = tool === 'box' ? (drag?.k === 'box' ? [drag.a, drag.cur] : boxA && hv ? [boxA, magnet(hv)] : null) : null;
+  const movingSegs: Array<[Pt, Pt]> = zoneMode || loose.current ? [] : dragPoly.length ? dragPoly.flatMap((r) => segs(polyOf(r), true))
+    : boxEnd ? segs(rectOf(boxEnd[0], boxEnd[1]), true) : tool === 'room' && draft.length && hv ? segs([...draft, draftPt(hv)], false) : [];
+  const wallGhost = movingSegs.length ? wallGhosts(movingSegs, onThis.filter((r) => !dragPoly.includes(r)).map(roomPoly), innerT) : [];
 
   // Walls, as thick as their build-up: all the bands first (so where they meet they read as one wall), the selected ones on top, then the drawn lines.
   // Memoised: the walls are the costly part of a render, and hovering re-renders the canvas on every pointer move.
@@ -886,6 +941,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     });
     const grab = (id: string) => pipeSel ? {
       onPointerDown: (ev: React.PointerEvent) => { setSel({ ...NO_SEL, item: { k: 'plant', id } }); begin(ev, { k: 'plant', id, start: raw(ev), cur: raw(ev), moved: false }); },
+      onContextMenu: menuOn({ k: 'plant', id }),
       style: { cursor: 'grab' } } : { pointerEvents: 'none' as const };
     const on = (id: string) => sel.item?.k === 'plant' && sel.item.id === id;
     const box = (id: string, at: Pt, label: string, fillC: string, title: string) => {
@@ -1015,7 +1071,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
                   begin(e, { k: 'move', start: raw(e), cur: raw(e), verts: moving.flatMap((id) => roomPoly(house.rooms.find((x) => x.id === id)!).map((_, i): [string, number] => [id, i])), base: roomPoly(r)[0], free: false, room: true, moved: false });
                 } : undefined}
                 onDoubleClick={planSel && !zoneMode ? () => { location.hash = href('room', r.id); } : undefined}
-                onContextMenu={planSel && !zoneMode ? menuOn({ k: 'room', id: r.id }) : undefined} />
+                onContextMenu={tool === 'select' && !zoneMode ? menuOn({ k: 'room', id: r.id }) : undefined} />
               <text x={c[0]} y={c[1] - z(3)} textAnchor="middle" className="plan-t" style={{ fontSize: z(13) }}>{r.name}</text>
               <text x={c[0]} y={c[1] + z(12)} textAnchor="middle" className="plan-s" style={{ fontSize: z(12) }}>{zoneMode ? '' : label(r)}</text>
               <text x={c[0]} y={c[1] + z(26)} textAnchor="middle" className="plan-s" style={{ fontSize: z(11) }}>{polyArea(p).toFixed(1)} m²</text>
@@ -1026,6 +1082,14 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         })}
 
         {wallLayer}
+
+        {/* Where a wall is split: a corner on a straight line, ticked across the wall so the change of build-up shows. */}
+        {!zoneMode && onThis.flatMap((r) => polyOf(r).flatMap((b, i, ps) => {
+          const a = ps[(i + ps.length - 1) % ps.length], c = ps[(i + 1) % ps.length], ux = b[0] - a[0], uy = b[1] - a[1], vx = c[0] - b[0], vy = c[1] - b[1], lu = Math.hypot(ux, uy);
+          if (lu < 1e-6 || Math.abs(ux * vy - uy * vx) > 1e-4 * lu * Math.hypot(vx, vy) || ux * vx + uy * vy <= 0) return [];
+          const n: Pt = [-uy / lu, ux / lu], m = to(b), k = z(9);
+          return [<line key={`sp${r.id}-${i}`} x1={m[0] - n[0] * k} y1={m[1] - n[1] * k} x2={m[0] + n[0] * k} y2={m[1] + n[1] * k} stroke="#c2410c" strokeWidth={z(2.5)} strokeLinecap="round" pointerEvents="none"><title>Wall split: each side has its own build-up</title></line>];
+        }))}
 
         {/* Problems: rooms overlapping or crossing themselves, and walls that almost touch */}
         {!zoneMode && onThis.filter((r) => probs.overlap.has(r.id)).map((r) => <polygon key={`o${r.id}`} points={pts(polyOf(r))} fill="none" stroke="#c0392b" strokeWidth={z(3)} strokeDasharray={`${z(8)} ${z(4)}`} pointerEvents="none"><title>{r.name} overlaps another room</title></polygon>)}
@@ -1066,12 +1130,13 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         {/* Floor and ceiling zones; on a storey, its underfloor heating zones, moved by their label (the rooms under them stay clickable). */}
         {zones.map((zn) => {
           const pz = zonePoly(zn), c = to(centroid(pz)), on = sel.zone === zn.id, bu = house.buildups.find((x) => x.id === zn.buildup);
-          const nearEdge = (q: Pt) => { let best = { i: -1, d: 0.5 }; pz.forEach((a, i) => { const b = pz[(i + 1) % pz.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, u = Math.max(0, Math.min(1, ((q[0] - a[0]) * (b[0] - a[0]) + (q[1] - a[1]) * (b[1] - a[1])) / (L * L))), d = Math.hypot(q[0] - a[0] - u * (b[0] - a[0]), q[1] - a[1] - u * (b[1] - a[1])); if (d < best.d) best = { i, d }; }); return best.i; };
+          const nearEdge = (q: Pt) => nearZoneEdge(pz, q);
           return (
             <g key={zn.id}>
               <polygon points={pts(pz)} fill={roofMode ? 'url(#roof-hatch)' : zn.ufh ? 'url(#ufh-hatch)' : 'url(#zone-hatch)'} stroke={on ? '#c2410c' : roofMode ? '#5b4a8a' : zn.ufh ? '#b45309' : '#0b8a7a'} strokeWidth={z(on ? 2.5 : 1.8)} strokeDasharray={zn.ufh ? `${z(6)} ${z(3)}` : undefined}
                 style={{ cursor: tool === 'select' ? 'move' : undefined }} pointerEvents={zoneMode && tool === 'select' ? undefined : 'none'}
                 onPointerDown={(e) => { setSel({ ...NO_SEL, zone: zn.id }); begin(e, { k: 'zone', id: zn.id, start: raw(e), cur: raw(e), moved: false }); }}
+                onContextMenu={zoneMode && tool === 'select' ? menuOn({ k: 'zone', id: zn.id }) : undefined}
                 onDoubleClick={(e) => { e.stopPropagation(); const i = nearEdge(raw(e)); if (i >= 0) { const p: Pt = [snap(raw(e)[0]), snap(raw(e)[1])]; upd((h) => editPoly(h, zn.id, { insert: [i, p] })); } }} />
               {zoneMode ? <>
                 <text x={c[0]} y={c[1] - z(2)} textAnchor="middle" className="plan-t" style={{ fontSize: z(12) }} pointerEvents="none">{zn.name}</text>
@@ -1083,7 +1148,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
                 const grab = st ? planSel : pipeSel;
                 return (
                   <g style={{ cursor: grab ? 'move' : undefined }} pointerEvents={grab ? undefined : 'none'}
-                    onPointerDown={(e) => { setSel({ ...NO_SEL, zone: zn.id }); begin(e, { k: 'zone', id: zn.id, start: raw(e), cur: raw(e), moved: false }); }}>
+                    onPointerDown={(e) => { setSel({ ...NO_SEL, zone: zn.id }); begin(e, { k: 'zone', id: zn.id, start: raw(e), cur: raw(e), moved: false }); }}
+                    onContextMenu={grab ? menuOn({ k: 'zone', id: zn.id }) : undefined}>
                     <rect x={c[0] - w / 2} y={y - z(10)} width={w} height={z(18)} rx={z(9)} fill={on ? '#c2410c' : st ? '#0b8a7a' : '#b45309'} />
                     <text x={c[0]} y={y + z(3.5)} textAnchor="middle" className="ufh-tag" style={{ fontSize: z(11) }}>{t}</text>
                   </g>
@@ -1137,7 +1203,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
             <g key={e.id} transform={`translate(${c[0]} ${c[1]}) rotate(${e.kind === 'ufh' ? 0 : ps.ang})`}
               onPointerDown={pipeSel ? (ev) => { setSel({ room: e.room, walls: [], item: { k: 'em', id: e.id } }); begin(ev, { k: 'em', id: e.id, start: raw(ev), cur: raw(ev), moved: false }); } : undefined}
               onContextMenu={pipeSel ? menuOn({ k: 'em', id: e.id }) : undefined}
-              style={{ cursor: pipeSel ? 'grab' : undefined }} pointerEvents={pipeSel ? undefined : 'none'}>
+              // On the plan lens heaters are fixed: greyed out, so they read as not movable there.
+              style={{ cursor: pipeSel ? 'grab' : undefined, filter: lens === 'pipes' ? undefined : 'grayscale(1)' }} opacity={lens === 'pipes' ? 1 : 0.45} pointerEvents={pipeSel ? undefined : 'none'}>
               <rect x={-len / 2 - z(4)} y={-th / 2 - z(4)} width={len + z(8)} height={th + z(8)} fill="transparent" />
               {e.kind === 'ufh'
                 ? <><rect x={-len / 2} y={-th / 2} width={len} height={th} fill="#f3c9a2" fillOpacity={0.55} stroke={on ? '#c2410c' : '#9a3412'} strokeWidth={z(on ? 2.5 : 1.5)} strokeDasharray={`${z(4)} ${z(3)}`} /><text textAnchor="middle" y={z(4)} className="plan-s" style={{ fontSize: z(11) }}>UFH</text></>
@@ -1163,7 +1230,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         {tool === 'select' && zones.filter((zn) => zn.id === sel.zone).flatMap((zn) => zonePoly(zn).map((q, i) => (
           <circle key={`${zn.id}-v${i}`} cx={to(q)[0]} cy={to(q)[1]} r={z(6.5 * hs)} className="vx on" strokeWidth={z(2)} aria-label={`${zn.name} corner ${i + 1}`}
             onPointerDown={(e) => begin(e, { k: 'zone', id: zn.id, idx: i, start: raw(e), cur: raw(e), moved: false })}
-            onDoubleClick={(e) => { e.stopPropagation(); if (zn.poly.length > 3) upd((h) => editPoly(h, zn.id, { remove: i })); }} />
+            onDoubleClick={(e) => { e.stopPropagation(); if (zn.poly.length > 3) upd((h) => editPoly(h, zn.id, { remove: i })); }} onContextMenu={menuOn({ k: 'zcorner', id: zn.id, idx: i })} />
         )))}
         {/* In-progress drawing and placement previews */}
         {tool === 'pipe' && (() => {
@@ -1198,6 +1265,13 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         {eg && <g transform={`translate(${to(eg.at)[0]} ${to(eg.at)[1]}) rotate(${eg.ang})`} opacity={0.55} pointerEvents="none">
           <rect x={-0.5 * S} y={-0.05 * S} width={S} height={0.1 * S} fill="#9a3412" />
         </g>}
+        {wallGhost.map(({ box: [x0, y0, x1, y1], on }, i) => {
+          // At least 6 px across, so a thin inside wall still shows over a thick outside one.
+          const m = z(6) / S, gx = Math.max(0, m - (x1 - x0)) / 2, gy = Math.max(0, m - (y1 - y0)) / 2;
+          return <rect key={`wg${i}`} x={(x0 - gx) * S} y={(y0 - gy) * S} width={(x1 - x0 + 2 * gx) * S} height={(y1 - y0 + 2 * gy) * S}
+            fill="#14b8a6" fillOpacity={on ? 0.95 : 0.6} stroke="#0b8a7a" strokeWidth={z(1)} strokeDasharray={on ? undefined : `${z(4)} ${z(3)}`} pointerEvents="none"><title>Inside wall: the room snaps to its far side</title></rect>;
+        })}
+        {parRefs.map(([a, b], i) => <line key={`pr${i}`} x1={to(a)[0]} y1={to(a)[1]} x2={to(b)[0]} y2={to(b)[1]} stroke="#14b8a6" strokeWidth={z(4)} strokeLinecap="round" opacity={0.8} pointerEvents="none"><title>Lined up parallel with this wall</title></line>)}
         {guides.map(([a, b], i) => <line key={`gd${i}`} x1={to(a)[0]} y1={to(a)[1]} x2={to(b)[0]} y2={to(b)[1]} stroke="#0b8a7a" strokeWidth={z(1.2)} strokeDasharray={`${z(5)} ${z(4)}`} pointerEvents="none" />)}
         {boxA && hv && tool === 'box' && (() => { const q = magnet(hv); return <rect x={Math.min(boxA[0], q[0]) * S} y={Math.min(boxA[1], q[1]) * S} width={Math.abs(q[0] - boxA[0]) * S} height={Math.abs(q[1] - boxA[1]) * S} fill="#fdf3ea" fillOpacity={0.6} stroke="#c2410c" strokeWidth={z(2)} strokeDasharray={`${z(7)} ${z(4)}`} pointerEvents="none" />; })()}
         {cut && <circle cx={to(cut)[0]} cy={to(cut)[1]} r={z(5)} fill="#c2410c" pointerEvents="none" />}
@@ -1225,9 +1299,9 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       {menu && (() => {
         /** `panel`: the action moves focus to the side panel, so the canvas must not take it back. */
         /** `panel`: the action moves focus to the side panel, so the canvas must not take it back. `list`: picking the item opens these choices beside it; `choose` applies one. */
-        type Item = { label: string; glyph: string; off?: string; panel?: boolean; run: () => void; list?: Buildup[]; cur?: string; choose?: (id: string) => void };
+        type Item = { label: string; glyph: string; off?: string; panel?: boolean; run: () => void; list?: Array<{ id: string; name: string }>; cur?: string; choose?: (id: string) => void };
         const edit = (label: string, glyph: string, field: EditField): Item => ({ label, glyph, panel: true, run: () => onEdit?.(field) });
-        const choices = (label: string, list: Buildup[], cur: string | undefined, choose: (id: string) => void): Item => ({ label, glyph: '◧', run: () => {}, list, cur, choose });
+        const choices = (label: string, list: Array<{ id: string; name: string }>, cur: string | undefined, choose: (id: string) => void): Item => ({ label, glyph: '◧', run: () => {}, list, cur, choose });
         const on = menu.on, at = menu.at;
         const { title, tip, items } = ((): { title: string; tip: string; items: Item[] } => {
           if (on.k === 'wall') {
@@ -1249,16 +1323,16 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
             // The right-clicked room keeps its name and settings; the others join it.
             const ids = grp.length > 1 && grp.includes(r.id) ? [r.id, ...grp.filter((x) => x !== r.id)] : [];
             return { title: `${r.name} actions`, tip: ids.length ? `${ids.length} rooms selected` : `${r.name} · ${polyArea(roomPoly(r)).toFixed(1)} m²`, items: [
-              ...(ids.length ? [{ label: `Merge ${ids.length} rooms into ${r.name}`, glyph: '⊞', run: () => {
+              ...(ids.length && lens !== 'pipes' ? [{ label: `Merge ${ids.length} rooms into ${r.name}`, glyph: '⊞', run: () => {
                 if (!mergeRooms(structuredClone(house), ids)) { setNote('Those rooms cannot be merged: they must touch, be on the same storeys, and join into one outline without a hole.'); return; }
                 upd((h) => { mergeRooms(h, ids); });
                 setSel({ ...NO_SEL, room: r.id });
               } }] : []),
               { label: 'Open room', glyph: '↗', run: () => { location.hash = href('room', r.id); } },
-              edit('Rename', '✎', 'name'),
+              ...(lens === 'pipes' ? [] : [edit('Rename', '✎', 'name')]),
               { label: 'Add a radiator', glyph: '≣', off: r.heated ? undefined : `${r.name} is unheated; make it heated first`, run: () => placeEmitter(at) },
               { label: r.heated ? 'Make unheated' : 'Make heated', glyph: r.heated ? '❄' : '♨', run: () => upd((h) => { const x = h.rooms.find((q) => q.id === r.id); if (x) x.heated = !x.heated; }) },
-              { label: 'Delete room', glyph: '✕', run: () => { upd((h) => deleteRoom(h, r.id)); setSel(NO_SEL); } },
+              ...(lens === 'pipes' ? [] : [{ label: 'Delete room', glyph: '✕', run: () => { upd((h) => deleteRoom(h, r.id)); setSel(NO_SEL); } }]),
             ] };
           }
           if (on.k === 'corner') {
@@ -1284,6 +1358,48 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
               { label: 'Add a corner', glyph: '＋', run: () => addPipeCorner(p.id, pts, on.seg, at) },
               edit('Where it runs', '⇅', 'via'),
               { label: 'Delete run', glyph: '✕', run: () => deleteRun(p.id) },
+            ] };
+          }
+          if (on.k === 'plant') {
+            const what = on.id === 'cylinder' ? 'Hot water cylinder' : on.id === 'source' ? (house.hp.source === 'ashp' || house.hp.source === 'gshp' ? 'Heat pump' : 'Boiler') : 'Pipe riser';
+            return { title: `${what} actions`, tip: what, items: [
+              { label: 'Pipework', glyph: '↗', run: () => { location.hash = href('pipes'); } },
+              { label: 'Delete', glyph: '✕', run: () => { upd((h) => removePlant(h, on.id)); setSel(NO_SEL); } },
+            ] };
+          }
+          if (on.k === 'zcorner') {
+            const zn = zones.find((x) => x.id === on.id);
+            if (!zn) return { title: '', tip: '', items: [] };
+            return { title: 'Corner actions', tip: `${zn.name} · corner ${on.idx + 1}`, items: [
+              { label: 'Delete corner', glyph: '✕', off: zn.poly.length <= 3 ? 'An outline needs at least three corners' : undefined, run: () => upd((h) => editPoly(h, zn.id, { remove: on.idx })) },
+            ] };
+          }
+          if (on.k === 'zone') {
+            const zn = zones.find((x) => x.id === on.id), rf = roofMode ? house.roofs.find((x) => x.id === on.id) : undefined, zz = house.zones?.find((x) => x.id === on.id);
+            if (!zn || (!rf && !zz)) return { title: '', tip: '', items: [] };
+            const edge = nearZoneEdge(zn.poly, at);
+            const addCorner: Item = { label: 'Add a corner', glyph: '＋', off: edge < 0 ? 'Right-click nearer an edge to add a corner there' : undefined, run: () => upd((h) => editPoly(h, zn.id, { insert: [edge, [snap(at[0]), snap(at[1])]] })) };
+            if (rf) return { title: `${rf.name} actions`, tip: `${rf.name} · ${polyArea(zn.poly).toFixed(1)} m²`, items: [
+              addCorner,
+              edit('Rename', '✎', 'name'),
+              choices('Roof form', FORMS.map(([id, name]) => ({ id, name })), rf.form, (id) => upd((h) => {
+                const x = h.roofs.find((q) => q.id === rf.id);
+                if (!x) return;
+                // As the panel does: an edge-by-edge roof starts from the outline's current edges.
+                if (id === 'custom') { freezeOutline(h, x); if (x.poly) x.edges = roofEdgesOf(x, x.poly); }
+                x.form = id as typeof x.form;
+              })),
+              { label: 'Delete roof', glyph: '✕', run: () => { upd((h) => { h.roofs = h.roofs.filter((q) => q.id !== rf.id); }); setSel(NO_SEL); } },
+            ] };
+            const z0 = zz!, st = stair(z0);
+            return { title: `${z0.name} actions`, tip: `${z0.name} · ${polyArea(zn.poly).toFixed(1)} m²`, items: [
+              addCorner,
+              edit('Rename', '✎', 'name'),
+              ...(st ? [] : [choices('Build-up', house.buildups.filter((b) => listedAs(b) === 'floor' || listedAs(b) === 'roof'), z0.buildup,
+                (id) => upd((h) => { const x = h.zones?.find((q) => q.id === z0.id); if (x) x.buildup = id; }))]),
+              ...(st || z0.band >= house.storeys.length ? [] : [{ label: z0.ufh ? 'Remove underfloor heating' : 'Add underfloor heating', glyph: '▦',
+                run: () => upd((h) => { const x = h.zones?.find((q) => q.id === z0.id); if (x) x.ufh = x.ufh ? undefined : true; }) }]),
+              { label: `Delete ${st ? 'stairwell' : 'zone'}`, glyph: '✕', run: () => { upd((h) => { h.zones = h.zones?.filter((q) => q.id !== z0.id); }); setSel(NO_SEL); } },
             ] };
           }
           const em = house.heating.emitters.find((x) => x.id === on.id), name = em ? EMITTER_NAME[em.kind] : 'Radiator';

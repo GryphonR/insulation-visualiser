@@ -1,7 +1,7 @@
 // Edits behind the floor-plan drawing canvas: plain changes to a House copy, no UI.
 import { edges, overlapAreaPoly, pointInPoly, selfIntersects, sharedSpan, signedArea } from './geom';
 import type { Pt } from './geom';
-import { defaultTemp, maxWallGap, onStorey, pairKey, roomArea, roomEdges, roomPoly, setOutline } from './house';
+import { defaultTemp, insideKey, maxWallGap, onStorey, pairKey, roomArea, roomEdges, roomPoly, setOutline } from './house';
 import type { House, Room, Side, WallAlign } from './house';
 import type { Emitter } from './house-heating';
 
@@ -12,8 +12,9 @@ function renumberWalls(h: House, id: string, f: (i: number) => number | null): v
   for (const m of [h.faceBuildup, h.faceBoundary, h.wallAlign] as Array<Record<string, string>>) {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(m)) {
-      const w = k.match(/^(w|ev):([^:]+):e(\d+)((?::\d+)?)$/);
+      const w = k.match(/^(w|ev):([^:]+):e(\d+)((?::\d+)?)$/), sg = k.match(/^(iw:([^:|]+)\|[^:]+:\d+):e(\d+)$/);
       if (w && w[2] === id) { const j = f(+w[3]); if (j != null) out[`${w[1]}:${id}:e${j}${w[4]}`] = v; }
+      else if (sg && sg[2] === id) { const j = f(+sg[3]); if (j != null) out[`${sg[1]}:e${j}`] = v; }
       else out[k] = v;
     }
     for (const k of Object.keys(m)) delete m[k];
@@ -44,10 +45,37 @@ export function insertCorner(h: House, id: string, i: number, p: Pt): void {
   if (!r?.poly) return;
   const poly = [...r.poly];
   poly.splice(i + 1, 0, p);
-  const copy = (m: Record<string, string>) => { for (const [k, v] of Object.entries(m)) { const w = k.match(/^(w|ev):([^:]+):e(\d+)((?::\d+)?)$/); if (w && w[2] === id && +w[3] === i) m[`${w[1]}:${id}:e${i + 1}${w[4]}`] = v; } };
+  const copy = (m: Record<string, string>) => {
+    for (const [k, v] of Object.entries(m)) {
+      const w = k.match(/^(w|ev):([^:]+):e(\d+)((?::\d+)?)$/), sg = k.match(/^(iw:([^:|]+)\|[^:]+:\d+):e(\d+)$/);
+      if (w && w[2] === id && +w[3] === i) m[`${w[1]}:${id}:e${i + 1}${w[4]}`] = v;
+      else if (sg && sg[2] === id && +sg[3] === i) m[`${sg[1]}:e${i + 1}`] = v;
+    }
+  };
   renumberWalls(h, id, (j) => (j > i ? j + 1 : j));
   copy(h.faceBuildup); copy(h.faceBoundary); copy(h.wallAlign);
   setOutline(r, poly);
+}
+
+/**
+ * Split a wall at `p` (on edge `i` of a room) where its build-up changes: a corner there, and on an inside wall one on the neighbour's
+ * wall opposite too, with each stretch of the inside wall then taking a build-up of its own (both start as the wall's was).
+ */
+export function splitWall(h: House, roomId: string, i: number, p: Pt, storey: number): void {
+  const r = h.rooms.find((x) => x.id === roomId), e = r && roomEdges(r)[i];
+  if (!e) return;
+  const t = (p[0] - e.a[0]) * e.d[0] + (p[1] - e.a[1]) * e.d[1], gap = maxWallGap(h);
+  const pc = wallPieces(h, roomId, i, storey).find((q) => t >= q.span[0] - 1e-6 && t <= q.span[1] + 1e-6 && q.other);
+  const o = pc && h.rooms.find((x) => x.id === pc.other);
+  const f = o && roomEdges(o).find((g) => { const s = sharedSpan(e, g, 0.02, gap); return s && t >= s[0] - 1e-6 && t <= s[1] + 1e-6; });
+  if (!pc || !o || !f) { insertCorner(h, roomId, i, p); return; }
+  const was = insideKey(h, roomId, o.id, storey, pc.oe!), bu = h.faceBuildup[was] ?? h.defaults.intWall, al = h.wallAlign?.[was];
+  const u = (p[0] - f.a[0]) * f.d[0] + (p[1] - f.a[1]) * f.d[1];
+  insertCorner(h, roomId, i, p);
+  insertCorner(h, o.id, f.idx, [+(f.a[0] + f.d[0] * u).toFixed(3), +(f.a[1] + f.d[1] * u).toFixed(3)]);
+  // The pair's first room's wall is now two walls, i and i + 1 (a rectangle got an outline, so its walls are numbered).
+  const k = roomId < o.id ? i : f.idx, pk = `iw:${pairKey(roomId, o.id)}:${storey}`;
+  for (const j of [k, k + 1]) { h.faceBuildup[`${pk}:e${j}`] = bu; if (al) (h.wallAlign ??= {})[`${pk}:e${j}`] = al; }
 }
 
 /** Remove corner `i`; its two walls merge into the earlier one. Not below three corners. */
@@ -100,13 +128,13 @@ export function wallKeys(h: House, roomId: string, idx: number, storey: number):
   const keys = [`w:${roomId}:${e.id}:${storey}`], gap = maxWallGap(h);
   for (const o of h.rooms) {
     if (o.id === roomId || !onStorey(o, storey)) continue;
-    if (roomEdges(o).some((f) => sharedSpan(e, f, 0.02, gap))) keys.push(`iw:${pairKey(roomId, o.id)}:${storey}`);
+    for (const f of roomEdges(o)) if (sharedSpan(e, f, 0.02, gap)) keys.push(insideKey(h, roomId, o.id, storey, roomId < o.id ? e.id : f.id));
   }
-  return keys;
+  return [...new Set(keys)];
 }
 
 /** A stretch of a wall that is one thing: outside wall, or the inside wall shared with `other`. A wall is split where its neighbours begin and end. */
-export interface WallPiece { span: [number, number]; other?: string; /** Inside walls: the metres between the two rooms' lines, which is how thick the wall is drawn (0 when the lines coincide). */ gap?: number }
+export interface WallPiece { span: [number, number]; other?: string; /** Inside walls: the metres between the two rooms' lines, which is how thick the wall is drawn (0 when the lines coincide). */ gap?: number; /** Inside walls: the edge of the pair's first room this stretch lies on (what a split stretch is keyed by). */ oe?: string }
 export function wallPieces(h: House, roomId: string, idx: number, storey: number): WallPiece[] {
   const r = h.rooms.find((x) => x.id === roomId), e = r && roomEdges(r)[idx];
   if (!r || !e) return [];
@@ -115,7 +143,7 @@ export function wallPieces(h: House, roomId: string, idx: number, storey: number
     if (o.id === roomId || !onStorey(o, storey)) continue;
     for (const f of roomEdges(o)) {
       const s = sharedSpan(e, f, 0.02, gap);
-      if (s) { const off = (f.a[0] - e.a[0]) * e.n[0] + (f.a[1] - e.a[1]) * e.n[1]; out.push({ span: s, other: o.id, gap: off > 0.01 ? off : 0 }); }
+      if (s) { const off = (f.a[0] - e.a[0]) * e.n[0] + (f.a[1] - e.a[1]) * e.n[1]; out.push({ span: s, other: o.id, gap: off > 0.01 ? off : 0, oe: roomId < o.id ? e.id : f.id }); }
     }
   }
   return out.sort((a, b) => a.span[0] - b.span[0]);
@@ -126,9 +154,13 @@ export const pieceGap = (h: House, roomId: string, idx: number, storey: number, 
   wallPieces(h, roomId, idx, storey).find((q) => q.other && q.other === p.other)?.gap ?? p.gap ?? 0;
 
 /** The face keys of one piece of a wall. */
-export const pieceKeys = (h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'>): string[] => {
+export const pieceKeys = (h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'> & Partial<Pick<WallPiece, 'span' | 'oe'>>): string[] => {
   const e = roomEdges(h.rooms.find((x) => x.id === roomId) ?? ({} as Room))[idx];
-  return !e ? [] : p.other ? [`iw:${pairKey(roomId, p.other)}:${storey}`] : [`w:${roomId}:${e.id}:${storey}`];
+  if (!e) return [];
+  if (!p.other) return [`w:${roomId}:${e.id}:${storey}`];
+  // A selected piece carries its span, not which stretch it is: find the stretch it overlaps.
+  const oe = p.oe ?? wallPieces(h, roomId, idx, storey).find((q) => q.other === p.other && (!p.span || (q.span[0] < p.span[1] - 0.01 && q.span[1] > p.span[0] + 0.01)))?.oe;
+  return [oe ? insideKey(h, roomId, p.other, storey, oe) : `iw:${pairKey(roomId, p.other)}:${storey}`];
 };
 
 /** The outside-wall face keys on every storey that lie on the same line as this wall: a party wall runs the full height of the house. */
@@ -151,7 +183,7 @@ const flipAlign = (a: WallAlign): WallAlign => (a === 'in' ? 'out' : a === 'out'
 const refRoom = (key: string) => (key.startsWith('iw:') ? key.split(':')[1].split('|')[0] : '');
 
 /** How thick a piece of wall is drawn, in metres: the layers of its build-up (nothing if it has none). */
-export function pieceThickness(h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'>): number {
+export function pieceThickness(h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'> & Partial<Pick<WallPiece, 'span' | 'oe'>>): number {
   const key = pieceKeys(h, roomId, idx, storey, p)[0];
   if (!key) return 0;
   const b = h.buildups.find((x) => x.id === (h.faceBuildup[key] ?? h.defaults[key.startsWith('w:') ? 'extWall' : 'intWall']));
@@ -159,13 +191,13 @@ export function pieceThickness(h: House, roomId: string, idx: number, storey: nu
 }
 
 /** Where a piece of wall sits on its drawn line, seen from the interior of `roomId`: toward that room (in), centred, or away from it (out). */
-export function pieceAlign(h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'>): WallAlign {
+export function pieceAlign(h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'> & Partial<Pick<WallPiece, 'span' | 'oe'>>): WallAlign {
   const key = pieceKeys(h, roomId, idx, storey, p)[0];
   const a = (key && h.wallAlign?.[key]) || (p.other ? 'ctr' : 'out');
   return key && refRoom(key) && refRoom(key) !== roomId ? flipAlign(a) : a;
 }
 
-export function setPieceAlign(h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'>, a: WallAlign): void {
+export function setPieceAlign(h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'> & Partial<Pick<WallPiece, 'span' | 'oe'>>, a: WallAlign): void {
   const key = pieceKeys(h, roomId, idx, storey, p)[0];
   if (!key) return;
   h.wallAlign = h.wallAlign ?? {};
@@ -233,8 +265,8 @@ function shiftStoreys(h: House, d: 1 | -1): void {
   for (const m of [h.faceBuildup, h.faceBoundary, h.wallAlign] as Array<Record<string, string>>) {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(m)) {
-      const x = k.match(/^((?:w:[^:]+:[^:]+|iw:[^:]+):)(\d+)$/);
-      out[x ? `${x[1]}${+x[2] + d}` : k] = v;
+      const x = k.match(/^((?:w:[^:]+:[^:]+|iw:[^:]+):)(\d+)((?::e\d+)?)$/);
+      out[x ? `${x[1]}${+x[2] + d}${x[3]}` : k] = v;
     }
     for (const k of Object.keys(m)) delete m[k];
     Object.assign(m, out);
@@ -283,6 +315,65 @@ export function flushDelta(moving: Pt[], others: Pt[][], tol = 0.2, off = 0): Pt
   return [cx, cy];
 }
 
+/**
+ * Where an inside wall `t` m thick would go between a room being moved or drawn (its walls as `moving` segments) and the rooms beside it:
+ * a box [x0, y0, x1, y1] off each square wall of `others` that a parallel moving wall faces within `reach` m, over the length they overlap.
+ * `on` is true once the moving wall sits on the box's far face (snapped a wall apart).
+ */
+export function wallGhosts(moving: Array<[Pt, Pt]>, others: Pt[][], t: number, reach = 1): Array<{ box: [number, number, number, number]; on: boolean }> {
+  const out: Array<{ box: [number, number, number, number]; on: boolean }> = [];
+  if (!(t > 0.005)) return out;
+  for (const [p, q] of moving) for (const poly of others) poly.forEach((a, i) => {
+    const b = poly[(i + 1) % poly.length];
+    for (const ax of [0, 1] as const) {
+      // ax: the coordinate both walls are fixed in (0 = vertical walls); o: the other one, along the walls.
+      const o = 1 - ax;
+      if (Math.abs(a[ax] - b[ax]) > 1e-6 || Math.abs(p[ax] - q[ax]) > 1e-6) continue;
+      const d = p[ax] - a[ax], lo = Math.max(Math.min(a[o], b[o]), Math.min(p[o], q[o])), hi = Math.min(Math.max(a[o], b[o]), Math.max(p[o], q[o]));
+      if (Math.abs(d) < 0.005 || Math.abs(d) > reach || hi - lo < 0.05) continue;
+      const far = a[ax] + Math.sign(d) * t, c0 = Math.min(a[ax], far), c1 = Math.max(a[ax], far);
+      out.push({ box: ax === 0 ? [c0, lo, c1, hi] : [lo, c0, hi, c1], on: Math.abs(Math.abs(d) - t) < 0.005 });
+    }
+  });
+  return out;
+}
+
+/**
+ * Turn the walls being drawn or dragged, from each of `from` to `p`, parallel to a nearly parallel wall among `walls` within `reach` m
+ * (by `tol` degrees at most): `p` moves onto the parallel line, or where two such lines cross. Square walls are left to the square snaps.
+ * `refs` are the walls lined up with, to show.
+ */
+export function parallelSnap(p: Pt, from: Pt[], walls: Array<[Pt, Pt]>, tol = 4, reach = 2): { p: Pt; refs: Array<[Pt, Pt]> } {
+  const lines: Array<{ f: Pt; u: Pt; w: [Pt, Pt] }> = [];
+  for (const f of from) {
+    const vx = p[0] - f[0], vy = p[1] - f[1], L = Math.hypot(vx, vy), m: Pt = [(p[0] + f[0]) / 2, (p[1] + f[1]) / 2];
+    if (L < 0.3) continue;
+    let best: { u: Pt; w: [Pt, Pt]; ang: number } | null = null;
+    for (const w of walls) {
+      const [a, b] = w, dl = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (dl < 0.3) continue;
+      const u: Pt = [(b[0] - a[0]) / dl, (b[1] - a[1]) / dl];
+      if (Math.abs(u[0]) < 1e-3 || Math.abs(u[1]) < 1e-3) continue;
+      const t = Math.max(0, Math.min(dl, (m[0] - a[0]) * u[0] + (m[1] - a[1]) * u[1]));
+      if (Math.hypot(m[0] - a[0] - u[0] * t, m[1] - a[1] - u[1] * t) > reach) continue;
+      const ang = (Math.acos(Math.min(1, Math.abs(vx * u[0] + vy * u[1]) / L)) * 180) / Math.PI;
+      if (ang < tol && (!best || ang < best.ang)) best = { u, w, ang };
+    }
+    if (best) lines.push({ f, u: best.u, w: best.w });
+  }
+  if (!lines.length) return { p, refs: [] };
+  const on = ({ f, u }: { f: Pt; u: Pt }): Pt => { const s = (p[0] - f[0]) * u[0] + (p[1] - f[1]) * u[1]; return [f[0] + u[0] * s, f[1] + u[1] * s]; };
+  if (lines.length > 1) {
+    // Both walls at a dragged corner: where their parallel lines cross, unless those are parallel too.
+    const [g, h] = lines, cr = g.u[0] * h.u[1] - g.u[1] * h.u[0];
+    if (Math.abs(cr) > 1e-3) {
+      const s = ((h.f[0] - g.f[0]) * h.u[1] - (h.f[1] - g.f[1]) * h.u[0]) / cr;
+      return { p: [g.f[0] + g.u[0] * s, g.f[1] + g.u[1] * s], refs: [g.w, h.w] };
+    }
+  }
+  return { p: on(lines[0]), refs: [lines[0].w] };
+}
+
 /** Corners that move with corners `idx` of a room: those, and every corner of another room sitting on one. For a dragged wall (`wall` = its number) only rooms sharing that wall come along. */
 export function joinedCorners(h: House, storey: number, room: string, idx: number[], wall?: number): Array<[string, number]> {
   const out: Array<[string, number]> = idx.map((i) => [room, i]);
@@ -300,10 +391,51 @@ export function joinedCorners(h: House, storey: number, room: string, idx: numbe
 }
 
 export function moveCorners(h: House, verts: Array<[string, number]>, d: Pt): void {
+  mapCorners(h, verts, (q) => [q[0] + d[0], q[1] + d[1]]);
+}
+
+/** Move corners `verts` to wherever `f` takes them (a dragged room turned to match a wall, say). */
+export function mapCorners(h: House, verts: Array<[string, number]>, f: (q: Pt) => Pt): void {
   for (const id of new Set(verts.map(([r]) => r))) {
     const r = ensurePoly(h, id);
-    if (r?.poly) setOutline(r, r.poly.map((q, i) => (verts.some(([rid, j]) => rid === id && j === i) ? [q[0] + d[0], q[1] + d[1]] as Pt : q)));
+    if (r?.poly) setOutline(r, r.poly.map((q, i) => (verts.some(([rid, j]) => rid === id && j === i) ? f(q) : q)));
   }
+}
+
+/**
+ * Turn rooms being dragged (`moving` outlines) to line up with a nearby wall of `others` that one of their walls nearly runs along
+ * (within `tol` degrees, its middle within `reach` m), about their centre, then sit that wall flush on it or `off` m (a wall's thickness) away
+ * if within `flush` m. Square walls meeting square walls are left to `flushDelta`. Null when nothing lines up.
+ */
+export function turnToWall(moving: Pt[][], others: Pt[][], off = 0, tol = 4, reach = 1, flush = 0.3): { map: (q: Pt) => Pt; ref: [Pt, Pt] } | null {
+  const sq = (a: Pt, b: Pt) => Math.abs(a[0] - b[0]) < 1e-6 || Math.abs(a[1] - b[1]) < 1e-6;
+  let best: { ang: number; d: number; m: Pt; a: Pt; u: Pt; ref: [Pt, Pt] } | null = null;
+  for (const poly of moving) poly.forEach((p, i) => {
+    const q = poly[(i + 1) % poly.length], lm = Math.hypot(q[0] - p[0], q[1] - p[1]), m: Pt = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+    if (lm < 0.3) return;
+    for (const o of others) o.forEach((a, k) => {
+      const b = o[(k + 1) % o.length], lw = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (lw < 0.3 || (sq(p, q) && sq(a, b))) return;
+      const u: Pt = [(b[0] - a[0]) / lw, (b[1] - a[1]) / lw], t = Math.max(0, Math.min(lw, (m[0] - a[0]) * u[0] + (m[1] - a[1]) * u[1]));
+      const d = Math.hypot(m[0] - a[0] - u[0] * t, m[1] - a[1] - u[1] * t);
+      if (d > reach) return;
+      // The turn that takes this wall's direction onto the other's, either way round.
+      const v: Pt = [(q[0] - p[0]) / lm, (q[1] - p[1]) / lm];
+      let ang = Math.atan2(v[0] * u[1] - v[1] * u[0], v[0] * u[0] + v[1] * u[1]);
+      if (ang > Math.PI / 2) ang -= Math.PI; else if (ang < -Math.PI / 2) ang += Math.PI;
+      if (Math.abs(ang) * 180 / Math.PI < tol && (!best || Math.abs(ang) < Math.abs(best.ang) - 1e-9 || (Math.abs(Math.abs(ang) - Math.abs(best.ang)) < 1e-9 && d < best.d))) best = { ang, d, m, a, u, ref: [a, b] };
+    });
+  });
+  if (!best) return null;
+  const { ang, m, a, u, ref } = best as { ang: number; m: Pt; a: Pt; u: Pt; ref: [Pt, Pt] };
+  const all = moving.flat(), c: Pt = [all.reduce((t, q) => t + q[0], 0) / all.length, all.reduce((t, q) => t + q[1], 0) / all.length];
+  const cs = Math.cos(ang), sn = Math.sin(ang);
+  const rot = (q: Pt): Pt => [c[0] + (q[0] - c[0]) * cs - (q[1] - c[1]) * sn, c[1] + (q[0] - c[0]) * sn + (q[1] - c[1]) * cs];
+  // Then flush on the wall, or a wall's thickness off it on the side the room is on.
+  const n: Pt = [-u[1], u[0]], rm = rot(m), s = (rm[0] - a[0]) * n[0] + (rm[1] - a[1]) * n[1];
+  const to = [0, ...(off > 0.005 ? [Math.sign(s || 1) * off] : [])].sort((x, y) => Math.abs(x - s) - Math.abs(y - s))[0];
+  const k = Math.abs(to - s) <= flush ? to - s : 0;
+  return { map: (q) => { const r = rot(q); return [+(r[0] + n[0] * k).toFixed(4), +(r[1] + n[1] * k).toFixed(4)]; }, ref };
 }
 
 /** Make wall `i` of a room `len` metres long by sliding the wall at its far end (rooms sharing that wall go with it). */
@@ -430,6 +562,8 @@ export function splitRoom(h: House, id: string, a: Pt, b: Pt, newId: string): bo
     const out: Record<string, string> = {};
     for (const [key, v] of Object.entries(m)) {
       const w = key.match(/^(w|ev):([^:]+):e(\d+)((?::\d+)?)$/), iw = key.match(/^iw:([^:]+):(\d+)$/), one = key.match(/^(gf|xf|lc|fr|rl):(.+)$/), sl = key.match(/^sl:([^:]+):(.+)$/);
+      // shortcut: split stretches of inside wall go back to their pair's build-up when the room is split; remap them if that matters.
+      if (/^iw:[^:]+:\d+:e\d+$/.test(key) && key.split(':')[1].split('|').includes(id)) continue;
       if (w && w[2] === id) { const k = +w[3]; if (inA(k)) out[`${w[1]}:${id}:e${fA(k)}${w[4]}`] = v; else out[`${w[1]}:${newId}:e${fB(k)}${w[4]}`] = v; }
       else if (sl && sl[1] === id) { out[key] = v; out[`sl:${newId}:${sl[2]}`] = v; }
       else if (iw && iw[1].split('|').includes(id)) { out[key] = v; out[`iw:${pairKey(...(iw[1].split('|').map((q) => (q === id ? newId : q)) as [string, string]))}:${iw[2]}`] = v; }
@@ -481,6 +615,8 @@ export function splitStoreys(h: House, id: string, newId: string, zoneId = `z-${
   for (const m of [h.faceBuildup, h.faceBoundary, h.wallAlign] as Array<Record<string, string>>) {
     for (const [key, v] of Object.entries(m)) {
       const w = key.match(/^w:([^:]+):([^:]+):(\d+)$/), iw = key.match(/^iw:([^:]+):(\d+)$/), f = key.match(/^f:(.+)$/), top = key.match(/^(ev|lc|fr|rl|sl):([^:]+)(.*)$/);
+      // shortcut: a split stretch of inside wall goes back to its pair's build-up when its room is split by storey; remap it if that matters.
+      if (/^iw:[^:]+:\d+:e\d+$/.test(key) && key.split(':')[1].split('|').includes(id)) { delete m[key]; continue; }
       let to: string | null = null;
       if (w && w[1] === id && +w[3] >= up) to = `w:${newId}:${w[2]}:${w[3]}`;
       else if (iw && iw[1].split('|').includes(id) && +iw[2] >= up) to = `iw:${swap(iw[1])}:${iw[2]}`;
@@ -736,6 +872,8 @@ export function joinRooms(h: House, a: string, b: string): boolean {
     for (const [key, v] of entries) {
       const w = key.match(/^(w|ev):([^:]+):e(\d+)((?::\d+)?)$/), iw = key.match(/^iw:([^:]+):(\d+)$/), one = key.match(/^(gf|xf|lc|fr|rl):(.+)$/), sl = key.match(/^sl:([^:]+):(.+)$/);
       const set = (k: string) => { if (!(k in out)) out[k] = v; };
+      // shortcut: split stretches of inside wall go back to their pair's build-up when rooms merge; remap them if that matters.
+      if (/^iw:[^:]+:\d+:e\d+$/.test(key) && key.split(':')[1].split('|').some((q) => q === a || q === b)) continue;
       if (w && (w[2] === a || w[2] === b)) { const j = mapEdge(w[2] === a ? A : B, +w[3]); if (j != null) set(`${w[1]}:${a}:e${j}${w[4]}`); }
       else if (iw && iw[1].split('|').includes(b)) { const other = iw[1].split('|').find((q) => q !== b)!; if (other !== a) set(`iw:${pairKey(a, other)}:${iw[2]}`); }
       else if ((one && one[2] === b) || (sl && sl[1] === b)) continue;

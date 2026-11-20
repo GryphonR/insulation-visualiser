@@ -50,7 +50,7 @@ export function PlanPage({ selected }: { selected?: string }) {
   useEffect(() => {
     if (!editField) return;
     // The selection's own section comes first in the panel, so its first dropdown or number is the one meant.
-    const el = panel.current?.querySelector<HTMLInputElement | HTMLSelectElement>({ type: 'select', size: 'input[type="number"]', name: 'input[aria-label="Room name"]', via: 'select[name="via"]' }[editField]);
+    const el = panel.current?.querySelector<HTMLInputElement | HTMLSelectElement>({ type: 'select', size: 'input[type="number"]', name: 'input[aria-label="Room name"], input[aria-label="Zone name"], input[aria-label="Roof name"]', via: 'select[name="via"]' }[editField]);
     el?.focus();
     if (el instanceof HTMLInputElement) el.select();
     setEditField(null);
