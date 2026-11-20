@@ -1,0 +1,39 @@
+/* The public site (landing, Learn, 404). Builds on the app's tokens and header styles. */
+.site { min-height: 100vh; display: flex; flex-direction: column; }
+.site-top { position: sticky; top: 0; z-index: 10; }
+.site-top .wf { margin-left: auto; }
+.skip { position: absolute; left: -9999px; }
+.skip:focus { left: 16px; top: 8px; z-index: 20; padding: 8px 12px; background: var(--card); border: var(--bw) solid var(--ink); }
+.site-main { flex: 1; width: 100%; max-width: 1180px; margin: 0 auto; padding: 32px 20px 56px; box-sizing: border-box; display: flex; flex-direction: column; gap: 48px; }
+.site-hero { display: flex; flex-direction: column; gap: 18px; max-width: 720px; }
+.site-hero .proj-hero { border-bottom: 0; padding-bottom: 0; }
+.site-hero .proj-hero { --title: clamp(36px, 6vw, 52px); }
+.site-lead { margin: 0; font-size: clamp(17px, 2.2vw, 20px); line-height: 1.55; }
+.site-band { display: flex; flex-direction: column; gap: 14px; }
+.site-steps, .site-points { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.site-steps li, .site-points li { padding: 18px; display: flex; flex-direction: column; gap: 8px; }
+.site-steps p, .site-points p { margin: 0; line-height: 1.55; flex: 1; }
+.site-steps .n { width: 28px; height: 28px; display: grid; place-items: center; background: var(--ink); color: var(--paper); font-family: var(--mono); font-size: 13px; font-weight: 600; }
+/* Columns, not a grid, so the list reads down each column in order. */
+/* Intro, then features: side by side on wide screens, stacked otherwise. */
+.site-intro { display: flex; flex-direction: column; gap: 48px; }
+@media (min-width: 1000px) {
+  .site-intro { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); align-items: start; }
+  .site-intro .site-hero { max-width: none; }
+  .site-intro .site-features { columns: 1; }
+}
+.site-features { list-style: none; margin: 0; padding: 20px 24px 8px; columns: 2 340px; column-gap: 40px; }
+.site-features li { position: relative; padding-left: 22px; margin-bottom: 12px; line-height: 1.55; break-inside: avoid; }
+.site-features li::before { content: ''; position: absolute; left: 0; top: 0.5em; width: 10px; height: 10px; background: var(--accent); }
+.site-points h2 a { color: var(--ink); text-decoration: none; border-bottom: 2px solid var(--accent); }
+.site-learn .learn-toc { top: 72px; max-height: calc(100vh - 88px); }
+.site-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; padding: 18px 20px; border-top: var(--bw) solid var(--ink); background: var(--paper); font-size: 13px; color: var(--muted); }
+.site-foot span { display: inline-flex; align-items: center; gap: 8px; }
+.site-foot .logo { width: 14px; height: 14px; border-width: 1.5px; }
+.site-foot a { color: var(--ink); }
+@media (max-width: 640px) {
+  .site-main { padding: 20px 16px 40px; gap: 36px; }
+  .site-top { position: static; }
+  /* The article first, then the contents to move on with. */
+  .site-learn .learn-toc { position: static; max-width: none; max-height: none; order: 2; }
+}

@@ -5,14 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/prerender.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p worker",
     "cf:db": "wrangler d1 migrations apply insuliser --local",
     "cf:dev": "wrangler dev --port 8787",
     "dev:cloud": "vite --mode cloud",
-    "cf:build": "tsc --noEmit && tsc --noEmit -p worker && vite build --mode cloud",
+    "cf:build": "tsc --noEmit && tsc --noEmit -p worker && vite build --mode cloud && node scripts/prerender.mjs cloud",
     "cf:deploy": "npm run cf:build && wrangler d1 migrations apply insuliser --remote && wrangler deploy"
   },
   "dependencies": {

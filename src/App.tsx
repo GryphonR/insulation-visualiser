@@ -109,7 +109,7 @@ function Routes() {
       break;
     case 'scenarios': page = <ScenariosPage />; break;
     case 'compare': page = <CompareAB />; break;
-    case 'learn': page = <LearnPage section={arg} onOpenSimulator={() => go('plan')} />; break;
+    case 'learn': page = <LearnPage section={arg} />; break;
     default: page = <PlanPage />;
   }
   return <Shell route={route}>{page}</Shell>;

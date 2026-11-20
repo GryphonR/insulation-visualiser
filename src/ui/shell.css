@@ -114,10 +114,22 @@ a.btn-primary { color: var(--paper); }
 @media (max-width: 860px) { .projects { grid-template-columns: minmax(0, 1fr); } .projects.has-list .proj-list-card { order: -1; } }
 .proj-intro { display: flex; flex-direction: column; gap: 14px; }
 .proj-intro > p { margin: 0; }
-.proj-hero { display: grid; grid-template-columns: auto 1fr; column-gap: 14px; align-items: center; padding-bottom: 14px; border-bottom: var(--bw) solid var(--ink); }
-.proj-hero h1 { margin: 0; font-size: 30px; line-height: 1.1; letter-spacing: -0.01em; }
-.proj-hero .tagline { grid-column: 2; margin: 2px 0 0; font-family: var(--mono); font-size: 13px; color: var(--accent); letter-spacing: 0.04em; }
-.logo.big { grid-row: span 2; width: 44px; height: 44px; border-width: 3px; }
+/* Logo | title | stamp, with the tagline under the title. --title sets the size of the whole block.
+   The title's column is as wide as the word, and the tagline's letters spread across it, so it starts and ends with "Insuliser".
+   Its size is a fraction of the title's, small enough that it always fits inside the word. */
+.proj-hero { --title: 36px; display: grid; grid-template-columns: auto auto 1fr; column-gap: 14px; align-items: center; padding-bottom: 14px; border-bottom: var(--bw) solid var(--ink); }
+.proj-hero h1 { grid-column: 2; margin: 0; font-size: var(--title); line-height: 1.1; letter-spacing: -0.01em; }
+.proj-hero .tagline { grid-column: 2; display: flex; justify-content: space-between; margin: 0.08em 0 0; font-family: var(--mono); font-size: calc(var(--title) * 0.29); color: var(--accent); }
+.proj-hero > .beta { grid-column: 3; grid-row: 1; justify-self: start; margin: 0; font-size: calc(var(--title) * 0.32); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* The big logo is as tall as the title and tagline together, square, whatever size the title is set at.
+   text-box trims each line to its letters (cap height on top, baseline below), so the logo meets the ink, not the line spacing. */
+.logo.big { grid-row: span 2; align-self: stretch; width: auto; height: auto; aspect-ratio: 1; border-width: 3px; }
+.proj-hero h1 { text-box: trim-start cap alphabetic; }
+.proj-hero .tagline { text-box: trim-end cap alphabetic; }
+/* A rubber stamp beside the title while the app is in beta. Sized in em so it follows the title; it sits mid-line, so it never changes the title's height. */
+.beta { display: inline-block; margin-left: 0.25em; padding: 0.12em 0.4em; border: 2px solid var(--accent); color: var(--accent); font-family: var(--mono); font-size: 0.32em; font-weight: 600; line-height: 1; letter-spacing: 0.12em; text-transform: uppercase; vertical-align: middle; transform: rotate(-6deg); }
+.brand .beta { margin-left: -2px; font-size: 9px; border-width: 1.5px; }
 .proj-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .proj-steps li { display: flex; gap: 12px; align-items: flex-start; }
 .proj-steps li > span:last-child { display: flex; flex-direction: column; gap: 2px; }

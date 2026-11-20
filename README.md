@@ -6,10 +6,12 @@ Visualises how heat moves through a building's insulation build-up over a 24-hou
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173/insulation-visualiser/
+npm run dev      # site: http://localhost:5173/insulation-visualiser/  app: …/insulation-visualiser/app/
 npm test         # engine unit tests
-npm run build    # typecheck + production build
+npm run build    # typecheck + production build + prerendered site pages
 ```
+
+There are two pages. The public site (landing page and Learn) is `index.html` + `src/site/`, and the app is `app/index.html` + `src/main.tsx`. After `vite build`, `scripts/prerender.mjs` renders the landing page, every Learn section (the app's own `LearnPage`, linked to static URLs) and a 404 page to static HTML, so they load without JavaScript and search engines can read them. Set `VITE_SITE_URL` (e.g. in `.env.cloud`) to add canonical links and a `sitemap.xml`. Old links like `/#/plan` forward to `/app/#/plan`.
 
 Vite's `base` is set to `/insulation-visualiser/` (see `vite.config.ts`) so built asset URLs resolve correctly as a GitHub Pages project page; the dev server serves from under that same path, not the bare root.
 
@@ -21,7 +23,7 @@ Pushing to `main` builds and deploys to GitHub Pages via `.github/workflows/depl
 
 `npm run cf:build` builds with `--mode cloud` (served from `/`, sign-in on). A Worker (`worker/`) serves the app, runs sign-in with [Better Auth](https://better-auth.com) (email magic link, plus Google if it's configured), and stores each user's projects (minus traced plan images, which stay on the device), custom materials, library and favourites in D1. localStorage is still the working copy, and `src/engine/sync.ts` pushes and pulls in the background. When two devices edit the same project, both versions are kept.
 
-Local: copy `.dev.vars.example` to `.dev.vars`, run `npm run cf:db` once, then run `npm run cf:dev` and `npm run dev:cloud` together and open http://localhost:5173. Sign-in links print in the wrangler console.
+Local: copy `.dev.vars.example` to `.dev.vars`, run `npm run cf:db` once, then run `npm run cf:dev` and `npm run dev:cloud` together and open http://localhost:5173/app/. Sign-in links print in the wrangler console.
 
 First deploy:
 1. `npx wrangler d1 create insuliser`, then put the id it prints into `wrangler.jsonc`.

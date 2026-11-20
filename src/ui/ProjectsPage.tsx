@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { Wordmark } from './Wordmark';
+import { STEPS } from './steps';
+import { CLOUD } from '../engine/sync';
 import type { ReactNode } from 'react';
 import { DEMOS } from '../engine/house-demos';
 import { parseProjectFile, projectFileText, readStored } from '../engine/projects';
@@ -10,12 +13,6 @@ import { withPostcode } from '../engine/house-scenarios';
 
 const when = (t: number) => new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
-const STEPS: Array<[string, string, string]> = [
-  ['buildups', 'Build-ups', 'Pick the walls, roofs and floors the house is made of, from its age or the materials library.'],
-  ['plan', 'Model', 'Draw the rooms on the floor plan, or trace a drawing, and add windows and doors.'],
-  ['heating', 'Heating', 'Choose the heat source, size the emitters and route the pipework.'],
-  ['results', 'Results', 'Room-by-room heat loss, running costs, moisture checks and a report for the customer.'],
-];
 
 function Modal({ title, onClose, children, actions, wide }: { title: string; onClose: () => void; children: ReactNode; actions: ReactNode; wide?: boolean }) {
   useEffect(() => {
@@ -84,11 +81,7 @@ export function ProjectsPage() {
   return (
     <div className={projects.length ? 'projects has-list' : 'projects'}>
       <section className="card panel proj-intro">
-        <div className="proj-hero">
-          <span className="logo big" aria-hidden="true"><span /><span /><span /></span>
-          <h1>Insuliser</h1>
-          <p className="tagline">It's not all about U</p>
-        </div>
+        <Wordmark />
         <p>Model a house room by room: how its walls, roofs and floors lose heat and handle moisture, what heating it needs, and what an upgrade would save. Compare scenarios side by side, then hand the customer a report.</p>
         <div className="eyebrow">Getting started</div>
         <ol className="proj-steps">
@@ -102,7 +95,7 @@ export function ProjectsPage() {
 
       <section className="card panel proj-list-card">
         <div className="section-head">
-          <div><h2>Projects</h2><p className="muted small">Saved in this browser. Export one to keep a copy or move it to another.</p></div>
+          <div><h2>Projects</h2><p className="muted small">{CLOUD ? 'Saved in this browser, and in your account when you sign in. Export one to keep a file copy.' : 'Saved in this browser. Export one to keep a copy or move it to another.'}</p></div>
           <div className="chips">
             <button type="button" className="btn-secondary" onClick={() => fileRef.current?.click()}>Import…</button>
             <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = ''; }} />

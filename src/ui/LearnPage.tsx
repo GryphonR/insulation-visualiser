@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { go, href } from './route';
+import { createContext, useContext, type ReactNode } from 'react';
+import { href } from './route';
 import { defaultHouse } from '../engine/house-default';
 import type { FloorEdge } from '../engine/house';
 import { EdgeSketch } from './EdgeSketch';
@@ -102,9 +102,21 @@ function Eq({ children }: { children: ReactNode }) {
   return <div className="eq mono">{children}</div>;
 }
 
+/** Where Learn's links point: hash routes inside the app, or the static Learn pages and /app/ on the public site. */
+export interface LearnLinks { learn: (id: string) => string; app: (...parts: string[]) => string }
+const APP_LINKS: LearnLinks = { learn: (id) => (id === 'start' ? href('learn') : href('learn', id)), app: (...parts) => href(...parts) };
+const Ctx = createContext<{ L: LearnLinks; active: string }>({ L: APP_LINKS, active: 'start' });
+
+/** One Learn page: only the open one is rendered. */
+function Sec({ id, children }: { id: string; children: ReactNode }) {
+  return useContext(Ctx).active === id ? <section id={id} className="learn-section">{children}</section> : null;
+}
+
 /** A link to another page of the site, e.g. to="energy" or to="learn/mass". */
 function Go({ to, children }: { to: string; children: ReactNode }) {
-  return <a className="inline-link" href={href(...to.split('/'))}>{children}</a>;
+  const { L } = useContext(Ctx);
+  const [a, b] = to.split('/');
+  return <a className="inline-link" href={a === 'learn' ? L.learn(b ?? 'start') : L.app(...to.split('/'))}>{children}</a>;
 }
 
 function Callout({ title, children }: { title: string; children: ReactNode }) {
@@ -193,21 +205,14 @@ function PressureFigure() {
   );
 }
 
-export function LearnPage({ section, onOpenSimulator }: { section?: string; onOpenSimulator: () => void }) {
-  // Each section has its own URL (#/learn/<id>); an unknown or missing id shows the landing page.
+export { SECTIONS as LEARN_SECTIONS, TRACKS as LEARN_TRACKS };
+
+/** The Learn pages. `links` points them at the public site's static pages instead of the app's own routes. */
+export function LearnPage({ section, links = APP_LINKS }: { section?: string; links?: LearnLinks }) {
+  // Each section has its own URL; an unknown or missing id shows the landing page.
   const active = SECTIONS.some((x) => x.id === section) ? section! : 'start';
   const activeGroup = SECTIONS.find((x) => x.id === active)!.group;
-  const [open, setOpen] = useState<Set<string>>(() => new Set([activeGroup]));
-  const bodyRef = useRef<HTMLElement>(null);
-
-  // Sections are authored inline below; show only the active page.
-  useEffect(() => {
-    bodyRef.current?.querySelectorAll<HTMLElement>('.learn-section').forEach((el) => { el.hidden = el.id !== active; });
-    setOpen((o) => (o.has(activeGroup) ? o : new Set(o).add(activeGroup)));
-  }, [active, activeGroup]);
-
-  const jump = (id: string) => go('learn', id);
-  const toggle = (name: string) => setOpen((o) => { const n = new Set(o); if (!n.delete(name)) n.add(name); return n; });
+  const L = links;
 
   const groups = SECTIONS.slice(1).reduce<Array<{ name: string; track: string; items: Section[] }>>((acc, x) => {
     const last = acc[acc.length - 1];
@@ -222,40 +227,39 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
   const here = SECTIONS[idx];
 
   return (
+    <Ctx.Provider value={{ L, active }}>
     <div className="learn">
       <nav aria-label="Learn contents" className="learn-toc card">
-        <a href={href('learn')} className={`toc-link${active === 'start' ? ' active' : ''}`} aria-current={active === 'start' ? 'page' : undefined}>Start here</a>
+        <a href={L.learn('start')} className={`toc-link${active === 'start' ? ' active' : ''}`} aria-current={active === 'start' ? 'page' : undefined}>Start here</a>
         {groups.map((g, i) => {
-          const isOpen = open.has(g.name) || g.items.length === 1;
-          return (
-            <div key={g.name} className="learn-toc-group">
-              {groups[i - 1]?.track !== g.track && <div className="learn-toc-track">{g.track}</div>}
-              {g.items.length > 1 && <button type="button" className="toc-head" aria-expanded={isOpen} onClick={() => toggle(g.name)}>
-                <span className="toc-caret" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
-                {g.name}
-              </button>}
-              {isOpen && (
+          const list = (
                 <ul>
                   {g.items.map((x) => (
                     <li key={x.id}>
-                      <a href={href('learn', x.id)} className={`toc-link${x.id === active ? ' active' : ''}`} aria-current={x.id === active ? 'page' : undefined}>{x.title}</a>
+                      <a href={L.learn(x.id)} className={`toc-link${x.id === active ? ' active' : ''}`} aria-current={x.id === active ? 'page' : undefined}>{x.title}</a>
                     </li>
                   ))}
                 </ul>
-              )}
+          );
+          return (
+            <div key={g.name} className="learn-toc-group">
+              {groups[i - 1]?.track !== g.track && <div className="learn-toc-track">{g.track}</div>}
+              {g.items.length > 1
+                ? <details open={g.name === activeGroup || undefined}><summary className="toc-head">{g.name}</summary>{list}</details>
+                : list}
             </div>
           );
         })}
       </nav>
 
-      <article className="learn-body card" ref={bodyRef}>
+      <article className="learn-body card">
         {here.track !== here.group && <div className="eyebrow">{here.track} · {here.group}</div>}
 
         {/* ------------------------------------------------------------ START HERE */}
-        <section id="start" className="learn-section">
+        <Sec id="start">
           <h2>Learn</h2>
           <p>
-            These pages explain how heat and moisture move through walls, how to use each tool on this site, and how the models behind the results work. Pick a track, or start with the idea most guides skip: <a className="inline-link" href={href('learn', 'planning')}>why the U-value is not the whole story</a>.
+            These pages explain how heat and moisture move through walls, how to use each tool on this site, and how the models behind the results work. Pick a track, or start with the idea most guides skip: <a className="inline-link" href={L.learn('planning')}>why the U-value is not the whole story</a>.
           </p>
           <div className="learn-tracks">
             {TRACKS.map((t) => {
@@ -263,21 +267,21 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
               const gs = [...new Set(items.map((x) => x.group))];
               return (
                 <div key={t.name} className="learn-track">
-                  <h3><a className="inline-link" href={href('learn', items[0].id)}>{t.name}</a></h3>
+                  <h3><a className="inline-link" href={L.learn(items[0].id)}>{t.name}</a></h3>
                   <p className="small muted">{t.blurb}</p>
                   {gs.length > 1 && (
                     <ul className="small">
-                      {gs.map((g) => <li key={g}><a className="inline-link" href={href('learn', items.find((x) => x.group === g)!.id)}>{g}</a></li>)}
+                      {gs.map((g) => <li key={g}><a className="inline-link" href={L.learn(items.find((x) => x.group === g)!.id)}>{g}</a></li>)}
                     </ul>
                   )}
                 </div>
               );
             })}
           </div>
-          <p><button type="button" className="btn-primary" onClick={onOpenSimulator}>Open the planner</button></p>
-        </section>
+          <p><a className="btn-primary" href={L.app('plan')}>Open the planner</a></p>
+        </Sec>
 
-                <section id="planning" className="learn-section">
+                <Sec id="planning">
           <h2>Why the U-value is not the whole story</h2>
           <p>
             The usual starting point is the <b>U-value</b>: the heat that leaks through each square metre of wall for every degree of difference between inside and outside. A lower U-value means less heat lost in winter, so lower heating bills. It is the right first number to look at, and it is what building regulations ask for.
@@ -291,12 +295,12 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
             <li><b>Room temperature, if it can't:</b> often the heating doesn't follow these swings at all. Many systems run to a schedule or a steady flow temperature, and some respond slowly. Wet underfloor heating takes hours to warm up or cool down. Heat pumps work best at a steady, modest output, and pushing them to chase swings means higher flow temperatures and lower efficiency. With systems like these, nothing corrects the swing, so the room temperature rises and falls with it. The cost then is mostly comfort, not the bill: rooms that overheat on sunny afternoons and cool in the evening.</li>
           </ul>
           <p>
-            So when you plan, look at the U-value for how much heat the wall keeps in, then at the <b>decrement factor</b>, <b>decrement delay</b> and <b>inner face temperatures</b> for how steady it keeps the room. Light, well-insulated walls can have an excellent U-value and a high decrement factor. Because their U-value is low, the swing that actually reaches the room is still small, but it arrives quickly. Adding thermal mass on the room side damps and delays it further. The simulator lets you test that for yourself. Each idea is explained in <button type="button" className="inline-link" onClick={() => jump('u-value')}>The U-value</button>, <button type="button" className="inline-link" onClick={() => jump('dynamic')}>Decrement factor and delay</button> and <button type="button" className="inline-link" onClick={() => jump('outputs')}>Reading the results</button>.
+            So when you plan, look at the U-value for how much heat the wall keeps in, then at the <b>decrement factor</b>, <b>decrement delay</b> and <b>inner face temperatures</b> for how steady it keeps the room. Light, well-insulated walls can have an excellent U-value and a high decrement factor. Because their U-value is low, the swing that actually reaches the room is still small, but it arrives quickly. Adding thermal mass on the room side damps and delays it further. The simulator lets you test that for yourself. Each idea is explained in <a className="inline-link" href={L.learn('u-value')}>The U-value</a>, <a className="inline-link" href={L.learn('dynamic')}>Decrement factor and delay</a> and <a className="inline-link" href={L.learn('outputs')}>Reading the results</a>.
           </p>
-        </section>
+        </Sec>
 
         {/* ------------------------------------------------------------ HOUSE PLANNER */}
-        <section id="plan-overview" className="learn-section">
+        <Sec id="plan-overview">
           <h2>The planner at a glance</h2>
           <p>
             The planner works out how much heat a whole house loses, room by room, what heating it needs, and what that costs to run. You describe the house once, then try changes on copies of it and compare.
@@ -320,9 +324,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
               Projects are saved in this browser only, as you go. Use <Go to="report">Report &amp; export</Go> to save a project file, to move it to another computer or keep a backup. Undo and redo are at the top right.
             </p>
           </Callout>
-        </section>
+        </Sec>
 
-        <section id="plan-start" className="learn-section">
+        <Sec id="plan-start">
           <h2>Starting a project</h2>
           <p>A new project asks for four things:</p>
           <ul>
@@ -337,9 +341,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Your projects are listed under <Go to="projects">Project</Go> at the top left, with when each was last saved.
           </p>
-        </section>
+        </Sec>
 
-        <section id="plan-buildups" className="learn-section">
+        <Sec id="plan-buildups">
           <h2>1. Build-ups</h2>
           <p>
             A build-up is one kind of wall, floor, roof, window or door: its layers from outside to inside, and so its U-value. The <Go to="buildups">Project</Go> page lists the build-ups this house uses. Only these can be picked when you set a wall or floor on the plan.
@@ -354,9 +358,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Each build-up shows its U-value, decrement factor and delay. <b>Simulate</b> opens it in the wall simulator to watch a day of heat flow through it. See <Go to="learn/what">What the simulator does</Go>.
           </p>
-        </section>
+        </Sec>
 
-        <section id="plan-model" className="learn-section">
+        <Sec id="plan-model">
           <h2>2. Drawing the house</h2>
           <h3>The floor plan</h3>
           <p>
@@ -381,9 +385,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
             <li><Go to="spaces">Unheated spaces</Go>: garages, porches and lofts. Each settles at a temperature between the heated rooms and outside, which sets how much heat the rooms lose into it.</li>
             <li><Go to="checks">Checks &amp; history</Go>: problems found in the model, such as rooms that overlap, and how the storeys stack.</li>
           </ul>
-        </section>
+        </Sec>
 
-        <section id="plan-heating" className="learn-section">
+        <Sec id="plan-heating">
           <h2>3. Heating</h2>
           <p>
             Each heated room needs a radiator or underfloor loop that gives out at least its heat loss, at the water temperature the system runs at. The lower that temperature, the bigger the heater each room needs, and the more efficient a heat pump or condensing boiler runs.
@@ -400,22 +404,22 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
               <Go to="pipes">Pipework</Go>: the pipes from the heat source to each heater. It shows the water flow in each run, whether the pump can push it round, and whether a heat pump gets the minimum flow it needs. <b>Lay out typical pipework</b> gives a starting point.
             </li>
             <li>
-              <Go to="schematic">System diagram</Go>: the pipework drawn as a flow-and-return schematic, with the valves and the modes that set them (heating, hot water, each zone, cooling). See <button type="button" className="inline-link" onClick={() => jump('plan-controls')}>3b. Valves, modes and cooling</button>.
+              <Go to="schematic">System diagram</Go>: the pipework drawn as a flow-and-return schematic, with the valves and the modes that set them (heating, hot water, each zone, cooling). See <a className="inline-link" href={L.learn('plan-controls')}>3b. Valves, modes and cooling</a>.
             </li>
           </ul>
           <p>
             The heat source itself (boiler or heat pump), its output and its efficiency are chosen at the top of <Go to="heating">System &amp; flow</Go>. Choosing one sets its typical max flow temperature and flow − return drop (80 °C and 11 K for an old boiler, 70 °C and 20 K for a condensing boiler, 45 °C and 5 K for a heat pump), so the radiators are checked at the flow that source really runs at. Your energy prices are under Results, on <Go to="energy">Energy &amp; cost</Go>.
           </p>
-        </section>
+        </Sec>
 
-        <section id="plan-controls" className="learn-section">
+        <Sec id="plan-controls">
           <h2>3b. Valves, modes and cooling</h2>
           <p>
             The pipework says where the water <em>can</em> go. The valves say where it <em>does</em> go at any moment. Both are set on the <Go to="schematic">System diagram</Go>, which draws every run as a flow pipe (on top) and a return pipe (below), from the heat source on the left to the emitters on the right.
           </p>
           <h3>Pick a control plan</h3>
           <p>
-            Under <b>Control plan</b>, choose a plan and press <b>Add</b>. The planner finds where each valve has to go on your pipework, puts it there, and fills in the plan&apos;s modes. The plans are the usual UK layouts: Y plan, S plan, S plan plus (a valve per zone), W plan, Heat pump (a diverter, zone valves and radiator isolation for cooling) and Combi. They are explained in <button type="button" className="inline-link" onClick={() => jump('controls')}>Control plans, zones and cooling</button>.
+            Under <b>Control plan</b>, choose a plan and press <b>Add</b>. The planner finds where each valve has to go on your pipework, puts it there, and fills in the plan&apos;s modes. The plans are the usual UK layouts: Y plan, S plan, S plan plus (a valve per zone), W plan, Heat pump (a diverter, zone valves and radiator isolation for cooling) and Combi. They are explained in <a className="inline-link" href={L.learn('controls')}>Control plans, zones and cooling</a>.
           </p>
           <p>
             A valve shuts everything beyond it. Where several runs leave the same tee and one valve has to shut them all, the plan puts in a short <b>header</b> for the valve to sit on, shown on the diagram with its name. Where the runs that need shutting leave a shared pipe at different tees, the same valve is drawn on each of them. On site that means one actuator per branch wired together, or re-piping so the branches leave from one place. Remove the plan and its headers go too.
@@ -441,9 +445,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             A heat pump can run in reverse. Turn it on under <Go to="heating">System &amp; flow</Go> → <b>Cooling</b>, with its cooling output and EER (both at 35 °C outside and 18 °C water), the temperature to cool rooms to, and the chilled flow and its rise. Fan coils (an emitter kind on <Go to="emitters">Emitters</Go>, or on the plan from a radiator&apos;s side panel) and underfloor loops can cool. Radiators and towel rails cannot. In the <Go to="year/summer">Summer peak day</Go> and <Go to="year/year">Typical year</Go> runs, rooms with a cooling emitter are held at the cooling setpoint during their occupied hours. While the cooling is holding a room there, its windows stay shut. Outside those hours, or when the cooling cannot keep up, the windows are opened as in any other room. The Passivhaus-type demo shows this: fan coils in the living room and the two big bedrooms, on 7/12 °C chilled water. It is zoned as fan coils and radiators, so in cooling the radiator zone valve is shut. The cooling&apos;s electricity and cost are shown on their own, beside the heating figures on <Go to="energy">Energy &amp; cost</Go> and in the report.
           </p>
-        </section>
+        </Sec>
 
-        <section id="plan-results" className="learn-section">
+        <Sec id="plan-results">
           <h2>4. Results</h2>
           <h3>Design day</h3>
           <p>
@@ -477,9 +481,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             <Go to="moisture">Moisture &amp; mould</Go> shows each room's mould risk from its humidity and coldest surface, with what to do about it, and checks for moisture building up inside each build-up. See <Go to="learn/moist-condensation">Condensation</Go>. <Go to="report">Report &amp; export</Go> prints a heat loss report, exports a room table as CSV, and saves or opens a project file.
           </p>
-        </section>
+        </Sec>
 
-        <section id="plan-scenarios" className="learn-section">
+        <Sec id="plan-scenarios">
           <h2>Scenarios and comparing</h2>
           <p>
             A scenario is one version of the house. The first is the house as it is. Make a new one from it to try a change, such as loft insulation, new windows or a heat pump. Each new scenario starts as a copy of the one it came from. Pick which one you're editing from <b>Scenario</b> at the top, then edit it on any page.
@@ -493,12 +497,12 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             The year runs can also show another scenario alongside, as outlined bars, using <b>Compare with</b>.
           </p>
-        </section>
+        </Sec>
 
-        <section id="what" className="learn-section">
+        <Sec id="what">
           <h2>What the simulator does</h2>
           <p>
-            Most advice boils a wall down to its <a className="inline-link" href={href('learn', 'u-value')}>U-value</a>, which describes a wall on a day when nothing changes. Real days do change. The sun comes up, the air warms and cools, and the heat takes time to travel through the materials.
+            Most advice boils a wall down to its <a className="inline-link" href={L.learn('u-value')}>U-value</a>, which describes a wall on a day when nothing changes. Real days do change. The sun comes up, the air warms and cools, and the heat takes time to travel through the materials.
           </p>
           <p>
             This simulator takes a wall or roof, made of layers you choose, and plays out a whole 24-hour day on it. You can watch the heat move through each layer over the day, and see how heavy materials such as brick or concrete soak up heat and give it back later, while light materials such as timber and mineral wool respond quickly.
@@ -514,13 +518,13 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           </ul>
           <Callout title="A teaching tool, not a compliance tool">
             <p>
-              The weather is a smooth, idealised day built from typical UK averages, and the wall is modelled in one dimension. That is enough to show <em>why</em> things behave as they do and to compare build-ups against each other. It is not a substitute for a professional assessment, a SAP or dynamic thermal model, or any regulatory calculation. See <button type="button" className="inline-link" onClick={() => jump('limits')}>What it leaves out</button>.
+              The weather is a smooth, idealised day built from typical UK averages, and the wall is modelled in one dimension. That is enough to show <em>why</em> things behave as they do and to compare build-ups against each other. It is not a substitute for a professional assessment, a SAP or dynamic thermal model, or any regulatory calculation. See <a className="inline-link" href={L.learn('limits')}>What it leaves out</a>.
             </p>
           </Callout>
-          <p><button type="button" className="btn-primary" onClick={onOpenSimulator}>Open the simulator</button></p>
-        </section>
+          <p><a className="btn-primary" href={L.app('plan')}>Open the simulator</a></p>
+        </Sec>
 
-        <section id="how-to-use" className="learn-section">
+        <Sec id="how-to-use">
           <h2>Using it in four steps</h2>
           <ol className="learn-steps">
             <li>
@@ -536,10 +540,10 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
               <b>Compare.</b> The tiles and charts summarise the day. Use <em>Compare build-ups</em> to put several walls side by side under the same weather.
             </li>
           </ol>
-        </section>
+        </Sec>
 
         {/* ------------------------------------------------------------ IDEAS */}
-        <section id="heat" className="learn-section">
+        <Sec id="heat">
           <h2>Heat and temperature</h2>
           <p>
             <b>Heat</b> is energy on the move. <b>Temperature</b> is how hot something is. The two are linked by one simple rule: heat always flows from warmer places to colder places, and the bigger the temperature difference, the faster it flows.
@@ -550,9 +554,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Heat flow through a wall is measured here in <b>watts per square metre (W/m²)</b>: how much power crosses each square metre of wall. Add up the power over time and you get energy, shown here as <b>watt-hours per square metre (Wh/m²)</b>. A positive heat flow in this tool means heat heading into the room; a negative one means heat leaving it.
           </p>
-        </section>
+        </Sec>
 
-        <section id="conduction" className="learn-section">
+        <Sec id="conduction">
           <h2>Conduction and R-values</h2>
           <p>
             Inside a solid wall, heat travels mainly by <b>conduction</b>: vibrating atoms pass energy to their neighbours. Some materials do this easily and some do not. A material's <b>thermal conductivity</b>, written <em>k</em> or λ and measured in W/mK, says how easily. Copper is very high, brick is moderate, and foam insulation is very low, because it traps tiny pockets of still gas that conduct poorly.
@@ -567,9 +571,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Resistances in layers add up, just as electrical resistors in series do. Heat has to push through every layer in turn. The surfaces matter too. A thin skin of slow-moving air clings to each face of a wall and resists heat flow a little. The tool uses a standard <b>surface resistance</b> of 0.04 m²K/W outside (where wind sweeps the air film away) and 0.13 m²K/W inside, or 0.10 for a roof, where warm air rises more readily.
           </p>
-        </section>
+        </Sec>
 
-        <section id="u-value" className="learn-section">
+        <Sec id="u-value">
           <h2>The U-value</h2>
           <p>Add up every resistance between inside air and outside air, including the two surface films, and invert the total. That is the U-value:</p>
           <Eq>U = 1 ÷ (R<sub>outside film</sub> + R<sub>layer 1</sub> + R<sub>layer 2</sub> + … + R<sub>inside film</sub>)    (W/m²K)</Eq>
@@ -583,9 +587,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             The U-value assumes <b>steady state</b>: that the temperatures on both sides have been constant for long enough that nothing inside the wall is still warming up or cooling down. The rest of this page, and most of this tool, is about what happens when they are not.
           </p>
-        </section>
+        </Sec>
 
-        <section id="mass" className="learn-section">
+        <Sec id="mass">
           <h2>Thermal mass</h2>
           <p>
             Every material stores heat. To warm a kilogram of brick by one degree takes energy; cooling it by one degree gives that energy back. How much a material stores is set by its <b>density</b> and its <b>specific heat capacity</b>, how much energy one kilogram needs per degree. Multiply the two by the volume and you have the layer's <b>heat capacity</b>, in joules per kelvin.
@@ -597,9 +601,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Where the mass sits matters as much as how much there is. Mass <b>on the room side</b> of the insulation can exchange heat with the room, so it evens out room temperature. Mass on the outside of the insulation barely meets the room at all. The tool reports <b>inner thermal mass</b>: how much heat the wall soaks up from the room and gives back over a daily cycle.
           </p>
-        </section>
+        </Sec>
 
-        <section id="dynamic" className="learn-section">
+        <Sec id="dynamic">
           <h2>Decrement factor and delay</h2>
           <p>
             When the outside temperature rises and falls over a day, a wall with thermal mass does two things to that rhythm. It makes the swing <b>smaller</b> and it makes it <b>arrive later</b>. Engineers give these two effects names:
@@ -622,9 +626,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             The decrement factor is a share of the swing the wall <em>would</em> pass with no mass, which is U × the outside swing. So the swing that actually reaches the room is decrement factor × U × the outside swing. A lightweight, well-insulated wall can have a high decrement factor and still pass only a small swing, because its U-value is small. Compare the heat-flow chart, not the factor alone, when U-values differ a lot.
           </p>
-        </section>
+        </Sec>
 
-        <section id="sun" className="learn-section">
+        <Sec id="sun">
           <h2>Sun, and sol-air temperature</h2>
           <p>
             The air temperature alone does not describe what a wall experiences outside. A dark wall in sunshine can be far hotter than the air next to it, and in winter it gains useful warmth. A clear night sky, meanwhile, can pull heat off a flat roof.
@@ -639,9 +643,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             That is why the same wall behaves so differently facing south or north, in a heatwave or under cloud, painted white or painted black.
           </p>
-        </section>
+        </Sec>
 
-        <section id="inner-face" className="learn-section">
+        <Sec id="inner-face">
           <h2>The inner face and comfort</h2>
           <p>
             The <b>inner face</b> is the surface of the wall inside the room. Its temperature matters for three reasons.
@@ -651,15 +655,15 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
               <b>Comfort.</b> You feel the temperature of surfaces as well as of the air. A cold wall draws heat from your body by radiation and creates cold draughts at its surface. A rough guide is that the temperature you feel is about the average of the air and surrounding surfaces. A wall several degrees colder than the air makes the room feel colder than the thermostat says.
             </li>
             <li>
-              <b>Condensation and mould.</b> Warm indoor air holds moisture. When it touches a surface colder than its dew point, the moisture condenses, and persistently damp surfaces grow mould. A better-insulated wall has a warmer inner face, and that is a big part of why insulation reduces mould risk. The heat simulation does not model moisture itself, but the inner face temperature is the thing to watch, and the Moisture tab tests it directly: see <button type="button" className="inline-link" onClick={() => jump('moist-condensation')}>Condensation: surface and interstitial</button>.
+              <b>Condensation and mould.</b> Warm indoor air holds moisture. When it touches a surface colder than its dew point, the moisture condenses, and persistently damp surfaces grow mould. A better-insulated wall has a warmer inner face, and that is a big part of why insulation reduces mould risk. The heat simulation does not model moisture itself, but the inner face temperature is the thing to watch, and the Moisture tab tests it directly: see <a className="inline-link" href={L.learn('moist-condensation')}>Condensation: surface and interstitial</a>.
             </li>
             <li>
               <b>Heat flow.</b> The gap between the room air and the inner face is directly proportional to how much heat flows through the inside film. When the room air is held steady, the inner face temperature and the heat flow are two views of the same signal.
             </li>
           </ul>
-        </section>
+        </Sec>
 
-        <section id="rooms" className="learn-section">
+        <Sec id="rooms">
           <h2>Heating modes</h2>
           <p>The room on the inside can behave in three ways in this tool.</p>
           <dl className="learn-dl">
@@ -676,9 +680,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
               No heating or cooling. The room air is free to rise and fall, driven by the wall, any windows, ventilation, and the heat from people and appliances. A heavy wall can stop the room from overheating in a heatwave, or fail to, depending on ventilation and glazing. This is the most realistic of the three for showing passive behaviour such as summer overheating.
             </dd>
           </dl>
-        </section>
+        </Sec>
 
-        <section id="outputs" className="learn-section">
+        <Sec id="outputs">
           <h2>Reading the results</h2>
           <table className="learn-table">
             <thead>
@@ -712,10 +716,10 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Swings can also raise the energy used, not only the peak power. If the wall gives heat in the afternoon and loses it overnight, the net can be close to zero while the room still needs cooling at one time and heating at another. Heating and cooling can't cancel each other out, so you pay for both. Systems also tend to run less efficiently when working hard or cycling on and off. On the other hand, if the swings are small enough for the room to ride through without the system switching on, they cost nothing. This is why a low decrement factor and a suitable decrement delay are worth looking at alongside the U-value.
           </p>
-        </section>
+        </Sec>
 
         {/* ------------------------------------------------------------ UNDER THE HOOD */}
-        <section id="sim-overview" className="learn-section">
+        <Sec id="sim-overview">
           <h2>The simulation at a glance</h2>
           <p>
             Everything is calculated in your browser. There is no server and no stored weather file. In outline:
@@ -728,9 +732,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
             <li>Repeat the same day several times until the pattern settles down, then record the last one.</li>
             <li>Derive the summary numbers (U-value, decrement factor, decrement delay, and so on) from the recorded day.</li>
           </ol>
-        </section>
+        </Sec>
 
-        <section id="sim-weather" className="learn-section">
+        <Sec id="sim-weather">
           <h2>1. Building the day</h2>
           <p>
             The outdoor air temperature is a smooth wave with one peak and one trough each day. It peaks at 15:00 and is coolest 12 hours earlier, at 03:00:
@@ -746,9 +750,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             The monthly figures are typical long-term averages and the offsets are approximate. This is a synthetic design day, not recorded weather. Real days have clouds drifting across, changing winds and fronts moving through, none of which appear here.
           </p>
-        </section>
+        </Sec>
 
-        <section id="sim-solar" className="learn-section">
+        <Sec id="sim-solar">
           <h2>2. Sun on the surface</h2>
           <p>For each moment of the day, the tool works out how much sunshine lands on a square metre of the chosen surface. It does this in four stages.</p>
           <ol className="learn-steps">
@@ -768,9 +772,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Together these give a total irradiance in W/m² every two minutes, which is the figure in the Sunshine chart and in the "Sun on surface" readout. Because it comes from clear-sky geometry scaled by a clearness factor, the curve is always smooth. Real cloud makes it jagged.
           </p>
-        </section>
+        </Sec>
 
-        <section id="sim-solair" className="learn-section">
+        <Sec id="sim-solair">
           <h2>3. Sol-air temperature</h2>
           <p>The outside driving temperature is then:</p>
           <Eq>T<sub>sol-air</sub> = T<sub>air</sub> + α × I × R<sub>se</sub>    (walls)</Eq>
@@ -780,9 +784,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             From here on, the outside of the wall is treated as if it sat in air at exactly the sol-air temperature, connected to the wall's outer surface through the outside film resistance.
           </p>
-        </section>
+        </Sec>
 
-        <section id="sim-slices" className="learn-section">
+        <Sec id="sim-slices">
           <h2>4. Slicing the wall</h2>
           <p>
             Each layer is divided into thin slices (<b>cells</b>): thinner for masonry such as brick and concrete, which stores most of the heat, and thicker for light insulation, which stores little. A layer with conductivity above 0.4 W/mK gets a slice about every 15 mm, and anything else about every 40 mm, with a minimum of 2 and a maximum of 14 slices per layer. Dense, low-conductivity materials such as wood fibre board and hempcrete are the exception: heat soaks into them only a few centimetres over a day, so 40 mm slices are coarse for them, and the tool slightly overstates their damping (its decrement factor comes out about 0.01–0.015 too low). Each slice is described by two numbers:
@@ -798,9 +802,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             The first slice connects to the outside through the outside film (R<sub>se</sub>), and the last to the room through the inside film (R<sub>si</sub>). Air layers hold almost no heat and are given a fixed resistance whatever their width: 0.18 m²K/W for a plain cavity, 0.66 or 0.72 for one with one or two foil faces. Multifoils also use their declared fixed resistance. A <b>ventilated gap</b>, such as a tile batten void, also exchanges heat directly with the outdoor air at a fixed 5 W/m²K, so the layers outside it count for less. Each slice is assumed to be at a single temperature, and the heat flows between neighbours are one-dimensional: straight through the thickness of the wall.
           </p>
-        </section>
+        </Sec>
 
-        <section id="sim-balance" className="learn-section">
+        <Sec id="sim-balance">
           <h2>5. Heat balance in each slice</h2>
           <p>
             For every slice, the rule is conservation of energy: <b>the rate at which its stored heat changes equals the heat flowing in minus the heat flowing out.</b> A slice's temperature rises when more heat arrives from one side than leaves on the other:
@@ -811,9 +815,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             For the outermost slice, the outside neighbour is the sol-air temperature. For the innermost, it is the room air. This is the discrete form of the one-dimensional heat equation. Because it is written for every slice at once, it makes a set of linked equations, one per slice.
           </p>
-        </section>
+        </Sec>
 
-        <section id="sim-stepping" className="learn-section">
+        <Sec id="sim-stepping">
           <h2>6. Stepping through time</h2>
           <p>
             The day is cut into 720 steps of two minutes. At each step the tool must find all the new slice temperatures from the old ones. It uses the <b>implicit (backward Euler)</b> method, where the heat flows are evaluated using the <em>new</em> temperatures, so the equation for each slice becomes:
@@ -829,9 +833,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             That settled cycle is what you see. A real wall's temperatures also depend on what happened over previous days and weeks. This tool shows the repeating pattern you would get if every day were the same.
           </p>
-        </section>
+        </Sec>
 
-        <section id="sim-room" className="learn-section">
+        <Sec id="sim-room">
           <h2>7. The room</h2>
           <h3>Fixed and schedule modes</h3>
           <p>
@@ -863,9 +867,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             In each time step, the wall equations and the room equation are solved together. This is possible because the wall's response to the room temperature is a fixed relationship that can be worked out once. As in schedule mode, the decrement factor and decrement delay shown are measured separately, in a second run with the room held steady, since they describe the wall itself, not the room.
           </p>
-        </section>
+        </Sec>
 
-        <section id="sim-metrics" className="learn-section">
+        <Sec id="sim-metrics">
           <h2>8. Working out the results</h2>
           <h3>Surface temperatures and heat flow</h3>
           <p>
@@ -901,15 +905,15 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             The colour scale is symmetrical about the average room temperature, wide enough to hold the hottest and coldest slice temperatures of the day (and never less than ±2 K). The arrows are the heat flow across each cell boundary, scaled against the largest flow found anywhere in the wall over the day.
           </p>
-        </section>
+        </Sec>
 
-        <section id="limits" className="learn-section">
+        <Sec id="limits">
           <h2>What it leaves out</h2>
           <p>Every model is a simplification. These are the main ones here, so you know how far to trust the numbers.</p>
           <ul>
             <li><b>Synthetic weather.</b> A smooth idealised day from typical monthly averages, repeated until it settles. No clouds passing, no wind, no multi-day cold spells or heatwaves building up. Temperature and sunshine are set independently by the weather type rather than linked physically.</li>
             <li><b>One dimension.</b> Heat is assumed to flow straight through a uniform, infinite wall. Real walls have timber studs, mortar joints, wall ties, lintels, window reveals and corners. These <em>thermal bridges</em> let heat bypass the insulation and can raise real heat loss noticeably.</li>
-            <li><b>No moisture in the heat simulation.</b> Damp materials conduct heat better and store more of it, and evaporation and condensation absorb or release heat. None of that is modelled here, and the Moisture tab does not feed back into the heat results either. Vapour movement and condensation are handled separately, with their own limits: see <button type="button" className="inline-link" onClick={() => jump('mlimits')}>What the moisture model leaves out</button>.</li>
+            <li><b>No moisture in the heat simulation.</b> Damp materials conduct heat better and store more of it, and evaporation and condensation absorb or release heat. None of that is modelled here, and the Moisture tab does not feed back into the heat results either. Vapour movement and condensation are handled separately, with their own limits: see <a className="inline-link" href={L.learn('mlimits')}>What the moisture model leaves out</a>.</li>
             <li><b>Little air movement in the wall.</b> Sealed cavities act as a fixed resistance. A ventilated gap is linked to outdoor air at one fixed rate, whatever the wind. Convection within cavities and air leakage through gaps are not modelled.</li>
             <li><b>Fixed surface films.</b> The outside film is the same whatever the wind speed. The inside film is fixed too, rather than varying with temperature difference, and radiation between room surfaces is not tracked separately from convection.</li>
             <li><b>Constant material properties.</b> Conductivity, density and heat capacity do not vary with temperature or age.</li>
@@ -922,10 +926,10 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
               Use it for <b>comparisons</b> (this wall against that wall under the same conditions) and for building intuition about <em>why</em> mass, insulation and orientation matter. Treat the absolute temperatures and energy totals as illustrative.
             </p>
           </Callout>
-        </section>
+        </Sec>
 
         {/* ------------------------------------------------------------ MOISTURE: IDEAS */}
-        <section id="moist-what" className="learn-section">
+        <Sec id="moist-what">
           <h2>What the moisture tab does</h2>
           <p>
             The heat simulation asks how warm the wall gets. The <b>Moisture over a year</b> tab asks a different question: <em>can water build up inside this wall?</em> Water in a wall rots timber, damages brick and stone when it freezes, ruins insulation and grows mould, and many problems with insulating old buildings come from getting this wrong.
@@ -941,13 +945,13 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           </ul>
           <Callout title="A screening tool, not a full hygrothermal study">
             <p>
-              It follows both vapour and liquid water, with each material's own ability to wick and store moisture, so a lime render and a cement render behave differently. But the weather is a typical year built from monthly averages, the material data are typical values rather than measured for a product, and cracks and air leaks are not modelled. Use it to compare build-ups and to spot ones worth worrying about. See <button type="button" className="inline-link" onClick={() => jump('mlimits')}>What the moisture model leaves out</button>.
+              It follows both vapour and liquid water, with each material's own ability to wick and store moisture, so a lime render and a cement render behave differently. But the weather is a typical year built from monthly averages, the material data are typical values rather than measured for a product, and cracks and air leaks are not modelled. Use it to compare build-ups and to spot ones worth worrying about. See <a className="inline-link" href={L.learn('mlimits')}>What the moisture model leaves out</a>.
             </p>
           </Callout>
-        </section>
+        </Sec>
 
         {/* ------------------------------------------------------------ FLOOR EDGES (concept) */}
-        <section id="floor-edge" className="learn-section">
+        <Sec id="floor-edge">
           <h2>Floor edges and junctions</h2>
           <p>
             A floor on the ground doesn't lose heat evenly. Heat leaving the middle of the floor has to travel down and out
@@ -1001,9 +1005,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Set all of this on the <Go to="floor">Floors</Go> page. <Go to="learn/junction-model">How the junction Ψ is worked out</Go> explains the calculation.
           </p>
-        </section>
+        </Sec>
 
-        <section id="controls" className="learn-section">
+        <Sec id="controls">
           <h2>Control plans, zones and cooling</h2>
           <p>
             A wet heating system has one heat source and many places the water could go: radiators or underfloor loops in each room, and the coil in a hot water cylinder. Motorised valves, opened and shut by room and cylinder thermostats through a wiring centre, decide which of those get water. A handful of standard layouts cover most UK homes.
@@ -1036,9 +1040,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Cooling efficiency is the <b>EER</b> (energy efficiency ratio): heat taken out per unit of electricity. It is rated at 35 °C outside and 18 °C water, and gets better as it gets cooler outside, since the heat pump has less far to lift the heat. The planner takes about 2.5% better for each degree cooler, between half and 1.6 times the rated EER. In the runs, a heat pump that is heating in an hour does not also cool in that hour.
           </p>
-        </section>
+        </Sec>
 
-        <section id="moist-vapour" className="learn-section">
+        <Sec id="moist-vapour">
           <h2>Vapour, humidity and vapour pressure</h2>
           <p>
             Air always carries some water as an invisible gas, <b>water vapour</b>. There are two ways to describe how much:
@@ -1058,11 +1062,11 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
             <li>Inside: 20 °C at 50% RH is about <b>1170 Pa</b>, and the household keeps adding more (cooking, breathing, washing).</li>
           </ul>
           <p>
-            The room has roughly half as much vapour again as the air outside, so vapour drifts out through the wall. In summer the difference is small. It only reverses when something raises the vapour pressure on the outside, for example sun shining on a rain-soaked wall. See <button type="button" className="inline-link" onClick={() => jump('moist-rain')}>Rain and ground moisture</button>.
+            The room has roughly half as much vapour again as the air outside, so vapour drifts out through the wall. In summer the difference is small. It only reverses when something raises the vapour pressure on the outside, for example sun shining on a rain-soaked wall. See <a className="inline-link" href={L.learn('moist-rain')}>Rain and ground moisture</a>.
           </p>
-        </section>
+        </Sec>
 
-        <section id="moist-mu" className="learn-section">
+        <Sec id="moist-mu">
           <h2>Vapour resistance: µ and sd</h2>
           <p>
             Materials resist the passage of vapour much as they resist heat. Each material has a <b>vapour resistance factor, µ</b> (pronounced "mu"), which says how many times harder the vapour finds it to get through the material than through still air of the same thickness. Still air is µ = 1. Typical values:
@@ -1090,9 +1094,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Layers with no µ in the tool's data are treated as fully open (µ = 1) and flagged on the page.
           </p>
-        </section>
+        </Sec>
 
-        <section id="moist-condensation" className="learn-section">
+        <Sec id="moist-condensation">
           <h2>Condensation: surface and interstitial</h2>
           <p>Moisture does damage in the wall in two places.</p>
           <dl className="learn-dl">
@@ -1116,9 +1120,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Neither is simply "safe". What matters is whether the water that arrives in winter leaves again, and what the materials around it can tolerate. That is what the yearly simulation tests.
           </p>
-        </section>
+        </Sec>
 
-        <section id="moist-absorb" className="learn-section">
+        <Sec id="moist-absorb">
           <h2>Absorbent and wicking materials</h2>
           <p>
             Many traditional materials, such as wood fibre, cork, wool, timber, lime, clay, brick and stone, are <b>hygroscopic</b>: they take up moisture from damp air and give it back when the air dries. How much each holds at a given humidity is its <b>sorption curve</b>. The tool stores moisture in every layer along its own curve, so an absorbent layer buffers winter dampness instead of letting it collect as free water at a boundary.
@@ -1145,9 +1149,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             For <b>organic</b> layers (wood fibre, cork, wool, hemp, cellulose, timber boards and similar) the tool also reports the peak <b>moisture content</b>, as a percentage of dry mass, averaged over the 10 mm at the layer's wetter face. It uses <b>18%</b> as the limit, a cautious figure: about 20% is usually quoted for the onset of rot in timber. Mineral materials are not given a limit, because no single threshold fits their frost and salt risks.
           </p>
-        </section>
+        </Sec>
 
-        <section id="moist-rain" className="learn-section">
+        <Sec id="moist-rain">
           <h2>Rain and ground moisture</h2>
           <p>
             Old solid walls are rarely wetted only by indoor vapour. Rain soaks the outer face, and moisture can rise from the ground. You can set both on the tab.
@@ -1168,9 +1172,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             On the chart, a blue strip marks rain taken up by the outer face that month, and with wet ground, a second chart below shows the wall from the side, with the moisture climbing it.
           </p>
-        </section>
+        </Sec>
 
-        <section id="moist-reading" className="learn-section">
+        <Sec id="moist-reading">
           <h2>Reading the moisture charts</h2>
           <h3>The verdict</h3>
           <p>Above each wall's chart is one of these results. They only describe how much water the wall holds and when. Whether that water does harm is judged separately, layer by layer, in the checks that follow: rot for timber and fibre layers, frost for masonry, the interface behind internal insulation, gypsum, and mould on the inner surface. This follows how hygrothermal results are normally assessed, under WTA 6-5 for internal insulation.</p>
@@ -1208,10 +1212,10 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Each column has its own build-up, chosen from the same library as the Compare tab, and all share one climate and indoor setting. The yearly charts then overlay every wall in its own colour. Changing a setting reruns every wall in the background, which takes a moment ("Calculating…").
           </p>
-        </section>
+        </Sec>
 
         {/* ------------------------------------------------------------ FLOOR EDGE MODEL */}
-        <section id="edge-model" className="learn-section">
+        <Sec id="edge-model">
           <h2>The ground floor and its edge</h2>
           <p>
             Each ground-floor room&apos;s floor U-value comes from BS EN ISO 13370. For a slab on the ground it depends on the floor
@@ -1229,9 +1233,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
             The floor-to-wall junction is then added on top: Ψ × each room&apos;s outside wall length on the ground floor, shared over its
             floor area. Ψ is SAP&apos;s default (0.32 W/mK), its approved-detail figure (0.16), your own, or calculated as described next.
           </p>
-        </section>
+        </Sec>
 
-        <section id="junction-model" className="learn-section">
+        <Sec id="junction-model">
           <h2>How the junction Ψ is worked out</h2>
           <p>
             A junction Ψ can&apos;t come from adding up layer resistances the way a U-value does, because the heat turns a corner. It is
@@ -1293,10 +1297,10 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
             <li>The soil is uniform at 2.0 W/mK; wet clay conducts more, dry sand less.</li>
             <li>Its floor-to-ISO 13370 gap of a few per cent carries into Ψ as roughly 0.01 W/mK, as it does in BR 497&apos;s own method.</li>
           </ul>
-        </section>
+        </Sec>
 
         {/* ------------------------------------------------------------ MOISTURE: UNDER THE HOOD */}
-        <section id="msim-overview" className="learn-section">
+        <Sec id="msim-overview">
           <h2>The moisture simulation at a glance</h2>
           <p>
             Again, everything is calculated in your browser. The method follows the standard approach for transient heat and moisture in building components (EN 15026, after Künzel). In outline:
@@ -1311,9 +1315,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Every layer starts at 80% humidity in October, and the year is run again and again until it repeats: until a year's wettest and driest month ends are within 2% of the year before's. That takes at least three years, and longer for thick masonry, which can take five to eight to settle; the run stops at twelve. The results come from the last year, by which time that starting guess has washed out. The first year is kept to show whether a wall is still getting wetter.
           </p>
-        </section>
+        </Sec>
 
-        <section id="msim-climate" className="learn-section">
+        <Sec id="msim-climate">
           <h2>1. Building the year</h2>
           <p>
             The outdoor air temperature uses the same monthly means as the heat tab (4.5 °C in January to 17 °C in July, plus the city offset), and the outdoor relative humidity a table of typical UK values, from 89–90% in winter to about 74% in May and June. Both change smoothly through the year, interpolated between mid-months, rather than jumping on the first of the month. The outdoor vapour pressure is then:
@@ -1334,9 +1338,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             The 461.5 J/kgK is the gas constant for water vapour. The room pressure can never exceed saturation at room temperature, so it is capped there.
           </p>
-        </section>
+        </Sec>
 
-        <section id="msim-profile" className="learn-section">
+        <Sec id="msim-profile">
           <h2>2. Slices, heat and vapour</h2>
           <p>
             Each layer is cut into slices 2 mm thick at both of its faces, growing by 60% at a time to at most 20 mm in its middle, because the sharpest changes happen at faces and boundaries. An air cavity is a single slice with its own thermal resistance. If the build-up has a <b>ventilated gap</b> (a roof tile batten void, for instance), everything outside it is at outdoor conditions, so the analysis starts at the inner face of the gap.
@@ -1355,9 +1359,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Each slice's µ moves smoothly from the material's dry-cup value at 50% humidity to its wet-cup value at 90%, because hygroscopic materials let vapour through more freely when damp. At the faces, vapour passes to the air through a surface film, worked out from the convective heat transfer by the standard Lewis relation.
           </p>
-        </section>
+        </Sec>
 
-        <section id="msim-saturation" className="learn-section">
+        <Sec id="msim-saturation">
           <h2>3. Storing water: the sorption curve</h2>
           <p>
             Each slice holds water w (kg/m³) in balance with its relative humidity φ. The tool uses Künzel's one-parameter sorption curve, fitted to each material's moisture content at 80% humidity (w<sub>80</sub>) and its free water saturation (w<sub>f</sub>, the most it takes up by soaking):
@@ -1366,9 +1370,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             The curve rises gently through ordinary humidities and steeply above about 95%, where the pores start to fill with liquid. Beyond saturation a slice can hold more free water, but its vapour pressure stays at saturation, as it would against a pool of condensate. Materials with no storage data, such as foam boards, mineral wool and some products, hold almost nothing (0.01 kg/m³, little more than the air in their pores) until they are saturated, so water condensing in them collects as free water.
           </p>
-        </section>
+        </Sec>
 
-        <section id="msim-balance" className="learn-section">
+        <Sec id="msim-balance">
           <h2>4. Capillary flow</h2>
           <p>
             Liquid water moves through a wicking material from wetter to drier. Künzel's approximation gives its liquid diffusivity from the water absorption coefficient A and the free saturation:
@@ -1381,9 +1385,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Driving the flow by humidity, not by water content, is what lets it cross from one material to the next: water moves from brick into a lime render whenever the brick is at a higher humidity, even though the two hold very different amounts at that humidity. A layer with no capillary data, or A of zero, passes no liquid at all, so water can only leave it as vapour.
           </p>
-        </section>
+        </Sec>
 
-        <section id="msim-wet" className="learn-section">
+        <Sec id="msim-wet">
           <h2>5. Solving each step</h2>
           <p>
             Each two-hour step is solved implicitly, which stays stable however thin the slices are. Heat comes first, then moisture. The unknown for moisture is each slice's humidity. Because storage, µ and capillary flow all depend on that humidity, the tool guesses it, works out the flows, solves for the new humidities, and repeats until no slice changes by more than 0.0001 (usually two to five passes). The storage term is set up so that water is conserved exactly at every pass. If a step won't settle, typically at the start of a shower, it is split in half, and halved again if needed.
@@ -1391,9 +1395,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             As a check, the tool adds up all the water entering and leaving over the final year and compares it with the change in water held. They agree to within a few tens of grams per square metre at most, against tens or hundreds of kilograms of water moving through in a wet wall.
           </p>
-        </section>
+        </Sec>
 
-        <section id="msim-sources" className="learn-section">
+        <Sec id="msim-sources">
           <h2>6. Rain, ground moisture and cavities</h2>
           <h3>Rain</h3>
           <p>
@@ -1429,9 +1433,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             Water that would collect in an <b>air cavity</b> beyond saturation is assumed to run down and out through the weep holes. It is counted as "drained" but not held. This assumes the cavity is clear and has working drainage, which is worth checking on site, especially in older walls where mortar droppings can block it. Condensation on a wicking cavity face, such as brick, soaks into that layer instead, and is held there.
           </p>
-        </section>
+        </Sec>
 
-        <section id="msim-results" className="learn-section">
+        <Sec id="msim-results">
           <h2>7. Working out the results</h2>
           <h3>Water held and the verdict</h3>
           <p>
@@ -1472,9 +1476,9 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
           <p>
             When you move to another month, every number on the pressure chart is eased from the old value to the new one over about half a second. The easing is only for show: the whole simulation is run once, up front.
           </p>
-        </section>
+        </Sec>
 
-        <section id="mlimits" className="learn-section">
+        <Sec id="mlimits">
           <h2>What the moisture model leaves out</h2>
           <p>Again, these are the main simplifications, so you know how far to trust the results.</p>
           <ul>
@@ -1492,10 +1496,10 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
               For a real project, especially internal insulation on a solid old wall, have it checked with a validated hygrothermal tool such as WUFI or Delphin, using measured weather for the site and data for the actual products. Use this tab to compare build-ups and to learn <em>why</em> vapour-open, vapour-tight and wicking systems behave differently.
             </p>
           </Callout>
-        </section>
+        </Sec>
 
         {/* ------------------------------------------------------------ REFERENCE */}
-        <section id="glossary" className="learn-section">
+        <Sec id="glossary">
           <h2>Glossary</h2>
           <dl className="learn-dl">
             <dt>Absorptance (α)</dt>
@@ -1551,14 +1555,15 @@ export function LearnPage({ section, onOpenSimulator }: { section?: string; onOp
             <dt>Vapour resistance factor (µ)</dt>
             <dd>How many times more a material resists the passage of water vapour than still air of the same thickness. Dry-cup and wet-cup values apply to dry and damp conditions.</dd>
           </dl>
-          <p><button type="button" className="btn-primary" onClick={onOpenSimulator}>Back to the simulator</button></p>
-        </section>
+          <p><a className="btn-primary" href={L.app('plan')}>Back to the simulator</a></p>
+        </Sec>
 
         <div className="learn-pager">
-          {prev ? <button type="button" className="btn-secondary" onClick={() => jump(prev.id)}>← {prev.title}</button> : <span />}
-          {next ? <button type="button" className="btn-secondary" onClick={() => jump(next.id)}>{next.title} →</button> : <span />}
+          {prev ? <a className="btn-secondary" href={L.learn(prev.id)} rel="prev">← {prev.title}</a> : <span />}
+          {next ? <a className="btn-secondary" href={L.learn(next.id)} rel="next">{next.title} →</a> : <span />}
         </div>
       </article>
     </div>
+    </Ctx.Provider>
   );
 }
