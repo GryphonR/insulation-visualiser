@@ -14,6 +14,7 @@ import { href } from './route';
 import './house.css';
 import { Why, fmt, mix, uid } from './hform';
 import { WHY } from './assumptions';
+import { MAX_SCENARIOS, SCENARIO_LIMIT_MSG } from '../engine/limits';
 
 const sgn = (v: number, d = 0) => (Math.abs(v) < 0.5 * 10 ** -d ? '0' : `${v > 0 ? '+' : '−'}${fmt(Math.abs(v), d)}`);
 const ROW_WHY: Record<string, string> = {
@@ -28,7 +29,9 @@ const KIND_LABEL: Record<Scenario['kind'], string> = { base: 'base · the house 
 /** Board 5: the scenario tree with the bar to branch, rename and delete. Changes are made in the model, build-ups and heating pages. */
 export function ScenariosPage() {
   const { project, setProject, active, results, ordered, depth } = useProject();
+  const full = project.scenarios.length >= MAX_SCENARIOS;
   const branch = () => {
+    if (full) return;
     const id = uid('s');
     setProject((p) => ({ ...p, active: id, scenarios: [...p.scenarios, { id, name: `${active.name} + changes`, kind: 'plan', parent: active.id, house: structuredClone(active.house) }] }));
   };
@@ -56,7 +59,7 @@ export function ScenariosPage() {
             </div>
           </div>
           <div className="chips">
-            <button type="button" className="btn-secondary" onClick={branch}>New scenario from this</button>
+            <button type="button" className="btn-secondary" disabled={full} title={full ? SCENARIO_LIMIT_MSG : undefined} onClick={branch}>New scenario from this</button>
             {active.parent && <button type="button" className="btn-secondary" onClick={remove}>Delete</button>}
             <a className="btn-secondary as-btn" href={href('compare')}>Compare on plan ›</a>
           </div>
@@ -68,6 +71,9 @@ export function ScenariosPage() {
             </Chip>
           ))}
         </div>
+        <p className={`small ${full ? 'limit-note' : 'muted'}`} style={{ margin: '8px 0 0' }}>
+          {project.scenarios.length} of {MAX_SCENARIOS} scenarios in this project during the open beta.{full && ' Delete one to branch another.'}
+        </p>
       </section>
       <ScenariosView project={project} active={active} results={results} ordered={ordered} setProject={setProject} />
     </div>

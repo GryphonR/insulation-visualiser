@@ -13,6 +13,8 @@
   "d1_databases": [
     { "binding": "DB", "database_name": "insuliser", "database_id": "9fee8293-811c-433e-8566-59ac15340142", "migrations_dir": "worker/migrations" }
   ],
+  // Sign-in requests: 5 a minute per IP and per email address (worker/index.ts).
+  "ratelimits": [{ "name": "SIGNIN_LIMIT", "namespace_id": "1001", "simple": { "limit": 5, "period": 60 } }],
   // Production values. Local dev overrides BETTER_AUTH_URL in .dev.vars (see .dev.vars.example).
   "vars": { "BETTER_AUTH_URL": "https://insuliser.uk", "MAIL_FROM": "Insuliser <signin@insuliser.uk>" }
 }

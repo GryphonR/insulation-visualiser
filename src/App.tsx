@@ -24,7 +24,8 @@ import { RoomPage } from './ui/RoomPage';
 import { Shell } from './ui/Shell';
 import { WallPage } from './ui/WallPage';
 import { ProjectProvider, useProject } from './ui/project';
-import { go, useRoute } from './ui/route';
+import { go, href, useRoute } from './ui/route';
+import { PROJECT_LIMIT_MSG } from './engine/limits';
 import { sanitizeProject } from './engine/house-scenarios';
 import { addImportedMaterials } from './engine/data';
 import './ui/house.css';
@@ -58,7 +59,7 @@ export default function App() {
 
 function Routes() {
   const parts = useRoute();
-  const { house, active, ordered, project, setProject, setHouse, createProject } = useProject();
+  const { house, active, ordered, project, setProject, setHouse, createProject, canAddProject } = useProject();
   // No hash: the projects screen is where the app opens.
   const route = parts[0] ?? 'projects';
   const arg = parts[1], arg2 = parts[2];
@@ -67,7 +68,13 @@ function Routes() {
   let page;
   switch (route) {
     case 'start':
-      page = (
+      page = !canAddProject ? (
+        <section className="card panel">
+          <h2>Project limit reached</h2>
+          <p>{PROJECT_LIMIT_MSG}</p>
+          <div className="chips"><a className="btn-primary as-btn" href={href('projects')}>Go to projects</a></div>
+        </section>
+      ) : (
         <HouseStart
           onCancel={() => go('projects')}
           onCreate={(h, job) => {

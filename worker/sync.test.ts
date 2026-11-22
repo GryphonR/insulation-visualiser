@@ -4,13 +4,17 @@ import { api } from './api';
 import { testDb } from './d1-shim';
 import type * as Sync from '../src/engine/sync';
 import type * as Projects from '../src/engine/projects';
+import type * as Favorites from '../src/engine/favorites';
+import { MAX_PROJECTS } from '../src/engine/limits';
 import { defaultHouse } from '../src/engine/house-default';
 import { newProject } from '../src/engine/house-scenarios';
 
 const storage = (m = new Map<string, string>()) => ({
   map: m,
+  /** Keys this "browser" refuses to store, as a full one does. */
+  refuse: undefined as ((k: string) => boolean) | undefined,
   getItem: (k: string) => m.get(k) ?? null,
-  setItem: (k: string, v: string) => { m.set(k, v); },
+  setItem(k: string, v: string) { if (this.refuse?.(k)) throw new Error('QuotaExceededError'); m.set(k, v); },
   removeItem: (k: string) => { m.delete(k); },
   key: (i: number) => [...m.keys()][i] ?? null,
   get length() { return m.size; },
@@ -27,7 +31,7 @@ globalThis.fetch = (async (path: string, init?: RequestInit) => {
   return api(new Request(`http://x${path}`, init), db, 'u1', path);
 }) as typeof fetch;
 
-let sync: typeof Sync, projects: typeof Projects;
+let sync: typeof Sync, projects: typeof Projects, favorites: typeof Favorites;
 const named = (name: string) => { const h = defaultHouse(); h.name = name; return newProject(h); };
 const names = () => projects.listProjects().map((p) => p.name).sort();
 
@@ -38,6 +42,7 @@ describe('cloud sync between two devices', () => {
     on(A);
     sync = await import('../src/engine/sync');
     projects = await import('../src/engine/projects');
+    favorites = await import('../src/engine/favorites');
     await sync.startSync();
   });
   beforeEach(() => { db = testDb(); A = storage(); B = storage(); offline = false; });
@@ -87,6 +92,37 @@ describe('cloud sync between two devices', () => {
     projects.saveProject('a', { ...projects.readStored('a')!, customer: 'Edited on B' }); await sync.syncNow();
     on(A); await sync.syncNow();
     expect(projects.readStored('a')).toMatchObject({ customer: 'Edited on B', trace: { images: { 0: img } } });
+  });
+
+  it('makes a removal on one device stick on the other', async () => {
+    const fav = (materials: string[]) => favorites.saveFavorites({ materials, buildups: [], recent: [] });
+    on(A); fav(['pir', 'brick']); await sync.syncNow();
+    on(B); await sync.syncNow();
+    expect(favorites.loadFavorites().materials).toEqual(['pir', 'brick']);
+    on(A); fav(['pir']); await sync.syncNow();
+    on(B); await sync.syncNow();
+    on(A); await sync.syncNow();
+    expect(favorites.loadFavorites().materials).toEqual(['pir']);
+    on(B); expect(favorites.loadFavorites().materials).toEqual(['pir']);
+  });
+
+  it('fetches a project again when this browser was too full to store it, and says so', async () => {
+    on(A); projects.saveProject('a', named('Alpha')); await sync.syncNow();
+    on(B); B.refuse = (k) => k.startsWith('insulation-visualiser.project.'); await sync.syncNow();
+    expect(names()).toEqual([]);
+    expect(sync.syncInfo()).toMatchObject({ status: 'error', message: expect.stringContaining('storage is full') });
+    B.refuse = undefined; await sync.syncNow();
+    expect(names()).toEqual(['Alpha']);
+  });
+
+  it('syncs only up to the beta project limit and keeps the rest on this device', async () => {
+    on(A);
+    for (let i = 0; i <= MAX_PROJECTS; i++) projects.saveProject(`p${i}`, named(`P${i}`));
+    await sync.syncNow();
+    expect(sync.syncInfo()).toMatchObject({ status: 'error', message: expect.stringContaining('1 project is saved on this device only') });
+    expect(names()).toHaveLength(MAX_PROJECTS + 1);
+    on(B); await sync.syncNow();
+    expect(names()).toHaveLength(MAX_PROJECTS);
   });
 
   it('waits out a lost connection and sends the edit when back', async () => {

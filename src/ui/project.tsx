@@ -8,6 +8,7 @@ import type { House, HouseResult } from '../engine/house';
 import { chain, newProject } from '../engine/house-scenarios';
 import { deleteStored, hasSaved, listProjects, loadActive, newProjectId, openStored, projectKey, rawStored, readStored, saveProject, updateStored } from '../engine/projects';
 import { download } from '../lib/util';
+import { MAX_PROJECTS } from '../engine/limits';
 import type { ProjectInfo } from '../engine/projects';
 import type { Project, Scenario } from '../engine/house-scenarios';
 import type { Stackup } from '../engine/library';
@@ -35,7 +36,10 @@ interface Ctx {
   projects: ProjectInfo[];
   projectId: string;
   openProject: (id: string) => void;
-  createProject: (p: Project) => void;
+  /** Opens a new project; false (and nothing made) at the beta's project limit. */
+  createProject: (p: Project) => boolean;
+  /** Below the beta's project limit, so a new one can be made. */
+  canAddProject: boolean;
   deleteProject: (id: string) => void;
   /** Change any stored project; the open one goes through undo like any other edit. */
   editProject: (id: string, fn: (p: Project) => Project) => void;
@@ -82,7 +86,11 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
     const raw = rawStored(id);
     if (raw && confirm('This project can\'t be opened. Download its saved data to keep a copy?')) download(`project-${id}.json`, raw, 'application/json');
   };
-  const createProject = (p: Project) => { const id = newProjectId(); setSaveOk(saveProject(id, p)); show(id, p); };
+  const createProject = (p: Project) => {
+    if (listProjects().length >= MAX_PROJECTS) return false;
+    const id = newProjectId(); setSaveOk(saveProject(id, p)); show(id, p);
+    return true;
+  };
   const deleteProject = (id: string) => {
     deleteStored(id);
     if (id !== projectId) { bump((n) => n + 1); return; }
@@ -142,7 +150,7 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
   const value: Ctx = {
     project, setProject, active, house: active.house, setHouse, upd, res: results.get(active.id)!, results, ordered, depth,
     undo, redo, canUndo: hist.past.length > 0, canRedo: hist.future.length > 0, customStackups, setCustomStackups,
-    projects, projectId, openProject, createProject, deleteProject, editProject, saveOk,
+    projects, projectId, openProject, createProject, canAddProject: projects.length < MAX_PROJECTS, deleteProject, editProject, saveOk,
   };
   return <C.Provider value={value}>{children}</C.Provider>;
 }

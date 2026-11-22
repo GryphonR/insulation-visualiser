@@ -73,8 +73,9 @@ export function footprintToPlan(ring: LatLon[], north?: number): Footprint {
   return { poly: p, north, origin: [ref[0] - so / M_PER_DEG, ref[1] + e / (M_PER_DEG * Math.cos((ref[0] * Math.PI) / 180))] };
 }
 
-// Public Overpass servers, tried in turn: they are often busy.
-const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
+// Public Overpass servers, tried in turn: they are often busy. Each one receives the point looked up, so the privacy page
+// names them all: change both together.
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
 
 /** The outline of the building at `at`, or an Error saying why not. */
 export async function fetchFootprint(at: LatLon): Promise<LatLon[]> {

@@ -9,6 +9,7 @@ import { flowNeeded } from './house-heating';
 import { sizePipes } from './house-pipes';
 import { simulate } from './house-sim';
 import { runMoisture } from './moisture';
+import { MAX_SCENARIOS } from './limits';
 
 describe('demo projects', () => {
   it.each(DEMOS.map((d) => [d.label, d] as const))('%s: every scenario has a control plan for its source, with nothing flagged', (_, d) => {
@@ -31,6 +32,7 @@ describe('demo projects', () => {
   for (const d of DEMOS) {
     it(`${d.label}: every material exists, every face has a build-up, and each scenario's rads keep up`, () => {
       const p = d.make();
+      expect(p.scenarios.length).toBeLessThanOrEqual(MAX_SCENARIOS); // the demos must fit the beta's limit
       for (const s of p.scenarios) {
         const h = s.house;
         for (const b of h.buildups) for (const [m] of b.layers) expect(MAT[m], `${b.name}: ${m}`).toBeTruthy();

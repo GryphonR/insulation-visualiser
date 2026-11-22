@@ -5,7 +5,7 @@
 export const OPERATOR = 'eChook';
 export const ADDRESS = 'Ivy Cottage, Ivy Lane, Harbury, Warwickshire, CV33 9HN';
 export const CONTACT = 'info@echook.uk';
-export const UPDATED = '20 November 2026';
+export const UPDATED = '22 November 2026';
 
 const ext = (href: string, text: string) => <a href={href} target="_blank" rel="noreferrer">{text}</a>;
 const mail = <a href={`mailto:${CONTACT}`}>{CONTACT}</a>;
@@ -49,8 +49,7 @@ export function Privacy() {
       </ul>
       <p>Your browser also contacts some services directly, which then see your IP address:</p>
       <ul>
-        <li><strong>Google Fonts</strong>, for the typefaces, on every page.</li>
-        <li><strong>OpenStreetMap's Overpass servers</strong>, only when you look up building outlines, with the map area you're looking at.</li>
+        <li><strong>Public Overpass servers</strong>, which serve OpenStreetMap data: overpass-api.de, and overpass.private.coffee if the first is busy. Your browser only contacts them when you look up a building outline, and they receive the latitude and longitude you enter.</li>
         <li><strong>A satellite imagery provider</strong>, only if you add your own (for example Mapbox), under your own agreement with them.</li>
       </ul>
       <p>Some of these providers process data outside the UK. Where they do, it's covered by UK adequacy regulations or the UK's approved contract terms.</p>
@@ -59,7 +58,7 @@ export function Privacy() {
       <p>If you sign in, we set one cookie to keep you signed in. It's strictly necessary for the account, so it doesn't need consent. Local storage holds your work and settings on your device, also only so the app works. We use no analytics, advertising or third-party cookies, so there's no cookie banner.</p>
 
       <h2>How long we keep it</h2>
-      <p>Your account and synced data stay until you delete them. Billing records, if any, are kept for 6 years, as tax law requires. Use <strong>Delete account</strong> in the app's account menu and we remove your account and everything synced with it straight away. Sign-in links expire after 5 minutes, sessions after 7 days without use, and host logs within days.</p>
+      <p>Your account and synced data stay until you delete them. Billing records, if any, are kept for 6 years, as tax law requires. Use <strong>Delete account</strong> in the app's account menu and we remove your account and everything synced with it straight away. Sign-in links expire after 5 minutes and unused ones are deleted soon after, sessions after 7 days without use, and host logs within days.</p>
 
       <h2>Your rights</h2>
       <p>You can ask to see, correct, export or delete your data, or object to or restrict how we use it. Email {mail} and we'll reply within a month. You can also export your projects as files from the app at any time.</p>

@@ -16,6 +16,8 @@
     "cf:deploy": "npm run cf:build && wrangler d1 migrations apply insuliser --remote && wrangler deploy"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
     "better-auth": "^1.7.25",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

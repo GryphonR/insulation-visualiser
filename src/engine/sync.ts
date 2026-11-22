@@ -2,10 +2,12 @@
 // background, and on start, sign-in and reconnect the server's newer copies are pulled in. Every push names the rev it was
 // based on; when the server has moved on, both versions are kept, so an edit on one device never silently erases another's.
 import { onStored } from './stored';
-import { deleteStored, listProjects, newProjectId, projectKey, putStored, rawStored, readStored } from './projects';
+import { deleteStored, listProjects, newProjectId, projectKey, putStored, rawStored, readStored, storedProjectsUsing } from './projects';
 import { sanitizeProject } from './house-scenarios';
-import { addImportedMaterials, CUSTOM_MATERIALS_KEY } from './data';
-import { LIBRARY_KEY } from './library';
+import { addImportedMaterials, customMaterials, CUSTOM_MATERIALS_KEY, deleteCustomMaterial, saveCustomMaterial } from './data';
+import type { Material } from './data';
+import { LIBRARY_KEY, loadCustomStackups } from './library';
+import { MAX_PROJECTS, MAX_SCENARIOS } from './limits';
 import { FAVORITES_KEY } from './favorites';
 
 export const CLOUD = !!import.meta.env?.VITE_CLOUD;
@@ -50,6 +52,7 @@ const announce = (key: string) => { try { window.dispatchEvent(new StorageEvent(
 
 // ---------- server ----------
 
+const FULL = "This browser's storage is full, so a project from the cloud couldn't be saved here. Delete old projects or traced plan images.";
 class Offline extends Error {}
 class SignedOut extends Error {}
 
@@ -89,9 +92,36 @@ export function mergeData(server: unknown, local: unknown): unknown {
 
 const parse = (t: string | null | undefined): unknown => { try { return t ? JSON.parse(t) : undefined; } catch { return undefined; } };
 
-/** Put a settings body from the server into local storage, merged with what is here. True if the result differs from the server's. */
-function applyData(key: string, serverText: string): boolean {
+/** Custom materials become the server's list. One removed there but still used here is kept (true: push it back). */
+function replaceMaterials(list: unknown): boolean {
+  if (!Array.isArray(list)) return false;
+  addImportedMaterials(list); // new ones
+  const there = new Map((list as Material[]).map((m) => [m.id, m]));
+  let kept = false;
+  for (const m of customMaterials()) {
+    const s = there.get(m.id);
+    if (s) { if (JSON.stringify({ ...s, cat: 'custom' }) !== JSON.stringify(m)) saveCustomMaterial(s); continue; }
+    const used = storedProjectsUsing(m.id, '').length > 0 || loadCustomStackups().some((b) => b.layers.some(([id]) => id === m.id));
+    if (used) kept = true; else deleteCustomMaterial(m.id);
+  }
+  return kept;
+}
+
+/**
+ * Put a settings body from the server into local storage. Unchanged here: the server's copy replaces it, so a removal
+ * made on another device sticks. Changed on both: the two are merged. True if the result should go back up.
+ */
+function applyData(key: string, serverText: string, merge: boolean): boolean {
   const lsKey = DATA[key];
+  if (!merge) {
+    let kept = false;
+    quietly(() => {
+      if (key === 'materials') kept = replaceMaterials(parse(serverText));
+      else localStorage.setItem(lsKey, serverText);
+    });
+    announce(lsKey);
+    return kept;
+  }
   const merged = mergeData(parse(serverText), parse(localStorage.getItem(lsKey)));
   if (merged === undefined) return false;
   quietly(() => {
@@ -112,13 +142,14 @@ export function withoutImages(text: string | null): string | null {
   return JSON.stringify({ ...p, trace: { ...p.trace, images: {} } });
 }
 
+/** False only if this browser's storage refused it (full): it is fetched again next time. One that isn't usable is skipped. */
 function applyProject(id: string, body: string): boolean {
   let p = sanitizeProject(parse(body));
-  if (!p) return false;
+  if (!p) return true;
   // The server never has the images: keep this device's own.
   const here = readStored(id)?.trace;
   if (here) p = { ...p, trace: p.trace ? { ...p.trace, images: here.images } : here };
-  quietly(() => putStored(id, p));
+  if (!quietly(() => putStored(id, p))) return false;
   announce(projectKey(id));
   return true;
 }
@@ -135,8 +166,10 @@ function keepServerCopy(body: string) {
 
 // ---------- pull ----------
 
-async function pull() {
+/** Pull everything newer from the server. True if some project couldn't be stored here (storage full). */
+async function pull(): Promise<boolean> {
   const s = readState();
+  let unsaved = false;
   const [projects, data] = await Promise.all([call('GET', '/api/projects'), call('GET', '/api/data')]);
   const rows = (projects.data ?? []) as Row[];
   const local = new Set(listProjects().map((p) => p.id));
@@ -146,7 +179,8 @@ async function pull() {
     if (s.dirty.includes(path) && local.has(r.id)) continue; // both changed: the push that follows sorts it out
     if (r.deleted) { quietly(() => deleteStored(r.id)); announce(PROJECT_PREFIX); settle(path, r.rev); continue; }
     const full = await call('GET', `/api/projects/${r.id}`);
-    if (full.status === 200) { applyProject(r.id, full.data.body); settle(path, r.rev); }
+    if (full.status !== 200) continue;
+    if (applyProject(r.id, full.data.body)) settle(path, r.rev); else unsaved = true;
   }
   // Projects the server has never seen (made signed out, or before the first sign-in) go up.
   const known = new Set(rows.map((r) => r.id));
@@ -159,15 +193,17 @@ async function pull() {
     if (r.rev <= (s.revs[path] ?? 0)) continue;
     const full = await call('GET', `/api/data/${key}`);
     if (full.status !== 200) continue;
-    const differs = applyData(key, full.data.body);
+    const differs = applyData(key, full.data.body, s.dirty.includes(path));
     settle(path, r.rev);
     if (differs) markDirty(path);
   }
+  return unsaved;
 }
 
 // ---------- push ----------
 
-async function pushOne(path: string) {
+/** Push one item; 'limit' when the server refused it for the beta limits (it stays on this device, still marked changed). */
+async function pushOne(path: string): Promise<'limit' | void> {
   const [kind, id] = path.split('/') as ['projects' | 'data', string];
   const s = readState();
   const body = kind === 'projects' ? withoutImages(rawStored(id)) : localStorage.getItem(DATA[id] ?? '');
@@ -179,16 +215,17 @@ async function pushOne(path: string) {
   if (r.status === 409) {
     const cur = r.data as Row | null;
     if (kind === 'data') {
-      if (cur?.body) applyData(id, cur.body);
+      if (cur?.body) applyData(id, cur.body, true);
     } else if (cur && !cur.deleted && cur.body) {
       // Deleted here but edited there: keep the edited one. Edited in both: keep both.
-      if (body == null) { applyProject(id, cur.body); settle(path, cur.rev); return; }
+      if (body == null) { if (applyProject(id, cur.body)) settle(path, cur.rev); else throw new Error(FULL); return; }
       keepServerCopy(cur.body);
     }
     const again = kind === 'data' ? localStorage.getItem(DATA[id]) : body;
     r = again == null ? await call('DELETE', `/api/projects/${id}`, undefined, cur?.rev ?? 0) : await call('PUT', `/api/${kind}/${id}`, again, cur?.rev ?? 0);
   }
   if (r.status === 200) { settle(path, r.data.rev); return; }
+  if (r.status === 403 && r.data?.error === 'limit') return 'limit';
   if (r.status === 413) throw new Error('A project is too large to sync. It is still saved on this device.');
   throw new Error(`Sync failed (${r.status}).`);
 }
@@ -202,13 +239,17 @@ export function syncNow(): Promise<void> {
   running = (async () => {
     setInfo({ status: 'syncing', message: undefined });
     try {
+      const over = new Set<string>();
+      let unsaved = false;
       do {
         again = false;
-        await pull();
-        // Each push settles its item or throws, so this ends; pushes may add items (a kept copy), which go up in the same pass.
-        for (let path; (path = readState().dirty[0]); ) await pushOne(path);
+        unsaved = await pull();
+        // Each push settles its item, throws or is set aside as over the limit, so this ends; pushes may add items (a kept copy), which go up in the same pass.
+        for (let path; (path = readState().dirty.find((p) => !over.has(p))); ) if (await pushOne(path) === 'limit') over.add(path);
       } while (again);
-      setInfo({ status: 'synced' });
+      setInfo(unsaved ? { status: 'error', message: FULL } : over.size
+        ? { status: 'error', message: `The open beta syncs up to ${MAX_PROJECTS} projects with ${MAX_SCENARIOS} scenarios each. ${over.size} ${over.size === 1 ? 'project is' : 'projects are'} saved on this device only.` }
+        : { status: 'synced' });
     } catch (e) {
       if (e instanceof Offline) setInfo({ status: 'offline' });
       else if (e instanceof SignedOut) setInfo({ status: 'signed-out', email: undefined });

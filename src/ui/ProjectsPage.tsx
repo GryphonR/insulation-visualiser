@@ -5,6 +5,7 @@ import { CLOUD } from '../engine/sync';
 import type { ReactNode } from 'react';
 import { DEMOS } from '../engine/house-demos';
 import { parseProjectFile, projectFileText, readStored } from '../engine/projects';
+import { MAX_PROJECTS, MAX_SCENARIOS, PROJECT_LIMIT_MSG } from '../engine/limits';
 import type { ProjectInfo } from '../engine/projects';
 import { download } from '../lib/util';
 import { go, href } from './route';
@@ -54,7 +55,7 @@ function DetailsModal({ info, onSave, onClose }: { info: ProjectInfo; onSave: (d
 
 /** The screen the app opens on: what it does and how to start, beside every project saved in this browser. */
 export function ProjectsPage() {
-  const { projects, projectId, openProject, deleteProject, createProject, editProject } = useProject();
+  const { projects, projectId, openProject, deleteProject, createProject, canAddProject, editProject } = useProject();
   const [menu, setMenu] = useState<string | null>(null);
   const [dialog, setDialog] = useState<{ kind: 'demo' } | { kind: 'details' | 'delete'; p: ProjectInfo } | null>(null);
   const [msg, setMsg] = useState('');
@@ -69,7 +70,8 @@ export function ProjectsPage() {
     try {
       const p = parseProjectFile(await f.text());
       if (!p) throw new Error('it has no usable scenarios');
-      createProject(p);
+      if (p.scenarios.length > MAX_SCENARIOS) throw new Error(`it has ${p.scenarios.length} scenarios, and the open beta allows ${MAX_SCENARIOS} per project`);
+      if (!createProject(p)) throw new Error(`the open beta allows ${MAX_PROJECTS} projects`);
       setMsg(`Imported ${f.name} as a new project, now open.`);
     } catch (e) {
       setMsg(`Couldn't import ${f.name}: ${(e as Error).message}.`);
@@ -88,7 +90,7 @@ export function ProjectsPage() {
           {STEPS.map(([to, t, d], i) => <li key={to}><span className="n">{i + 1}</span><span><b>{t}</b><span className="small muted">{d}</span></span></li>)}
         </ol>
         <div className="chips">
-          <button type="button" className="btn-secondary" onClick={() => setDialog({ kind: 'demo' })}>Try a demo house</button>
+          <button type="button" className="btn-secondary" disabled={!canAddProject} title={canAddProject ? undefined : PROJECT_LIMIT_MSG} onClick={() => setDialog({ kind: 'demo' })}>Try a demo house</button>
         </div>
         <p className="small muted">New to heat loss? <a href={href('learn')}>Learn</a> walks through the ideas behind each step.</p>
       </section>
@@ -97,11 +99,16 @@ export function ProjectsPage() {
         <div className="section-head">
           <div><h2>Projects</h2><p className="muted small">{CLOUD ? 'Saved in this browser, and in your account when you sign in. Export one to keep a file copy.' : 'Saved in this browser. Export one to keep a copy or move it to another.'}</p></div>
           <div className="chips">
-            <button type="button" className="btn-secondary" onClick={() => fileRef.current?.click()}>Import…</button>
+            <button type="button" className="btn-secondary" disabled={!canAddProject} title={canAddProject ? undefined : PROJECT_LIMIT_MSG} onClick={() => fileRef.current?.click()}>Import…</button>
             <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = ''; }} />
-            <button type="button" className="btn-primary" onClick={() => go('start')}>+ New project</button>
+            <button type="button" className="btn-primary" disabled={!canAddProject} title={canAddProject ? undefined : PROJECT_LIMIT_MSG} onClick={() => go('start')}>+ New project</button>
           </div>
         </div>
+        <p className={`small ${canAddProject ? 'muted' : 'limit-note'}`}>
+          {projects.length} of {MAX_PROJECTS} projects, with up to {MAX_SCENARIOS} scenarios each, during the open beta.{' '}
+          {!canAddProject && 'To start another, delete one (export it first to keep a copy). '}
+          <a href={`${import.meta.env.BASE_URL}pricing/`} target="_blank" rel="noreferrer">About the beta</a>
+        </p>
         {msg && <p className="small" role="status">{msg}</p>}
         <ul className="proj-list">
           {projects.map((p) => {

@@ -1,6 +1,8 @@
 // The signed-in user's synced items. `userId` always comes from the session, never from the request.
 // Every write names the rev it was based on (If-Match); a stale one gets 409 and the server's copy, so nothing is overwritten unseen.
 
+import { MAX_PROJECTS, MAX_SCENARIOS } from '../src/engine/limits';
+
 // D1 rows cap at 2 MB. Traced plan images are kept off the server by the client (see withoutImages in src/engine/sync.ts).
 export const MAX_BODY = 1_900_000;
 export const DATA_KEYS = ['materials', 'library', 'favorites'];
@@ -11,7 +13,10 @@ const json = (v: unknown, status = 200) => Response.json(v, { status });
 
 export async function api(req: Request, db: D1Database, userId: string, path: string): Promise<Response> {
   if (path === '/api/account' && req.method === 'DELETE') {
+    // Sign-in links not yet used or expired still hold the email address.
+    const u = await db.prepare('SELECT email FROM user WHERE id = ?').bind(userId).first<{ email: string }>();
     await db.batch([
+      ...(u ? [db.prepare('DELETE FROM verification WHERE instr(value, ?) > 0').bind(`"email":${JSON.stringify(u.email)}`)] : []),
       db.prepare('DELETE FROM items WHERE user_id = ?').bind(userId),
       db.prepare('DELETE FROM session WHERE userId = ?').bind(userId),
       db.prepare('DELETE FROM account WHERE userId = ?').bind(userId),
@@ -42,12 +47,20 @@ export async function api(req: Request, db: D1Database, userId: string, path: st
   let body = '';
   if (req.method === 'PUT') {
     body = await req.text();
-    if (body.length > MAX_BODY) return json({ error: 'too large' }, 413);
+    if (new TextEncoder().encode(body).length > MAX_BODY) return json({ error: 'too large' }, 413);
+    let v: { scenarios?: unknown };
     try {
-      const v = JSON.parse(body);
+      v = JSON.parse(body);
       if (!v || typeof v !== 'object') throw new Error();
     } catch {
       return json({ error: 'body must be a JSON object or array' }, 400);
+    }
+    if (kind === 'projects') {
+      if (Array.isArray(v.scenarios) && v.scenarios.length > MAX_SCENARIOS) return json({ error: 'limit' }, 403);
+      // shortcut: check-then-write, so two uploads at the same moment can land one project over; fine for a beta limit.
+      const c = await db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(id = ?), 0) AS self FROM items WHERE user_id = ? AND kind = 'projects' AND deleted = 0")
+        .bind(id, userId).first<{ n: number; self: number }>();
+      if (c && !c.self && c.n >= MAX_PROJECTS) return json({ error: 'limit' }, 403);
     }
   }
   const now = Date.now(), deleted = req.method === 'DELETE' ? 1 : 0;

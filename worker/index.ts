@@ -6,6 +6,8 @@ import { signInEmail } from './email';
 
 export interface Env {
   DB: D1Database;
+  /** Cloudflare rate limit on sign-in requests (wrangler.jsonc). Better Auth's own limiter is off on Workers and per-instance. */
+  SIGNIN_LIMIT: RateLimit;
   BETTER_AUTH_URL: string;
   BETTER_AUTH_SECRET: string;
   GOOGLE_CLIENT_ID?: string;
@@ -45,6 +47,16 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     const a = auth(env);
+    if (url.pathname.startsWith('/api/auth/sign-in/') && req.method === 'POST') {
+      // Per address as well as per IP, so nobody's inbox can be flooded from many IPs.
+      const email = await req.clone().json().then((b: any) => String(b?.email ?? '').toLowerCase(), () => '');
+      const keys = [`ip:${req.headers.get('CF-Connecting-IP') ?? ''}`, ...(email ? [`email:${email}`] : [])];
+      for (const key of keys) if (!(await env.SIGNIN_LIMIT.limit({ key })).success) {
+        return Response.json({ message: 'Too many sign-in requests. Wait a minute and try again.' }, { status: 429 });
+      }
+      // Unused sign-in links hold an email address: clear the expired ones out.
+      await env.DB.prepare('DELETE FROM verification WHERE expiresAt < ?').bind(new Date().toISOString()).run();
+    }
     if (url.pathname.startsWith('/api/auth/')) return a.handler(req);
     if (url.pathname === '/api/config') return Response.json({ google: !!env.GOOGLE_CLIENT_ID });
     // Writes must come from the app's own pages (cookies alone would let another site's form try).

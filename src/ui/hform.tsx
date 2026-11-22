@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import type { InputHTMLAttributes, ReactNode } from 'react';
 
 export const fmt = (v: number, d = 0) => (Number.isFinite(v) ? v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—');
-export const uid = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+// Random, not time-based: several made in the same millisecond (one emitter per room) must still differ.
+export const uid = (p: string) => `${p}${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
 export const mix = (a: number[], b: number[], f: number) => `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * Math.min(1, Math.max(0, f)))).join(',')})`;
 
 /**

@@ -14,7 +14,7 @@ export function loadTmy(station: number): Promise<Tmy> {
     cache.set(station, load().then(({ default: d }) => {
       const nums = (s: string, k = 1) => Float32Array.from(s.split(','), (v) => Number(v) * k);
       return { station, lat: d.lat, lon: d.lon, source: d.source, T: nums(d.T, 0.1), dni: nums(d.dni), dhi: nums(d.dhi) };
-    }));
+    }).catch((e) => { cache.delete(station); throw e; })); // a failed download is tried again next time
   }
   return cache.get(station)!;
 }
