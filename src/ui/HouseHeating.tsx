@@ -2,13 +2,13 @@ import { useMemo } from 'react';
 import { MONTHS } from '../engine/data';
 import { SOURCE_LABEL, effText, isHeatPump, roomArea } from '../engine/house';
 import type { House } from '../engine/house';
-import { COOLING_DEFAULT, COVERS, RAD_LABEL, canCool, dewPoint, emitterCool, UFH_SPACINGS, autoEmitters, emitterOut, loopLength, loopMax, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
+import { COOLING_DEFAULT, COVERS, given, RAD_LABEL, canCool, dewPoint, emitterCool, UFH_SPACINGS, autoEmitters, emitterOut, loopLength, loopMax, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
 import type { Emitter, RadType, Zone } from '../engine/house-heating';
 import { Chip } from './controls';
 import { HouseUfh } from './HouseUfh';
 import { MAX_PA_M, MAX_V, PIPE_SIZES, autoPipes, combineRuns, removeRun, runLength, sizePipes } from '../engine/house-pipes';
 import { addEmitter } from '../engine/house-draw';
-import { Card, Num, Why, fmt, uid, NumInput } from './hform';
+import { Card, Num, SheetNum, Why, fmt, uid, NumInput } from './hform';
 import { WHY, sourceWhy } from './assumptions';
 import { useProject } from './project';
 import { href } from './route';
@@ -117,7 +117,8 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
         {show('emitters') && (
         <section className="card panel">
           <div className="section-head">
-            <div><h2>Emitters</h2><p className="muted small">Output at the design-day flow of {fmt(designFlow, 1)} °C against each room's heat loss.</p></div>
+            <div><h2>Emitters</h2><p className="muted small">Output at the design-day flow of {fmt(designFlow, 1)} °C against each room's heat loss.</p>
+              <p className="small">Sized for a <b>{SOURCE_LABEL[house.hp.source].toLowerCase()}</b> at up to {house.hp.maxFlow} °C flow, {c.dT} K flow − return. <a href={href('heating')}>Change the heat source ›</a> · <a href={href('layout')}>Place emitters on the plan ›</a></p></div>
             <button type="button" className="btn-secondary" onClick={() => upd((h) => {
               const missing = needs.filter((n) => !h.heating.emitters.some((e) => e.room === n.room.id));
               const made = autoEmitters(h, missing).map((e) => ({ ...e, id: uid('e'), zone: h.heating.zones.find((z) => z.kind === 'rad')?.id ?? '' }));
@@ -240,7 +241,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
         <section className="card panel">
           <div className="section-head">
             <div><h2>Pipework</h2><p className="muted small">Pipe runs from the {isHeatPump(house.hp.source) ? 'heat pump' : 'boiler'}. Each run carries the design flow of every emitter beyond it ({c.dT} K flow − return). Limits: about 1 m/s (0.8 in microbore), and {fmt(pipesRes.paMax)} Pa/m: {pipesRes.paMax < pipesRes.paPump ? 'the cap set below' : `the pump head shared along the ${fmt(pipesRes.longest, 1)} m longest circuit`}.</p>
-              <p className="muted small">{c.source ? 'Runs laid out from the plan are measured along their routes, which you can drag into place on the plan; lengths follow as radiators, risers and the source move. Where runs overlap, or you drag one onto another, they share one pipe, sized for their combined flow, which tees off to each heater. A typed length overrides the route. Laying out again replaces every run.' : <>Place the boiler or heat pump, and any cylinder and pipe risers, on the <a href={href('plan')}>plan</a> to measure the runs instead of guessing them.</>}</p></div>
+              <p className="muted small">{c.source ? 'Runs laid out from the plan are measured along their routes, which you can drag into place on the plan; lengths follow as radiators, risers and the source move. Where runs overlap, or you drag one onto another, they share one pipe, sized for their combined flow, which tees off to each heater. A typed length overrides the route. Laying out again replaces every run.' : <>Place the boiler or heat pump, and any cylinder and pipe risers, on the <a href={href('layout')}>layout plan</a> to measure the runs instead of guessing them.</>}</p></div>
             <div className="chips">
               <button type="button" className="btn-secondary" onClick={() => { if (!c.pipes?.length || confirm('Replace the pipe runs with a typical layout?')) upd((h) => { h.heating.pipes = autoPipes(h); if (h.heating.source) combineRuns(h, res); }); }}>{c.source ? 'Lay out pipework from the plan' : 'Lay out typical pipework'}</button>
               <button type="button" className="btn-secondary" onClick={() => upd((h) => { const ps = h.heating.pipes ?? []; h.heating.pipes = [...ps, { id: uid('p'), name: 'New run', parent: ps[0]?.id ?? null, size: 'Cu 15 mm', length: 3 }]; })}>+ Run</button>
@@ -325,9 +326,10 @@ function CoolingCard() {
       <label className="hf-lab small"><input type="checkbox" checked={on} onChange={(e) => set({ on: e.target.checked })} /> This heat pump also cools</label>
       {on && c && <>
         <div className="hf-row">
-          <Num label="Cooling output" unit="kW at A35/W18" step={0.5} min={0} value={c.capacity} onChange={(v) => set({ capacity: Math.max(0, v) })} />
-          <Num label="EER" unit="at A35/W18" step={0.1} min={1} value={c.eer} onChange={(v) => set({ eer: Math.max(1, v) })} />
+          <SheetNum label="Cooling output" unit="kW" value={c.capacity} step={0.5} onChange={(v) => set({ capacity: v })} />
+          <SheetNum label="EER" unit="" value={c.eer} step={0.1} onChange={(v) => set({ eer: v })} />
         </div>
+        <p className="small muted">From the heat pump's datasheet, at its rated cooling point (often A35/W18 or A35/W7). {!given(c.capacity) && 'With no cooling output the runs assume the heat pump can take out whatever the emitters can. '}{!given(c.eer) && 'With no EER the electricity for cooling is not worked out.'}</p>
         <div className="hf-row">
           <Num label="Cool rooms to" unit="°C" step={0.5} min={18} max={30} value={c.setpoint} onChange={(v) => set({ setpoint: v })} />
           <Num label="Chilled flow" unit="°C" step={1} min={5} max={22} value={c.flow} onChange={(v) => set({ flow: v })} />
@@ -349,11 +351,14 @@ function CoolingLoadCard() {
   const c = house.heating.cooling, on = !!c?.on;
   const sum = load.rooms.reduce((t, r) => t + r.peakW, 0), area = load.rooms.reduce((t, r) => t + r.area, 0);
   const hr = (k: number) => `${String(k).padStart(2, '0')}:00`;
-  const short = on && load.blockW > c!.capacity * 1000;
+  const cap = on && given(c!.capacity) ? c!.capacity : null;
+  const short = cap != null && load.blockW > cap * 1000;
   return (
     <Card title="Design cooling load" note={`Heat to take out to hold every heated room at ${load.setpoint} °C all day on the summer peak day (clear sky, 15–29 °C outside, windows shut), after a month of such days so the walls and floors have warmed through. Each room's peak sizes its emitter; the whole house peaks lower than the sum because rooms peak at different times, and that figure sizes the heat pump. Sensible heat only: fan coils also remove some moisture. Times are solar time, about an hour behind the clock in summer.`}>
       <p className="mono"><b>{fmt(load.blockW / 1000, 1)} kW</b> for the whole house at {hr(load.blockHour)} · {fmt(area > 0 ? load.blockW / area : 0)} W/m² · room peaks add to {fmt(sum / 1000, 1)} kW</p>
-      {on && <p className={short ? 'small bad' : 'small'}>{short ? `More than the heat pump's ${c!.capacity} kW of cooling: at the peak, rooms will run above ${load.setpoint} °C.` : `Within the heat pump's ${c!.capacity} kW of cooling.`}</p>}
+      {on && (cap == null
+        ? <p className="small">Enter the heat pump's cooling output from its datasheet to check it against this load.</p>
+        : <p className={short ? 'small bad' : 'small'}>{short ? `More than the heat pump's ${cap} kW of cooling: at the peak, rooms will run above ${load.setpoint} °C.` : `Within the heat pump's ${cap} kW of cooling.`}</p>)}
       <div className="h-table-wrap">
         <table className="h-table">
           <thead><tr><th>Room</th><th className="n">Peak W</th><th className="n">At</th><th className="n">W/m²</th><th className="n">Sun</th><th className="n">People, appliances</th><th className="n">Walls, roof, glass</th><th className="n">Air</th><th className="n">Stored heat, other</th>{on && <th className="n">Emitters W</th>}</tr></thead>

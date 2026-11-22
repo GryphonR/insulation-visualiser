@@ -263,6 +263,9 @@ svg.draw .vx.moving { fill: #c2410c; }
 .lt { flex: none; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-height: 36px; padding: 2px 12px; border: 1px solid var(--line-strong); border-bottom: 0; background: #f7f5ef; cursor: pointer; font-size: 13px; color: var(--ink); line-height: 1.2; }
 .lt span { font-size: 11px; color: var(--muted); }
 .lt.on { background: #fbe6d8; border-color: var(--accent); box-shadow: inset 0 3px 0 var(--accent); }
+.plan-src { flex: none; align-self: center; display: flex; align-items: center; gap: 12px; white-space: nowrap; }
+.plan-src label { display: flex; align-items: center; gap: 4px; }
+.plan-src .thk-input { width: 4.5em; }
 .lt-band { min-height: 28px; padding: 2px 8px; font-size: 12px; color: var(--muted); border-style: dashed; background: repeating-linear-gradient(135deg, #f6f1e7, #f6f1e7 6px, #fbf8f1 6px, #fbf8f1 12px); }
 .lt-band.on { background: #e3f2ef; border: 1px solid #0b8a7a; border-bottom: 0; box-shadow: inset 0 3px 0 #0b8a7a; color: var(--ink); }
 .lt-add { flex: none; align-self: center; min-height: 28px; padding: 0 10px; border: 1px solid var(--line-strong); background: #fff; cursor: pointer; font-size: 12px; }
@@ -338,3 +341,9 @@ svg.draw .vx.moving { fill: #c2410c; }
 .sx-hint { background: #eaf2fa; border-radius: 6px; padding: 8px 10px; }
 .sx-checks { margin: 8px 0 0; padding-left: 18px; }
 .sx-checks li { margin: 4px 0; }
+
+/* Getting-started wizard on the Build-ups tab */
+.wiz-steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
+.wiz-opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.wiz-opt { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line-strong); background: #fff; cursor: pointer; }
+.wiz-opt.on { border-color: var(--accent); background: #fbe6d8; }

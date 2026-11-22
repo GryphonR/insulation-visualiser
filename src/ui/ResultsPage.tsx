@@ -95,16 +95,6 @@ export function ResultsPage() {
               })}
             </div>
           </Card>
-          <Card title="More results">
-            <div className="stack-10">
-              <a className="btn-secondary as-btn" href={href('year')}>Test the house: coldest day, year, heatwave, cold snap ›</a>
-              <a className="btn-secondary as-btn" href={href('energy')}>Energy &amp; running cost ›</a>
-              <a className="btn-secondary as-btn" href={href('bills')}>Check against bills ›</a>
-              <a className="btn-secondary as-btn" href={href('moisture')}>Moisture &amp; mould ›</a>
-              <a className="btn-secondary as-btn" href={href('report')}>Report &amp; export ›</a>
-              <a className="btn-primary as-btn" href={href('plan')}>Open plan lens ›</a>
-            </div>
-          </Card>
         </div>
       </div>
     </div>

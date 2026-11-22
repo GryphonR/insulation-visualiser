@@ -249,7 +249,9 @@ export function fiftiesSemi(): Project {
   h.name = '1950s semi';
   h.faceBoundary = Object.fromEntries(['w:living:W:0', 'w:dining:W:0', 'w:bed1:W:1', 'w:bed3:W:1'].map((k) => [k, 'party' as const]));
   h.openings = h.openings.filter((o) => o.to || o.side !== 'W');
-  // Heat pump outside the utility on the east gable, the cylinder in the utility.
+  // Heat pump outside the utility on the east gable, the cylinder in the utility: the smallest size that covers the peak.
+  const peak = calcHouse(h).peakW;
+  h.hp.capacity = HP_SIZES.find((k) => k * 1000 >= peak * 1.05) ?? HP_SIZES[HP_SIZES.length - 1];
   h.heating.source = at(9.5, 6.0); h.heating.cylinder = at(8.6, 6.6);
   pipeAndValve(h, 'hp');
   return newProject(h);
@@ -296,7 +298,8 @@ export function passivhaus(): Project {
   // Zoned by what the emitters can do, so the radiator zone valve is also what shuts the radiators off in cooling.
   h.heating.zones = h.heating.zones.map((z) => (z.id === 'z1' ? { ...z, name: 'Fan coils' } : z.id === 'z2' ? { ...z, name: 'Radiators' } : z));
   // Fan coils drain their condensate, so they take the usual 7/12 °C chilled water rather than a flow held above the dew point.
-  h.heating.cooling = { ...COOLING_DEFAULT, capacity: h.hp.capacity, flow: 7, dT: 5 };
+  // No cooling output or EER: those come from a real unit's datasheet, not from its heating output.
+  h.heating.cooling = { ...COOLING_DEFAULT, flow: 7, dT: 5 };
   // Outdoor unit by the plant room's north wall, the cylinder inside it.
   h.heating.source = at(1.2, -0.5); h.heating.cylinder = at(0.4, 0.4);
   pipeAndValve(h, 'hp');

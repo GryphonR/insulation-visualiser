@@ -73,8 +73,11 @@ export interface Heating {
 }
 
 /** A reversible heat pump's cooling: on, output at A35/W18 (kW), EER there, room setpoint, chilled flow and its rise, °C / K. */
-export interface Cooling { on: boolean; capacity: number; eer: number; setpoint: number; flow: number; dT: number }
-export const COOLING_DEFAULT: Cooling = { on: true, capacity: 5, eer: 3.5, setpoint: 25, flow: 18, dT: 3 };
+/** Cooling output (kW) and EER come only from the unit's datasheet: left out, the output is taken as unlimited (the emitters limit it) and cooling electricity isn't worked out. */
+export interface Cooling { on: boolean; capacity?: number; eer?: number; setpoint: number; flow: number; dT: number }
+export const COOLING_DEFAULT: Cooling = { on: true, setpoint: 25, flow: 18, dT: 3 };
+/** A datasheet figure the user has entered: a positive finite number. */
+export const given = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
 /** Indoor humidity taken for the dew point in cooling. shortcut: a fixed 60% (UK summer indoors); use a humidity input if the planner gains one. */
 export const COOL_RH = 0.6;
 /** Dew point, °C, from air temperature and relative humidity (0–1), Magnus formula. */
@@ -85,7 +88,7 @@ export function dewPoint(T: number, rh = COOL_RH): number {
 /** Cooling is in use: a heat pump with cooling switched on. */
 export const coolingOn = (h: Pick<House, 'hp' | 'heating'>) => (h.hp.source === 'ashp' || h.hp.source === 'gshp') && !!h.heating.cooling?.on;
 /** EER at outside Te: rated at 35 °C, about 2.5% better per K cooler. shortcut: linear in Te, held to 0.5–1.6× rated; use datasheet points if cooling gains them. */
-export const coolEer = (c: Cooling, Te: number) => c.eer * Math.min(1.6, Math.max(0.5, 1 + 0.025 * (35 - Te)));
+export const coolEer = (c: Cooling, Te: number) => (given(c.eer) ? c.eer : NaN) * Math.min(1.6, Math.max(0.5, 1 + 0.025 * (35 - Te)));
 /** Emitters that can cool: underfloor loops and fan coils. Radiators and towel rails only sweat. */
 export const canCool = (e: Pick<Emitter, 'kind'>) => e.kind === 'ufh' || e.kind === 'fancoil';
 export const EMITTER_NAME: Record<Emitter['kind'], string> = { radiator: 'Radiator', towel: 'Towel rail', ufh: 'Underfloor loop', fancoil: 'Fan coil' };

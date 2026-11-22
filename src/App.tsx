@@ -10,9 +10,9 @@ import { HouseHeating } from './ui/HouseHeating';
 import { HouseMoisture } from './ui/HouseMoisture';
 import { HouseReport } from './ui/HouseReport';
 import { HouseRuns } from './ui/HouseRuns';
-import { ChecksPage, FloorPage, GainsPage, OpeningsPage, SpacesPage } from './ui/HouseMore';
+import { FloorPage, GainsPage, OpeningsPage, SpacesPage } from './ui/HouseMore';
 import { HouseStart } from './ui/HouseStart';
-import { CompareAB, ScenariosPage } from './ui/HouseWorkspace';
+import { ScenariosPage } from './ui/HouseWorkspace';
 import { HouseSchematic } from './ui/HouseSchematic';
 import { LearnPage } from './ui/LearnPage';
 import { LibraryPage } from './ui/LibraryPage';
@@ -78,16 +78,17 @@ function Routes() {
         <HouseStart
           onCancel={() => go('projects')}
           onCreate={(h, job) => {
-            createProject({ ...newProject(h), ...job }); go('plan');
+            createProject({ ...newProject(h), ...job }); go('buildups', 'start');
           }} />
       );
       break;
     case 'plan': page = <PlanPage key={arg ?? 'p'} selected={arg} />; break;
+    case 'layout': page = <PlanPage key={`h${arg ?? ''}`} selected={arg} mode="heating" />; break;
     case 'view3d': page = <Suspense fallback={<p className="muted small">Loading the 3D view…</p>}><House3D /></Suspense>; break;
     case 'room': page = <RoomPage key={`${arg}/${arg2 ?? ""}`} id={arg ?? ''} initialTab={arg2} />; break;
     case 'projects': page = <ProjectsPage />; break;
-    case 'site': page = <SitePage />; break;
-    case 'storeys': page = <StoreysPage />; break;
+    case 'site': case 'settings': page = <SitePage />; break;
+    case 'storeys': case 'floor': page = <><StoreysPage /><FloorPage /></>; break;
     case 'vent': page = <VentPage />; break;
     case 'buildups': page = <BuildupsPage key={arg ?? 'b'} selected={arg} />; break;
     case 'library': page = <LibraryPage />; break;
@@ -96,10 +97,8 @@ function Routes() {
     case 'heating': case 'emitters': case 'zones': case 'pipes':
       page = <HouseHeating key={`${active.id}/${route}`} house={house} setHouse={setHouse} section={({ heating: 'system', emitters: 'emitters', zones: 'zones', pipes: 'pipes' } as const)[route]} />; break;
     case 'schematic': page = <HouseSchematic />; break;
-    case 'floor': page = <FloorPage />; break;
     case 'openings': page = <OpeningsPage />; break;
     case 'spaces': page = <SpacesPage />; break;
-    case 'checks': page = <ChecksPage />; break;
     case 'gains': page = <GainsPage />; break;
     case 'results': page = <ResultsPage />; break;
     case 'year': case 'conditions': page = <HouseRuns key={`${active.id}/${arg}/${arg2}`} house={house} setHouse={setHouse} project={project} ordered={ordered} initialCase={arg} initialRoom={arg2} />; break;
@@ -114,8 +113,7 @@ function Routes() {
           const q = sanitizeProject(p); if (q) setProject(q); else alert('That file has no usable scenarios.');
         }} />;
       break;
-    case 'scenarios': page = <ScenariosPage />; break;
-    case 'compare': page = <CompareAB />; break;
+    case 'scenarios': case 'compare': page = <ScenariosPage key={route} initial={route === 'compare' ? 'compare' : 'changes'} />; break;
     case 'learn': page = <LearnPage section={arg} />; break;
     default: page = <PlanPage />;
   }

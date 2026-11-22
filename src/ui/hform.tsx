@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { InputHTMLAttributes, ReactNode } from 'react';
+import { given } from '../engine/house-heating';
 
 export const fmt = (v: number, d = 0) => (Number.isFinite(v) ? v.toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—');
 // Random, not time-based: several made in the same millisecond (one emitter per room) must still differ.
@@ -51,6 +52,17 @@ export function NumInput({ value, onChange, onBlur, ...rest }: InputHTMLAttribut
     <input {...rest} type="number" value={draft ?? value ?? ''}
       onChange={(e) => { setDraft(e.target.value); if (e.target.value.trim() !== '' && Number.isFinite(Number(e.target.value))) onChange?.(e); }}
       onBlur={(e) => { setDraft(null); onBlur?.(e); }} />
+  );
+}
+
+/** A datasheet figure: blank until entered, never a made-up default. Cleared, it is undefined. */
+export function SheetNum({ label, unit, value, step, why, onChange }: { label: string; unit: string; value?: number; step: number; why?: ReactNode; onChange: (v: number | undefined) => void }) {
+  return (
+    <label className="hf">
+      <span className="hf-lab"><span className="eyebrow">{label}</span>{why && <Why>{why}</Why>}</span>
+      <span className="hf-in"><input type="number" className="thk-input" min={0} step={step} placeholder="datasheet" value={given(value) ? value : ''}
+        onChange={(e) => { const v = Number(e.target.value); onChange(e.target.value !== '' && given(v) ? v : undefined); }} />{unit && <span className="small muted">{unit}</span>}</span>
+    </label>
   );
 }
 

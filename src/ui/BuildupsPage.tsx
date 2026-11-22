@@ -5,6 +5,7 @@ import { MAT } from '../engine/data';
 import { buildupU, listedAs } from '../engine/house';
 import type { Buildup, BuildupKind } from '../engine/house';
 import { AddBuildupModal } from './AddBuildupModal';
+import { BuildupWizard } from './BuildupWizard';
 import { Card, Num, fmt, uid } from './hform';
 import { useProject } from './project';
 import { href } from './route';
@@ -88,6 +89,7 @@ export function BuildupsPage({ selected }: { selected?: string }) {
 
   return (
     <>
+      {selected === 'start' && <BuildupWizard />}
       <div className="lib">
         <aside className="lib-list">
           <div className="filters">
@@ -117,7 +119,8 @@ export function BuildupsPage({ selected }: { selected?: string }) {
             {shown.length === 0 && <p className="small muted" style={{ padding: 12 }}>No build-ups match.</p>}
           </div>
           <div style={{ padding: 12, borderTop: '1px solid var(--line-strong)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <button type="button" className="btn-primary" onClick={() => setAdding(true)}>+ Add build-up to project</button>
+            <button type="button" className="btn-primary" onClick={() => setAdding(true)}>+ Add from the library</button>
+            <button type="button" className="btn-secondary" onClick={() => setCreating(true)}>+ Create a new build-up</button>
             <button type="button" className="btn-secondary" disabled={unused.length === 0} onClick={removeUnused}>Remove {unused.length || 'all'} unused</button>
           </div>
         </aside>

@@ -4,14 +4,14 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { SOURCE_LABEL, isHeatPump } from '../engine/house';
 import type { House } from '../engine/house';
-import { EMITTER_NAME, RAD_LABEL, coolingOn, emitterCool } from '../engine/house-heating';
+import { EMITTER_NAME, RAD_LABEL, coolingOn, emitterCool, given } from '../engine/house-heating';
 import { PLANS, applyPlan, controlChecks, markCustom, modeSummary, modesOf, passes, posOf, reach, runUse } from '../engine/house-controls';
 import type { Mode, PlanKind, Pos, Use, Valve, Water } from '../engine/house-controls';
 import { runLength, sizePipes } from '../engine/house-pipes';
 import type { Pipe } from '../engine/house-pipes';
 import { download } from '../lib/util';
 import { Chip } from './controls';
-import { Num, fmt } from './hform';
+import { Num, SheetNum, fmt } from './hform';
 import { useProject } from './project';
 import { href } from './route';
 
@@ -233,12 +233,12 @@ export function HouseSchematic() {
               <rect width={W} height={H} fill="#fff" />
               <g fontFamily={FONT}>
                 <text x={24} y={34} fontSize={18} fontWeight={700} fill={INK}>Heating system schematic · {m.name}</text>
-                <text x={24} y={54} fontSize={11.5} fill={MUTED}>{active.name} · {SOURCE_LABEL[h.hp.source]} {fmt(h.hp.capacity, 1)} kW · design flow {fmt(flowT, 1)} °C, return {fmt(flowT - dT, 1)} °C · {fmt(totalW)} W at {res.Tout} °C outside{coolingOn(h) && cool ? ` · cooling ${fmt(cool.capacity, 1)} kW at ${cool.flow} °C` : ''}{ctl ? ` · ${ctl.plan === 'custom' ? 'custom controls' : PLANS[ctl.plan].name}` : ''}</text>
+                <text x={24} y={54} fontSize={11.5} fill={MUTED}>{active.name} · {SOURCE_LABEL[h.hp.source]}{given(h.hp.capacity) ? ` ${fmt(h.hp.capacity, 1)} kW` : ''} · design flow {fmt(flowT, 1)} °C, return {fmt(flowT - dT, 1)} °C · {fmt(totalW)} W at {res.Tout} °C outside{coolingOn(h) && cool ? ` · cooling${given(cool.capacity) ? ` ${fmt(cool.capacity, 1)} kW` : ''} at ${cool.flow} °C` : ''}{ctl ? ` · ${ctl.plan === 'custom' ? 'custom controls' : PLANS[ctl.plan].name}` : ''}</text>
               </g>
               {/* The heat source, flow out on top and return in below */}
               <rect x={24} y={yOf(srcY) - 36} width={X0 - 40} height={72} rx={6} fill={TINT[srcUse]} stroke={INK} strokeWidth={1.5} className="sx-fill" />
               <text x={24 + (X0 - 40) / 2} y={yOf(srcY) - 12} textAnchor="middle" fontFamily={FONT} fontSize={12} fontWeight={600} fill={INK}>{hp ? 'Heat pump' : 'Boiler'}</text>
-              <text x={24 + (X0 - 40) / 2} y={yOf(srcY) + 3} textAnchor="middle" fontFamily={FONT} fontSize={10.5} fill={MUTED}>{fmt(h.hp.capacity, 1)} kW · {h.heating.pumpHead ?? 40} kPa</text>
+              <text x={24 + (X0 - 40) / 2} y={yOf(srcY) + 3} textAnchor="middle" fontFamily={FONT} fontSize={10.5} fill={MUTED}>{given(h.hp.capacity) ? `${fmt(h.hp.capacity, 1)} kW · ` : ''}{h.heating.pumpHead ?? 40} kPa</text>
               <text x={24 + (X0 - 40) / 2} y={yOf(srcY) + 18} textAnchor="middle" fontFamily={FONT} fontSize={10.5} fontWeight={600} fill={COL[srcUse][0] === IDLE ? MUTED : COL[srcUse][0]}>{srcMode}</text>
               {hp
                 ? <g className={running ? 'sx-spin' : undefined}><circle cx={38} cy={yOf(srcY) - 22} r={8} fill="none" stroke={INK} strokeWidth={1} /><path d={`M38 ${yOf(srcY) - 22} l0 -7 M38 ${yOf(srcY) - 22} l6 4 M38 ${yOf(srcY) - 22} l-6 4`} stroke={INK} strokeWidth={1.5} /></g>
@@ -305,7 +305,7 @@ export function HouseSchematic() {
           {msg && <p className="small bad">{msg}</p>}
           {!ctl && <p className="small muted">No valves yet: everything is open, so heating{h.heating.cylinder ? ' and the cylinder run' : ''} {h.heating.cylinder ? 'take' : 'takes'} water at once{coolingOn(h) ? ', and cooling would reach every emitter' : ''}.</p>}
           {h.heating.cylinder && <div className="hf-row">
-            <Num label="Cylinder coil reheat" unit="kW" step={0.5} min={0} value={(h.heating.coilW ?? 0) / 1000} onChange={(v) => upd((x) => { x.heating.coilW = Math.round(Math.max(0, v) * 1000); })} />
+            <SheetNum label="Cylinder coil reheat" unit="kW" step={0.5} value={given(h.heating.coilW) ? h.heating.coilW / 1000 : undefined} why="The cylinder's coil output from its datasheet, at your flow temperature. Left blank, the cylinder run carries no reheat load when the pipes are sized." onChange={(v) => upd((x) => { if (v == null) delete x.heating.coilW; else x.heating.coilW = Math.round(v * 1000); })} />
           </div>}
           {checks.length > 0 && <ul className="small sx-checks">{checks.map((c, i) => <li key={i} className={c.level === 'error' ? 'bad' : 'warn'}>{c.text}</li>)}</ul>}
           {ctl && !checks.length && <p className="small good">Every mode checks out: no shut-off pump, no radiator on chilled water, every emitter heated.</p>}

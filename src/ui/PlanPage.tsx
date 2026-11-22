@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Pt } from '../engine/geom';
 import { DrawCanvas, GRID, NO_SEL } from './DrawCanvas';
 import type { EditField, Lens, OpPick, Sel, Tool, View as CanvasView } from './DrawCanvas';
-import { DrawMenu, GridSelect, Inspector, LayerSettings, LayerTabs, LensTabs, RoomFields, drawHint } from './DrawPanels';
+import { DrawMenu, GridSelect, Inspector, LayerSettings, LayerTabs, PlanBar, RoomFields, drawHint } from './DrawPanels';
 import { bandName } from '../engine/house-draw';
 import { planBounds } from './HousePlan';
 import { TraceControls, loadImagery, saveImagery, traceOf, traceUnderlay } from './HouseTrace';
@@ -14,8 +14,8 @@ import { useProject } from './project';
 import { autoPipes, combineRuns, pipeRest, unpiped } from '../engine/house-pipes';
 import { href } from './route';
 
-/** Board 1: the floor plan as a drawing canvas, layer by layer, with a lens and a summary of the selected room. */
-export function PlanPage({ selected }: { selected?: string }) {
+/** The floor plan as a drawing canvas, layer by layer, with a summary of the selected room. Model draws the rooms; Heating lays out emitters, plant and pipes on the same canvas. */
+export function PlanPage({ selected, mode = 'model' }: { selected?: string; mode?: 'model' | 'heating' }) {
   const { house, upd, res, undo, redo, canUndo, canRedo, project, setProject } = useProject();
   const trace = traceOf(project);
   const setTrace = (fn: (t: TraceSettings) => void) => setProject((p) => { const x = structuredClone(traceOf(p)); fn(x); return { ...p, trace: x }; });
@@ -27,13 +27,13 @@ export function PlanPage({ selected }: { selected?: string }) {
   const [roofOn, setRoofOn] = useState(false);
   const [sel, setSel] = useState<Sel>({ ...NO_SEL, room: startRoom?.id ?? '' });
   const [tool, setTool] = useState<Tool>('select');
-  const [lens, setLens] = useState<'loss' | 'temp' | 'cover' | 'none'>('loss');
-  /** What is being edited: the plan, or the pipework. Floor and ceiling layers and the roof are plan only. */
-  const [view, setView] = useState<Lens>('plan');
+  const [lens, setLens] = useState<'loss' | 'temp' | 'cover' | 'none'>(mode === 'heating' ? 'cover' : 'loss');
+  /** What is being edited: the plan, or the pipework. Floor and ceiling layers (where UFH zones are drawn) and the roof are plan only. */
+  const base: Lens = mode === 'heating' ? 'pipes' : 'plan';
+  const [view, setView] = useState<Lens>(base);
   /** The canvas pan and zoom, the same on every floor and layer. */
   const canvasView = useRef<CanvasView | null>(null);
   const [opPick, setOpPick] = useState<OpPick>({});
-  const pickView = (v: Lens) => { setView(v); setSel(NO_SEL); setTool('select'); if (v === 'pipes' && (band != null || roofOn)) { setBand(null); setRoofOn(false); } };
   const [showBelow, setShowBelow] = useState(true);
   // Asked in the bar, not with confirm(): embedded browsers can drop native dialogs silently.
   const [ask, setAsk] = useState<'auto' | 'unroute' | null>(null);
@@ -66,7 +66,7 @@ export function PlanPage({ selected }: { selected?: string }) {
   const roofSel = roofOn ? house.roofs.find((x) => x.id === sel.zone) : undefined;
   // A band shows the rooms of the storey it is the floor of (the top band, the top storey); the roof, the storey the chosen section sits on.
   const shown = roofOn ? (roofSel ? roofStorey(house, roofSel) : storey) : band == null ? storey : Math.min(band, last);
-  const goStorey = (s: number) => { setStorey(s); setBand(null); setRoofOn(false); setSel(NO_SEL); setTool('select'); };
+  const goStorey = (s: number) => { setStorey(s); setBand(null); setRoofOn(false); setSel(NO_SEL); setTool('select'); setView(base); };
   const goBand = (b: number) => { setBand(b); setRoofOn(false); setSel(NO_SEL); setTool('select'); setView('plan'); };
   const goRoof = (id?: string) => {
     const s = house.roofs.find((x) => x.id === id) ?? house.roofs[0];
@@ -111,16 +111,16 @@ export function PlanPage({ selected }: { selected?: string }) {
             return lens === 'temp' ? `${fmt(x.T, 1)} °C` : lens === 'cover' ? (!cv ? 'unheated' : cv.has ? `${fmt(cv.cover * 100)}% cover` : 'no emitter')
               : r.heated ? `${fmt(x.totalW)} W` : `unheated ${fmt(x.T, 1)} °C`;
           }} />
-      <LensTabs house={house} lens={view} setLens={pickView}>
+      <PlanBar house={house} mode={mode}>
         <span className="mono small"><b>{fmt(res.peakW / 1000, 2)} kW</b> · {fmt(res.heatedA ? res.peakW / res.heatedA : 0)} W/m² · {fmt(maxX - minX, 1)} × {fmt(maxY - minY, 1)} m</span>
         <label className="small">Colour <select className="draw-grid-sel" style={{ width: 'auto' }} value={lens} aria-label="Colour rooms by" onChange={(e) => setLens(e.target.value as typeof lens)}>
           <option value="loss">heat loss</option><option value="temp">temperature</option><option value="cover">emitter cover</option><option value="none">none</option>
         </select></label>
-        <label className="small" title="Turn true north on the plan: the bearing that up on the screen faces. Walls, windows and roof slopes take their direction from it.">
+        {mode === 'model' && <label className="small" title="Turn true north on the plan: the bearing that up on the screen faces. Walls, windows and roof slopes take their direction from it.">
           <span aria-hidden="true" className="north-arrow" style={{ transform: `rotate(${-(house.north ?? 0)}deg)` }}>↑N</span> Up faces{' '}
           <NumInput className="thk-input" step={5} value={house.north ?? 0} aria-label="Bearing that up on the plan faces, degrees from north"
             onChange={(e) => upd((h) => { const v = Number(e.target.value) || 0; h.north = ((v % 360) + 360) % 360; })} />°
-        </label>
+        </label>}
         {view === 'pipes' && house.heating.source && (() => {
           const n = unpiped(house).length, runs = house.heating.pipes?.length ?? 0;
           return <>
@@ -149,7 +149,7 @@ export function PlanPage({ selected }: { selected?: string }) {
             <div>{res.checks.map((c, i) => <p key={i} className={c.level === 'error' ? 'h-err small' : 'warn small'}>{c.level === 'error' ? 'Error: ' : ''}{c.text}</p>)}</div>
           </details>
         )}
-      </LensTabs>
+      </PlanBar>
 
       {/* The tools down the left of the canvas. */}
       <div className="plan-left">

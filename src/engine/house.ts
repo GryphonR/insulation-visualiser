@@ -18,7 +18,7 @@ export function climateOf(h: House): { station: number; region: number; lat: num
   const s = MCS_STATIONS[h.climate.station] ?? MCS_STATIONS[0];
   return { station: h.climate.station, region: h.climate.region, lat: s[2], lon: s[3], fromPostcode: false, km: 0 };
 }
-import { flowNeeded, loopLength, loopMax, roomOut, scheduleSource, systemFlow } from './house-heating';
+import { flowNeeded, given, loopLength, loopMax, roomOut, scheduleSource, systemFlow } from './house-heating';
 import type { Heating } from './house-heating';
 import type { Bills } from './house-calibrate';
 
@@ -277,7 +277,8 @@ export interface House {
    * performance factor (share of the ideal Carnot COP), and carbon factors kgCO2/kWh.
    */
   hp: {
-    source: HeatSource; fuel: Fuel; capacity: number; maxFlow: number;
+    /** Output at the design temperature, kW, from the datasheet. Left out, the source is taken to meet any load (no spare figure, no cap in the runs). */
+    source: HeatSource; fuel: Fuel; capacity?: number; maxFlow: number;
     elecP: number; gasP: number; gasSC: number; gasStanding: boolean; oilP: number; lpgP: number; boilerEff: number; hpFactor: number;
     co2: Record<'elec' | Fuel, number>;
     /** A specific heat pump's datasheet COP points; used in place of hpFactor while `source` matches the heat source. */
@@ -950,12 +951,17 @@ export const isHeatPump = (s: HeatSource) => s === 'ashp' || s === 'gshp';
 export const SOURCE_FLOW: Record<HeatSource, { maxFlow: number; dT: number }> = {
   boiler: { maxFlow: 80, dT: 11 }, condensing: { maxFlow: 70, dT: 20 }, ashp: { maxFlow: 45, dT: 5 }, gshp: { maxFlow: 45, dT: 5 },
 };
-/** Switch the heat source, with that source's typical flow temperature and flow−return drop (edits h in place). */
+/** Switch the heat source. The flow temperature and flow − return drop stay as set: the source card offers the typical ones. */
 export function setSource(h: House, s: HeatSource): void {
   h.hp.source = s;
-  h.hp.maxFlow = SOURCE_FLOW[s].maxFlow;
-  h.heating.dT = SOURCE_FLOW[s].dT;
 }
+/** The source's typical max flow and flow − return drop, offered when they differ from what is set (edits h in place). */
+export function useTypicalFlow(h: House): void {
+  h.hp.maxFlow = SOURCE_FLOW[h.hp.source].maxFlow;
+  h.heating.dT = SOURCE_FLOW[h.hp.source].dT;
+}
+/** The heat source's output, W: unlimited until a datasheet figure is entered. */
+export const capacityW = (hp: Pick<House['hp'], 'capacity'>) => (given(hp.capacity) ? hp.capacity * 1000 : Infinity);
 /** Heat per kWh bought as text: COP for a heat pump, % for a boiler. */
 export const effText = (s: HeatSource, e: number) => (isHeatPump(s) ? `COP ${e.toFixed(2)}` : `${Math.round(e * 100)}%`);
 
@@ -1156,7 +1162,7 @@ export function calcHouse(h: House): HouseResult {
   const hp = {
     // The design day is in January; ground loops are coldest in March.
     designEff: effAt(Tout, h.hp.source === 'gshp' ? 2 : 0), seasonal: kwh > EPS ? annualKWh / kwh : 0, kwh,
-    spare: peakW > EPS ? (h.hp.capacity * 1000) / peakW - 1 : 0,
+    spare: !given(h.hp.capacity) ? NaN : peakW > EPS ? (h.hp.capacity * 1000) / peakW - 1 : 0,
     cost: (kwh * tf.p) / 100 + tf.standing, co2: kwh * tf.co2,
   };
 

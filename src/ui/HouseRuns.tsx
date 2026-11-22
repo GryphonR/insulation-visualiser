@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { DAYS, MONTHS, MONTHS_FULL } from '../engine/data';
-import { FUEL_LABEL, SOURCE_LABEL, calcHouse, isHeatPump, tariff } from '../engine/house';
+import { FUEL_LABEL, SOURCE_LABEL, calcHouse, isHeatPump, tariff, capacityW } from '../engine/house';
 import type { House } from '../engine/house';
 import { MCS_STATIONS } from '../engine/climate-mcs';
 import { loadTmy } from '../engine/weather-tmy';
@@ -8,7 +8,7 @@ import type { Tmy } from '../engine/weather-tmy';
 import type { Project, Scenario } from '../engine/house-scenarios';
 import { CASES, hourGains, roomMass, simulate, verdict, yearTotals } from '../engine/house-sim';
 import type { CaseId } from '../engine/house-sim';
-import { roomSchedule, scheduleSource } from '../engine/house-heating';
+import { given, roomSchedule, scheduleSource } from '../engine/house-heating';
 import { useYearSim } from './useYearSim';
 import { href } from './route';
 import { Chip } from './controls';
@@ -141,11 +141,11 @@ export function HouseRuns({ house, setHouse, project, ordered, initialCase, init
             <div className="tile"><span className="tiles-head">Heat delivered</span><span className="tile-value"><span className="mono big">{fmt(sim.heatKWh, caseId === 'year' ? 0 : 1)}</span><span className="small muted">kWh</span></span>
               {cmp && <span className="small muted">{cmpHouse && ordered.find((s) => s.id === cmpId)?.name}: {fmt(cmp.heatKWh)}</span>}</div>
             <div className="tile"><span className="tiles-head">Peak hour</span><span className="tile-value"><span className="mono big">{fmt(sim.peakW / 1000, 2)}</span><span className="small muted">kW</span></span>
-              <span className="small muted">{sim.peakW >= house.hp.capacity * 1000 - 1 ? 'heat source flat out' : `of ${house.hp.capacity} kW`}</span></div>
+              <span className="small muted">{sim.peakW >= capacityW(house.hp) - 1 ? 'heat source flat out' : given(house.hp.capacity) ? `of ${house.hp.capacity} kW` : 'kW peak'}</span></div>
             {sim.heatKWh > 0 && <div className="tile"><span className="tiles-head">{SOURCE_LABEL[house.hp.source]}<Why>{`Heat delivered ÷ energy bought over this run, hour by hour at each hour's outside and flow temperature. ${sourceWhy(house.hp)} Cost is energy bought × unit price; standing charges are left out.`}</Why></span><span className="tile-value"><span className="mono big">{isHeatPump(house.hp.source) ? fmt(sim.heatKWh / sim.boughtKWh, 2) : fmt((sim.heatKWh / sim.boughtKWh) * 100)}</span><span className="small muted">{isHeatPump(house.hp.source) ? 'COP' : '% efficiency'}</span></span>
               <span className="small muted">{fmt(sim.boughtKWh, caseId === 'year' ? 0 : 1)} kWh {isHeatPump(house.hp.source) ? 'electricity' : FUEL_LABEL[house.hp.fuel].toLowerCase()} · £{fmt(cost, caseId === 'year' ? 0 : 2)}</span></div>}
             {sim.coolKWh > 0 && <div className="tile"><span className="tiles-head">Cooling<Why>Heat the heat pump took out of the cooled rooms, held at the cooling setpoint in their occupied hours, and the electricity it bought at each hour's EER. A room is cooled by the fan coils and underfloor loops a chilled-water mode reaches.</Why></span><span className="tile-value"><span className="mono big">{fmt(sim.coolKWh, caseId === 'year' ? 0 : 1)}</span><span className="small muted">kWh taken out</span></span>
-              <span className="small muted">peak {fmt(sim.coolPeakW / 1000, 2)} of {house.heating.cooling?.capacity ?? 0} kW · EER {fmt(sim.coolKWh / sim.coolBoughtKWh, 2)} · £{fmt((sim.coolBoughtKWh * tariff(house.hp).p) / 100, caseId === 'year' ? 0 : 2)}</span></div>}
+              <span className="small muted">peak {fmt(sim.coolPeakW / 1000, 2)}{given(house.heating.cooling?.capacity) ? ` of ${house.heating.cooling!.capacity}` : ''} kW · {Number.isFinite(sim.coolBoughtKWh) ? `EER ${fmt(sim.coolKWh / sim.coolBoughtKWh, 2)} · £${fmt((sim.coolBoughtKWh * tariff(house.hp).p) / 100, caseId === 'year' ? 0 : 2)}` : 'no EER entered, so no cost'}</span></div>}
           </div>
 
           {caseId !== 'year' && <>

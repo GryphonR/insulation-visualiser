@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { CIBSE_ACH, SHADING, defaultTemp, listedAs, onStorey, roomEdges, roomHeight } from '../engine/house';
-import type { Buildup, BuildupKind, House, HouseResult, Room, RoomType } from '../engine/house';
+import { CIBSE_ACH, SHADING, SOURCE_LABEL, setSource, defaultTemp, listedAs, onStorey, roomEdges, roomHeight } from '../engine/house';
+import type { Buildup, BuildupKind, HeatSource, House, HouseResult, Room, RoomType } from '../engine/house';
+import { useProject } from './project';
 import { EMITTER_NAME, RAD_LABEL, UFH_PIPES, UFH_SPACINGS, loopLength, loopMax } from '../engine/house-heating';
 import type { RadType } from '../engine/house-heating';
 import { OPEN_DOORWAY, addBasement, addStoreyAbove, bandName, canAddBasement, canRemoveBasement, canRemoveTop, copyRooms, deleteRoom, flipRooms, innerDoorAt, isOutside, narrowAtWall, openingCentre, partyKeys, pieceAlign, pieceGap, pieceKeys, pieceThickness, removeBasement, setPieceAlign, removeTop, rotateRooms, setWallLength, splitStoreys, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
@@ -189,19 +190,23 @@ export function LayerTabs({ house, storey, band, roof, pickStorey, pickBand, pic
   );
 }
 
-/** The lenses along the top of the canvas: what is being edited, each with its own tools and things to pick. `children` sit at the right of the bar. */
-export function LensTabs({ house, lens, setLens, children }: { house: House; lens: Lens; setLens: (l: Lens) => void; children?: ReactNode }) {
+/** The bar along the top of the canvas. On Heating it starts with the heat source, since every emitter is sized at its flow temperature. `children` sit at the right. */
+export function PlanBar({ house, mode, children }: { house: House; mode: 'model' | 'heating'; children?: ReactNode }) {
+  const { upd } = useProject();
   const runs = (house.heating.pipes ?? []).length, ems = house.heating.emitters.length;
-  const src = house.heating.source ? (house.hp.source === 'ashp' || house.hp.source === 'gshp' ? 'heat pump placed' : 'boiler placed') : 'no heat source yet';
-  const tab = (id: Lens, name: string, sub: string) => (
-    <button key={id} type="button" role="tab" className={`lt${lens === id ? ' on' : ''}`} aria-selected={lens === id} onClick={() => setLens(id)}><b>{name}</b><span>{sub}</span></button>
-  );
   return (
     <div className="lens-tabs">
-      <div className="lt-row" role="tablist" aria-label="Lens: what to edit">
-        {tab('plan', 'Floor plan', 'rooms, walls, windows and doors')}
-        {tab('pipes', 'Heating and cooling', `${ems} emitter${ems === 1 ? '' : 's'} · ${runs} pipe run${runs === 1 ? '' : 's'} · ${src}`)}
-      </div>
+      {mode === 'heating' && (
+        <div className="plan-src" title={`${ems} emitter${ems === 1 ? '' : 's'} · ${runs} pipe run${runs === 1 ? '' : 's'} · ${house.heating.source ? 'source placed' : 'source not placed yet'}`}>
+          <label className="small">Heat source{' '}
+            <select className="draw-grid-sel" style={{ width: 'auto' }} value={house.hp.source} aria-label="Heat source" onChange={(e) => upd((h) => setSource(h, e.target.value as HeatSource))}>
+              {(Object.keys(SOURCE_LABEL) as HeatSource[]).map((k) => <option key={k} value={k}>{SOURCE_LABEL[k]}</option>)}
+            </select>
+          </label>
+          <label className="small">max flow <NumInput className="thk-input" value={house.hp.maxFlow} step={1} aria-label="Max flow temperature" onChange={(e) => upd((h) => { h.hp.maxFlow = Number(e.target.value); })} /> °C</label>
+          <a className="small" href={href('heating')}>more ›</a>
+        </div>
+      )}
       {children && <div className="lens-stats">{children}</div>}
     </div>
   );

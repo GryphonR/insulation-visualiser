@@ -3,11 +3,11 @@
 import { COLOURS, DAYS, DOY, MEAN, ORIENTS, SWING } from './data';
 import { solarAt, solarFromData } from './solar';
 import type { Tmy } from './weather-tmy';
-import { calcHouse, sourceEff, tariff } from './house';
+import { calcHouse, sourceEff, tariff, capacityW } from './house';
 import type { Face, House, HouseResult, RoomResult, RoomType } from './house';
 import { roomKappa } from './heat-capacity';
 import type { Orient } from './data';
-import { COOLING_DEFAULT, coolEer, coolingOn, roomCool, roomOut, roomSchedule, systemFlow } from './house-heating';
+import { COOLING_DEFAULT, coolEer, given, coolingOn, roomCool, roomOut, roomSchedule, systemFlow } from './house-heating';
 import { served } from './house-controls';
 
 /** Where a face looks for the sun: its true bearing and tilt (vertical unless set). */
@@ -267,7 +267,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
       P[i] = Math.min(roomOut(hotH, r.room.id, flow, T[i]), need);
       Ptot += P[i];
     });
-    const cap = h.hp.capacity * 1000;
+    const cap = capacityW(h.hp);
     if (Ptot > cap) { for (let i = 0; i < N; i++) P[i] *= cap / Ptot; Ptot = cap; }
     // Cooling, when nothing calls for heat this step (the heat pump does one or the other): down to the cooling setpoint.
     let Ctot = 0;
@@ -281,7 +281,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
         held[i] = C[i] >= need - 1 ? 1 : 0;
         Ctot += C[i];
       });
-      const ccap = coolC.capacity * 1000;
+      const ccap = given(coolC.capacity) ? coolC.capacity * 1000 : Infinity;
       if (Ctot > ccap) { for (let i = 0; i < N; i++) C[i] *= ccap / Ctot; Ctot = ccap; held.fill(0); }
     }
     // Heatwave: someone home opens a room's windows once it passes 22 °C and it is cooler outside (CIBSE TM59).
@@ -396,6 +396,7 @@ export function yearRes(h: House, res: HouseResult, sim: SimResult | null, k = 1
     ...res, annualKWh, months, annualFrom: sim ? 'year' : 'estimate',
     hp: { ...res.hp, kwh, seasonal: kwh > 0 ? annualKWh / kwh : res.hp.seasonal, cost: (kwh * tf.p) / 100 + tf.standing, co2: kwh * tf.co2 },
     // A heat pump's cooling is bought on the same electricity tariff, with no second standing charge.
+    // Without the datasheet EER the electricity is NaN: shown as not worked out, never as zero.
     cool: sim && sim.coolKWh > 0 ? { removed: sim.coolKWh, kwh: sim.coolBoughtKWh, cost: (sim.coolBoughtKWh * tf.p) / 100, co2: sim.coolBoughtKWh * tf.co2, peakW: sim.coolPeakW } : undefined,
   };
 }
@@ -416,9 +417,9 @@ export function verdict(h: House, r: SimResult, cost = 0): { ok: boolean; text: 
   const named = (ids: string[]) => ids.map((id) => r.rooms.find((x) => x.id === id)!.name).join(', ');
   const short = r.comfort.filter((c) => c.late > 0).map((c) => c.id);
   if (r.id === 'design') {
-    const flat = r.peakW >= h.hp.capacity * 1000 - 1;
+    const flat = r.peakW >= capacityW(h.hp) - 1;
     if (short.length) return { ok: false, text: `No: ${named(short)} ${short.length > 1 ? 'stay' : 'stays'} more than 1 K below the setpoint beyond a ${WARMUP_H}-hour warm-up${flat ? ', with the heat source flat out' : ''}.` };
-    return { ok: true, text: `Yes: every heated room is within 1 K of its setpoint after a ${WARMUP_H}-hour warm-up, peaking at ${(r.peakW / 1000).toFixed(1)} of ${h.hp.capacity} kW.` };
+    return { ok: true, text: `Yes: every heated room is within 1 K of its setpoint after a ${WARMUP_H}-hour warm-up, peaking at ${(r.peakW / 1000).toFixed(1)}${given(h.hp.capacity) ? ` of ${h.hp.capacity}` : ''} kW.` };
   }
   if (r.id === 'year') {
     const text = `About £${Math.round(cost).toLocaleString('en-GB')} for ${Math.round(r.heatKWh).toLocaleString('en-GB')} kWh of space heating.`;

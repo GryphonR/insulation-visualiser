@@ -10,7 +10,6 @@ import { useYearSims } from './useYearSim';
 import type { Change, Project, Scenario } from '../engine/house-scenarios';
 import { Chip } from './controls';
 import { useProject } from './project';
-import { href } from './route';
 import './house.css';
 import { Why, fmt, mix, uid } from './hform';
 import { WHY } from './assumptions';
@@ -19,16 +18,17 @@ import { MAX_SCENARIOS, SCENARIO_LIMIT_MSG } from '../engine/limits';
 const sgn = (v: number, d = 0) => (Math.abs(v) < 0.5 * 10 ** -d ? '0' : `${v > 0 ? '+' : '−'}${fmt(Math.abs(v), d)}`);
 const ROW_WHY: Record<string, string> = {
   'Heat source spare, %': WHY.capacity,
-  'Heat per kWh bought (est. SCOP or efficiency)': `${WHY.seasonal} Heat pump COPs are estimates for a typical unit; see Heating › System & flow for how each is worked out and to set the performance factor.`,
+  'Heat per kWh bought (est. SCOP or efficiency)': `${WHY.seasonal} Heat pump COPs are estimates for a typical unit; see Heating › Source & flow for how each is worked out and to set the performance factor.`,
   'Energy bought, kWh/yr': WHY.bought,
   'Running cost, £/yr': 'Energy bought × each scenario\'s unit price, plus the gas standing charge only where it is switched on for a gas boiler. Prices are set on the Energy & cost page.',
   'Carbon, kgCO₂/yr': WHY.carbon,
 };
 const KIND_LABEL: Record<Scenario['kind'], string> = { base: 'base · the house today', plan: 'plan', whatif: 'what-if' };
 
-/** Board 5: the scenario tree with the bar to branch, rename and delete. Changes are made in the model, build-ups and heating pages. */
-export function ScenariosPage() {
+/** The scenario tree with the bar to branch, rename and delete, and two scenarios side by side on the plan. Changes are made in the model, build-ups and heating pages. */
+export function ScenariosPage({ initial = 'changes' }: { initial?: 'changes' | 'compare' }) {
   const { project, setProject, active, results, ordered, depth } = useProject();
+  const [show, setShow] = useState(initial);
   const full = project.scenarios.length >= MAX_SCENARIOS;
   const branch = () => {
     if (full) return;
@@ -61,7 +61,6 @@ export function ScenariosPage() {
           <div className="chips">
             <button type="button" className="btn-secondary" disabled={full} title={full ? SCENARIO_LIMIT_MSG : undefined} onClick={branch}>New scenario from this</button>
             {active.parent && <button type="button" className="btn-secondary" onClick={remove}>Delete</button>}
-            <a className="btn-secondary as-btn" href={href('compare')}>Compare on plan ›</a>
           </div>
         </div>
         <div className="chips" role="group" aria-label="Scenarios">
@@ -75,15 +74,15 @@ export function ScenariosPage() {
           {project.scenarios.length} of {MAX_SCENARIOS} scenarios in this project during the open beta.{full && ' Delete one to branch another.'}
         </p>
       </section>
-      <ScenariosView project={project} active={active} results={results} ordered={ordered} setProject={setProject} />
+      <div className="seg" role="group" aria-label="Show">
+        <button type="button" className={show === 'changes' ? 'on' : ''} aria-pressed={show === 'changes'} onClick={() => setShow('changes')}>Changes and figures</button>
+        <button type="button" className={show === 'compare' ? 'on' : ''} aria-pressed={show === 'compare'} onClick={() => setShow('compare')}>Compare two on the plan</button>
+      </div>
+      {show === 'changes'
+        ? <ScenariosView project={project} active={active} results={results} ordered={ordered} setProject={setProject} />
+        : <CompareView project={project} results={results} ordered={ordered} />}
     </div>
   );
-}
-
-/** Board 5a: two scenarios on the plan. */
-export function CompareAB() {
-  const { project, results, ordered } = useProject();
-  return <CompareView project={project} results={results} ordered={ordered} />;
 }
 
 function ScenariosView({ project, active, results, ordered, setProject }: {
@@ -131,7 +130,7 @@ function ScenariosView({ project, active, results, ordered, setProject }: {
       <div className="house-col">
         <section className="card panel">
           <h2>Scenario tree</h2>
-          <p className="muted small">Each scenario starts as a copy of its parent. Edit it in the Model view; its changes are listed here.</p>
+          <p className="muted small">Each scenario starts as a copy of its parent. Edit it in the House, Build-ups and Heating tabs; its changes are listed here.</p>
           <div className="tree">
             {ordered.map((s) => {
               const r = results.get(s.id)!;
@@ -157,7 +156,7 @@ function ScenariosView({ project, active, results, ordered, setProject }: {
                     <td>{label}{ROW_WHY[label] && <Why>{ROW_WHY[label]}</Why>}</td>
                     {cols.map(({ s, r }) => {
                       const v = f(r), b = f(base), dv = mode === '%' ? ((v - b) / (b || 1)) * 100 : v - b;
-                      return <td key={s.id} className={s.id === active.id ? 'n mono hl' : 'n mono'}>{fmt(v, d)}{s.parent && <span className="muted small"> {sgn(dv, mode === '%' ? 0 : d)}{mode}</span>}</td>;
+                      return <td key={s.id} className={s.id === active.id ? 'n mono hl' : 'n mono'}>{fmt(v, d)}{s.parent && Number.isFinite(dv) && <span className="muted small"> {sgn(dv, mode === '%' ? 0 : d)}{mode}</span>}</td>;
                     })}
                   </tr>
                 ))}
@@ -172,7 +171,7 @@ function ScenariosView({ project, active, results, ordered, setProject }: {
           <h2>Changes in {active.name}</h2>
           {!parent ? <p className="muted small">The base scenario is the house as it is. Make a new scenario from it to try changes.</p> : <>
             <p className="muted small">Switch a change off to see the scenario without it. Figures are each change's effect in the order listed.</p>
-            {own.length === 0 && <p className="small">No changes yet: edit this scenario in the Model view.</p>}
+            {own.length === 0 && <p className="small">No changes yet: edit this scenario in the House, Build-ups or Heating tabs.</p>}
             <div className="h-table-wrap">
               <table className="h-table">
                 <thead><tr><th /><th>Change</th><th>From</th><th>To</th><th className="n">Peak W</th><th className="n">kWh/yr</th><th className="n">£/yr<Why>{ROW_WHY['Running cost, £/yr']}</Why></th></tr></thead>

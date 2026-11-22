@@ -7,29 +7,28 @@ import { Account } from './Account';
 
 export const SECTIONS = [
   { n: 1, id: 'buildups', label: 'Build-ups', to: 'buildups', routes: ['buildups', 'library', 'materials', 'compare-buildups', 'wall'] },
-  { n: 2, id: 'model', label: 'Model', to: 'plan', routes: ['plan', 'view3d', 'room', 'site', 'storeys', 'vent', 'floor', 'openings', 'spaces', 'checks'] },
-  { n: 3, id: 'heating', label: 'Heating', to: 'heating', routes: ['heating', 'emitters', 'zones', 'pipes', 'schematic'] },
-  { n: 4, id: 'results', label: 'Results', to: 'results', routes: ['results', 'energy', 'bills', 'moisture', 'report', 'gains'] },
+  { n: 2, id: 'model', label: 'House', to: 'plan', routes: ['plan', 'view3d', 'room', 'storeys', 'vent', 'floor', 'openings'] },
+  { n: 3, id: 'heating', label: 'Heating', to: 'heating', routes: ['heating', 'layout', 'emitters', 'gains', 'zones', 'pipes', 'schematic'] },
+  { n: 4, id: 'results', label: 'Results', to: 'results', routes: ['results', 'year', 'conditions', 'energy', 'spaces', 'bills', 'moisture', 'scenarios', 'compare', 'report'] },
 ] as const;
 
 const SUBNAV: Record<string, Array<[string, string]>> = {
-  model: [['plan', 'Floor plan'], ['view3d', '3D view'], ['site', 'Site & climate'], ['storeys', 'Storeys & loft'], ['vent', 'Ventilation'], ['floor', 'Floors'], ['openings', 'Windows & doors'], ['spaces', 'Unheated spaces'], ['checks', 'Checks & history']],
-  heating: [['heating', 'System & flow'], ['emitters', 'Emitters'], ['zones', 'Zones & UFH'], ['pipes', 'Pipework'], ['schematic', 'System diagram']],
-  buildups: [['buildups', 'Project'], ['materials', 'Materials'], ['library', 'Build-ups'], ['wall', 'Simulate']],
-  results: [['results', 'Design day'], ['year', 'Test the house'], ['gains', 'Occupancy & heating times'], ['energy', 'Energy & cost'], ['bills', 'Check against bills'], ['moisture', 'Moisture & mould'], ['report', 'Report & export']],
-  scenarios: [['scenarios', 'Scenarios'], ['compare', 'Compare A vs B']],
+  model: [['plan', 'Floor plan'], ['view3d', '3D view'], ['floor', 'Floors, storeys & roofs'], ['vent', 'Ventilation'], ['openings', 'Windows & doors']],
+  heating: [['heating', 'Source & flow'], ['layout', 'Layout on plan'], ['emitters', 'Emitters'], ['gains', 'Occupancy & times'], ['zones', 'Zones & UFH'], ['pipes', 'Pipework'], ['schematic', 'System diagram']],
+  buildups: [['buildups', 'In this house'], ['materials', 'Materials'], ['library', 'Library'], ['wall', 'Simulate']],
+  results: [['results', 'Design day'], ['year', 'Test the house'], ['energy', 'Energy & cost'], ['spaces', 'Unheated spaces'], ['bills', 'Check against bills'], ['moisture', 'Moisture & mould'], ['scenarios', 'Scenarios'], ['report', 'Report & export']],
 };
+/** Addresses that share a page with a sub tab: highlight that one. */
+const SAME_AS: Record<string, string> = { storeys: 'floor', compare: 'scenarios', conditions: 'year' };
 
 /** Which workflow step (and sub-nav) a route belongs to. */
 export function sectionOf(route: string): string | null {
-  if (route === 'year') return 'results';
-  if (route === 'scenarios' || route === 'compare') return 'scenarios';
   return SECTIONS.find((s) => (s.routes as readonly string[]).includes(route))?.id ?? null;
 }
 
-/** Heating needs attention while any heated room's emitters fall short of its loss. */
-function heatingIssues(res: ReturnType<typeof useProject>['res']): number {
-  return res.heat.rooms.filter((r) => !r.has || r.cover < 0.995).length;
+/** Heating needs attention while any heated room's emitters fall short of its loss; not before the first emitter is placed. */
+function heatingIssues(res: ReturnType<typeof useProject>['res'], emitters: number): number {
+  return emitters ? res.heat.rooms.filter((r) => !r.has || r.cover < 0.995).length : 0;
 }
 
 const MANAGE = '__manage';
@@ -41,10 +40,12 @@ const Arrow = ({ flip }: { flip?: boolean }) => (
 );
 
 export function Shell({ route, children }: { route: string; children: ReactNode }) {
-  const { project, active, res, ordered, depth, setProject, undo, redo, canUndo, canRedo, saveOk } = useProject();
+  const { project, active, house, res, ordered, depth, setProject, undo, redo, canUndo, canRedo, saveOk } = useProject();
   const sec = sectionOf(route);
   const sub = sec ? SUBNAV[sec] : undefined;
-  const issues = heatingIssues(res);
+  const issues = heatingIssues(res, house.heating.emitters.length);
+  const here = SAME_AS[route] ?? route;
+  const errors = res.checks.filter((c) => c.level === 'error').length;
   const setActive = (id: string) => setProject((p) => ({ ...p, active: id }));
   const head = useRef<HTMLDivElement>(null);
   // Publish the fixed header's height so sticky contents and scrolled-to elements clear it (0 on phones, where it scrolls away).
@@ -55,7 +56,7 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
     return () => ro.disconnect();
   }, []);
   return (
-    <div className={route === 'plan' ? 'shell fill' : route === 'schematic' ? 'shell wide' : 'shell'}>
+    <div className={route === 'plan' || route === 'layout' ? 'shell fill' : route === 'schematic' ? 'shell wide' : 'shell'}>
       <div className="shell-head" ref={head}>
       <header className="top">
         <a className="brand" href={import.meta.env.BASE_URL} title="Insuliser home">
@@ -74,7 +75,7 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
         </label>
         <div className="ctx">
           <span className="eb">Conditions</span>
-          <a className="ctx-v" href={href('site')} title="The design outside temperature, from the postcode: change it on Site & climate">Design day {fmt(res.Tout, 1)} °C ▾</a>
+          <a className="ctx-v" href={href('settings')} title="The design outside temperature, from the postcode: change it in Project settings">Design day {fmt(res.Tout, 1)} °C ▾</a>
         </div>
         <nav className="wf" aria-label="Workflow">
           {SECTIONS.map((s) => (
@@ -83,6 +84,7 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
               {s.id === 'heating' && issues > 0 && <span className="warn" aria-label={`${issues} issues`}>{issues}</span>}
             </a>
           ))}
+          <a href={href('settings')} className={route === 'settings' ? 'on' : ''} aria-current={route === 'settings' ? 'page' : undefined}>Settings</a>
           <a href={href('learn')} className={route === 'learn' ? 'on' : ''} aria-current={route === 'learn' ? 'page' : undefined}>Learn</a>
         </nav>
         <div className="run">
@@ -101,9 +103,15 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
           {sub.map(([id, label], i) => (
             <Fragment key={id}>
               {sec === 'buildups' && i === 1 && <span className="sub-sep" aria-hidden="true" />}
-              <a href={href(id)} className={route === id ? 'on' : ''} aria-current={route === id ? 'page' : undefined}>{label}</a>
+              <a href={href(id)} className={here === id ? 'on' : ''} aria-current={here === id ? 'page' : undefined}>{label}</a>
             </Fragment>
           ))}
+          {res.checks.length > 0 && route !== 'plan' && route !== 'layout' && (
+            <details className="plan-checks sub-checks">
+              <summary>{'\u26a0'} {res.checks.length} model check{res.checks.length === 1 ? '' : 's'}{errors ? ` (${errors} error${errors === 1 ? '' : 's'})` : ''}</summary>
+              <div>{res.checks.map((c, i) => <p key={i} className={c.level === 'error' ? 'h-err small' : 'warn small'}>{c.level === 'error' ? 'Error: ' : ''}{c.text}</p>)}</div>
+            </details>
+          )}
         </nav>
       )}
       </div>

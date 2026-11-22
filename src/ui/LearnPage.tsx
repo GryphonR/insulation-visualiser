@@ -308,7 +308,7 @@ export function LearnPage({ section, links = APP_LINKS }: { section?: string; li
           <p>The tabs across the top follow the order you work in:</p>
           <ol className="learn-steps">
             <li><b>Build-ups:</b> the walls, floors, roofs, windows and doors the house is made of. See <Go to="learn/plan-buildups">Build-ups</Go>.</li>
-            <li><b>Model:</b> draw the rooms on a floor plan, then set the site, storeys, ventilation, floors and openings. See <Go to="learn/plan-model">Drawing the house</Go>.</li>
+            <li><b>House:</b> draw the rooms on a floor plan, then set the storeys, roofs, floors, ventilation and openings. See <Go to="learn/plan-model">Drawing the house</Go>.</li>
             <li><b>Heating:</b> the flow temperature, a radiator or underfloor loop for each room, and the pipework. See <Go to="learn/plan-heating">Heating</Go>.</li>
             <li><b>Results:</b> heat loss, the year hour by hour, running cost, a check against your bills, mould risk, and a printable report. See <Go to="learn/plan-results">Results</Go>.</li>
           </ol>
@@ -375,10 +375,10 @@ export function LearnPage({ section, links = APP_LINKS }: { section?: string; li
           <p>
             Click a room and choose <b>Open room</b> for its own page. <b>Faces</b> lists every wall, window, floor and ceiling with its build-up and heat loss, and simulates the room over the design day. <b>Room &amp; outline</b> sets its type, whether it's heated, its temperature and its shape. <b>Windows &amp; doors</b> lists its openings.
           </p>
-          <h3>The other Model pages</h3>
+          <h3>The other House pages</h3>
           <ul>
-            <li><Go to="site">Site &amp; climate</Go>: the weather station and its design temperature (the coldest 0.4% of hours, the MCS default), ground temperature, party walls and room temperatures.</li>
-            <li><Go to="storeys">Storeys &amp; loft</Go>: ceiling heights, depth below ground, roofs and loft ventilation. A roof drawn over the top storey gives the rooms under it sloping ceilings and knee walls.</li>
+            <li><Go to="settings">Project settings</Go>: the weather station and its design temperature (the coldest 0.4% of hours, the MCS default), ground temperature, party walls and room temperatures.</li>
+            <li><Go to="floor">Floors, storeys &amp; roofs</Go>: ceiling heights, depth below ground, roofs and loft ventilation. A roof drawn over the top storey gives the rooms under it sloping ceilings and knee walls.</li>
             <li><Go to="vent">Ventilation</Go>: either a whole-house air leakage figure (estimated, or measured with a blower door test) or standard air change rates for each room type. Also chimneys, fans and heat recovery.</li>
             <li><Go to="floor">Floors</Go>: the ground floor build-up, foundation edge insulation and the heat lost where the floor meets the walls.</li>
             <li><Go to="openings">Windows &amp; doors</Go>: every opening in the house in one list.</li>
@@ -394,7 +394,7 @@ export function LearnPage({ section, links = APP_LINKS }: { section?: string; li
           </p>
           <ul>
             <li>
-              <Go to="heating">System &amp; flow</Go>: the flow temperature at the design outside temperature, and the drop from flow to return. With weather compensation, the flow falls as the weather warms, down to the value you set at 15 °C outside. The room that needs the hottest water to keep up sets the flow for the whole system.
+              <Go to="heating">Source &amp; flow</Go>: the flow temperature at the design outside temperature, and the drop from flow to return. With weather compensation, the flow falls as the weather warms, down to the value you set at 15 °C outside. The room that needs the hottest water to keep up sets the flow for the whole system.
             </li>
             <li>
               <Go to="emitters">Emitters</Go>: each room's need against its heaters' output at that flow temperature. A room shown short won't reach its setpoint on the coldest day. <b>Add radiators to rooms without one</b> sizes a radiator for each empty room. Radiator outputs are typical catalogue figures. Underfloor output depends on pipe spacing and floor covering, and is limited by a 29 °C floor surface.
@@ -408,7 +408,7 @@ export function LearnPage({ section, links = APP_LINKS }: { section?: string; li
             </li>
           </ul>
           <p>
-            The heat source itself (boiler or heat pump), its output and its efficiency are chosen at the top of <Go to="heating">System &amp; flow</Go>. Choosing one sets its typical max flow temperature and flow − return drop (80 °C and 11 K for an old boiler, 70 °C and 20 K for a condensing boiler, 45 °C and 5 K for a heat pump), so the radiators are checked at the flow that source really runs at. Your energy prices are under Results, on <Go to="energy">Energy &amp; cost</Go>.
+            The heat source itself (boiler or heat pump), its output and its efficiency are chosen at the top of <Go to="heating">Source &amp; flow</Go>. Choosing one sets its typical max flow temperature and flow − return drop (80 °C and 11 K for an old boiler, 70 °C and 20 K for a condensing boiler, 45 °C and 5 K for a heat pump), so the radiators are checked at the flow that source really runs at. Your energy prices are under Results, on <Go to="energy">Energy &amp; cost</Go>.
           </p>
         </Sec>
 
@@ -443,7 +443,7 @@ export function LearnPage({ section, links = APP_LINKS }: { section?: string; li
           </ul>
           <h3>Cooling</h3>
           <p>
-            A heat pump can run in reverse. Turn it on under <Go to="heating">System &amp; flow</Go> → <b>Cooling</b>, with its cooling output and EER (both at 35 °C outside and 18 °C water), the temperature to cool rooms to, and the chilled flow and its rise. Fan coils (an emitter kind on <Go to="emitters">Emitters</Go>, or on the plan from a radiator&apos;s side panel) and underfloor loops can cool. Radiators and towel rails cannot. In the <Go to="year/summer">Summer peak day</Go> and <Go to="year/year">Typical year</Go> runs, rooms with a cooling emitter are held at the cooling setpoint during their occupied hours. While the cooling is holding a room there, its windows stay shut. Outside those hours, or when the cooling cannot keep up, the windows are opened as in any other room. The Passivhaus-type demo shows this: fan coils in the living room and the two big bedrooms, on 7/12 °C chilled water. It is zoned as fan coils and radiators, so in cooling the radiator zone valve is shut. The cooling&apos;s electricity and cost are shown on their own, beside the heating figures on <Go to="energy">Energy &amp; cost</Go> and in the report.
+            A heat pump can run in reverse. Turn it on under <Go to="heating">Source &amp; flow</Go> → <b>Cooling</b>, with its cooling output and EER (both at 35 °C outside and 18 °C water), the temperature to cool rooms to, and the chilled flow and its rise. Fan coils (an emitter kind on <Go to="emitters">Emitters</Go>, or on the plan from a radiator&apos;s side panel) and underfloor loops can cool. Radiators and towel rails cannot. In the <Go to="year/summer">Summer peak day</Go> and <Go to="year/year">Typical year</Go> runs, rooms with a cooling emitter are held at the cooling setpoint during their occupied hours. While the cooling is holding a room there, its windows stay shut. Outside those hours, or when the cooling cannot keep up, the windows are opened as in any other room. The Passivhaus-type demo shows this: fan coils in the living room and the two big bedrooms, on 7/12 °C chilled water. It is zoned as fan coils and radiators, so in cooling the radiator zone valve is shut. The cooling&apos;s electricity and cost are shown on their own, beside the heating figures on <Go to="energy">Energy &amp; cost</Go> and in the report.
           </p>
         </Sec>
 
@@ -492,7 +492,7 @@ export function LearnPage({ section, links = APP_LINKS }: { section?: string; li
             <li>
               <Go to="scenarios">Scenarios</Go> lists every change a scenario makes and what each one saves, step by step. Switch a change off to see the scenario without it. The tree shows how scenarios build on each other, so you can try several routes from the same starting point.
             </li>
-            <li><Go to="compare">Compare A vs B</Go> puts two scenarios on the floor plan and colours each room by how much its heat loss changed.</li>
+            <li><Go to="compare">Compare two on the plan</Go> (under Results › Scenarios) puts two scenarios on the floor plan and colours each room by how much its heat loss changed.</li>
           </ul>
           <p>
             The year runs can also show another scenario alongside, as outlined bars, using <b>Compare with</b>.

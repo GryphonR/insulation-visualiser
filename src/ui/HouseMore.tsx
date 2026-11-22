@@ -239,7 +239,7 @@ export function SpacesPage() {
               <thead><tr><th>Element</th><th>Other side</th><th className="n">m²</th><th className="n">U</th><th className="n">W/K</th></tr></thead>
               <tbody>
                 {own.map((f) => <tr key={f.key}><td>{f.label}</td><td>{f.to.k === 'room' ? (house.rooms.find((r) => r.id === (f.to as { id: string }).id)?.name ?? '—') : f.to.k}</td><td className="n mono">{fmt(f.area, 1)}</td><td className="n mono">{fmt(f.U, 2)}</td><td className="n mono">{fmt(f.U * f.area, 1)}</td></tr>)}
-                {s.id === 'loft' && <tr><td colSpan={5} className="small muted">Ceilings below, the roof and ventilation at {fmt(house.loft.ach, 1)} ach; set on Storeys &amp; loft.</td></tr>}
+                {s.id === 'loft' && <tr><td colSpan={5} className="small muted">Ceilings below, the roof and ventilation at {fmt(house.loft.ach, 1)} ach; set under House › Floors, storeys &amp; roofs.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -263,43 +263,6 @@ export function SpacesPage() {
           <p className="small muted">Eaves voids belong to the room shape; sub-floor voids belong to suspended floors.</p>
         </Card>
       </aside>
-    </div>
-  );
-}
-
-/** Board 1f: model checks as you draw, the storeys stacked, and history. */
-export function ChecksPage() {
-  const { house, res, undo, redo, canUndo, canRedo, project } = useProject();
-  let height = 0;
-  const stack = house.storeys.map((s, i) => { const base = height; height += s.h + (i < house.storeys.length - 1 ? s.zone : 0); return { s, i, base, top: base + s.h }; });
-  const errors = res.checks.filter((c) => c.level === 'error').length;
-  return (
-    <div className="house-grid">
-      <div className="house-col">
-        <Card title="Model checks" note="Checks run as you draw. Errors stop a simulation; warnings don't.">
-          {res.checks.length === 0 && <p className="small">No problems found.</p>}
-          {res.checks.map((c, i) => <p key={i} className={c.level === 'error' ? 'h-err' : 'warn'}>{c.level === 'error' ? 'Error: ' : 'Warning: '}{c.text}</p>)}
-          <p className="small mono">{errors} error{errors === 1 ? '' : 's'} · {res.checks.length - errors} warning{res.checks.length - errors === 1 ? '' : 's'}</p>
-        </Card>
-        <Card title="History" note="Every edit to the project can be stepped back (Ctrl+Z) and forward (Ctrl+Y).">
-          <div className="chips">
-            <button type="button" className="btn-secondary" disabled={!canUndo} onClick={undo}>Undo</button>
-            <button type="button" className="btn-secondary" disabled={!canRedo} onClick={redo}>Redo</button>
-          </div>
-          <p className="small muted">Autosaved in this browser · {project.scenarios.length} scenario{project.scenarios.length === 1 ? '' : 's'}. Export a copy from the report page to keep a restore point.</p>
-        </Card>
-      </div>
-      <div className="house-col">
-        <Card title="Storeys, stacked" note={`${fmt(height, 2)} m to the top of the ceiling`}>
-          <div className="h-table-wrap">
-            <table className="h-table">
-              <thead><tr><th>Storey</th><th className="n">Floor level m</th><th className="n">Ceiling m</th><th className="n">Rooms</th></tr></thead>
-              <tbody>{[...stack].reverse().map((x) => <tr key={x.i}><td>{x.s.name}</td><td className="n mono">{fmt(x.base, 2)}</td><td className="n mono">{fmt(x.top, 2)}</td><td className="n mono">{house.rooms.filter((r) => r.storey === x.i).length}</td></tr>)}</tbody>
-            </table>
-          </div>
-          <p className="small muted">Storeys stack by their floor zones: a room's floor face links to whatever room is drawn above or below it, so "ceiling: Bedroom 2" on a room box comes from here. <a href={href('storeys')}>Edit heights</a></p>
-        </Card>
-      </div>
     </div>
   );
 }

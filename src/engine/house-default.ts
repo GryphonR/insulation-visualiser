@@ -129,7 +129,7 @@ function baseHouse(): House {
     // Electricity and gas: Ofgem cap 1 Oct – 31 Dec 2026. Oil and LPG: rough typical UK delivered prices per kWh.
     // Carbon: SAP 10.2 factors, kgCO2/kWh. Reasons for each figure are shown in the UI (src/ui/assumptions.tsx).
     hp: {
-      source: 'ashp', fuel: 'gas', capacity: 6, maxFlow: 45, elecP: 26.32, gasP: 7.97, gasSC: 29.68, gasStanding: false, oilP: 6.5, lpgP: 9.5, boilerEff: 85, hpFactor: 0.45,
+      source: 'ashp', fuel: 'gas', maxFlow: 45, elecP: 26.32, gasP: 7.97, gasSC: 29.68, gasStanding: false, oilP: 6.5, lpgP: 9.5, boilerEff: 85, hpFactor: 0.45,
       co2: { elec: 0.136, gas: 0.21, oil: 0.298, lpg: 0.241 },
     },
     gains: {

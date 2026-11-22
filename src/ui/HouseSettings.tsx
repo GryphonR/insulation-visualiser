@@ -1,18 +1,18 @@
 import { COLOURS, MONTHS } from '../engine/data';
 import { MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS, postcodeArea } from '../engine/climate-mcs';
-import { FUEL_LABEL, SIDES, SOURCE_FLOW, SOURCE_LABEL, activeSheet, setSource, bearingLabel, defaultTemp, deviceM3, isHeatPump, pointFactor, roofStorey, tariff, trueBearing } from '../engine/house';
+import { FUEL_LABEL, SIDES, SOURCE_FLOW, SOURCE_LABEL, activeSheet, setSource, useTypicalFlow, bearingLabel, defaultTemp, deviceM3, isHeatPump, pointFactor, tariff, trueBearing } from '../engine/house';
 import type { Fuel, HeatPumpSheet, HeatSource, RoomType } from '../engine/house';
 import { Chip } from './controls';
-import { Card, Num, Why, fmt, NumInput } from './hform';
+import { Card, Num, SheetNum, Why, fmt, NumInput } from './hform';
+import { given } from '../engine/house-heating';
 import { WHY, sourceWhy } from './assumptions';
 import { useProject } from './project';
 import { withPostcode } from '../engine/house-scenarios';
 import { href } from './route';
-import { RoofSectionFields, newRoof } from './HouseRoof';
 
 const ROOM_TYPES = Object.keys(ROOM_TEMPS) as RoomType[];
 
-/** Climate and room temperatures: where the house is and what it is held at. */
+/** Project settings: where the house is, what it is held at, and what energy costs. */
 export function SitePage() {
   const { house, upd, res, setProject } = useProject();
   return (
@@ -84,8 +84,34 @@ export function SitePage() {
               })}
             </div>
           </Card>
+          <PricesCard />
       </div>
     </div>
+  );
+}
+
+/** Energy prices and carbon factors: what running cost and carbon are worked out from. */
+function PricesCard() {
+  const { house, upd } = useProject();
+  return (
+    <Card title="Prices and carbon" note="Used for the running cost and carbon of every scenario.">
+            <h3 className="eyebrow">Energy prices</h3>
+            <div className="hf-row">
+              <Num label="Electricity" unit="p/kWh" step={0.01} value={house.hp.elecP} why={WHY.elecP} onChange={(v) => upd((h) => { h.hp.elecP = v; })} />
+              <Num label="Gas" unit="p/kWh" step={0.01} value={house.hp.gasP} why={WHY.gasP} onChange={(v) => upd((h) => { h.hp.gasP = v; })} />
+              <Num label="Oil" unit="p/kWh" step={0.01} value={house.hp.oilP} why={WHY.oilP} onChange={(v) => upd((h) => { h.hp.oilP = v; })} />
+              <Num label="LPG" unit="p/kWh" step={0.01} value={house.hp.lpgP} why={WHY.lpgP} onChange={(v) => upd((h) => { h.hp.lpgP = v; })} />
+            </div>
+            <div className="hf-row">
+              <label className="hf-lab small"><input type="checkbox" checked={house.hp.gasStanding} onChange={(e) => upd((h) => { h.hp.gasStanding = e.target.checked; })} /> Include the gas standing charge for gas boilers</label>
+              <Why>{WHY.standing}</Why>
+              {house.hp.gasStanding && <Num label="Gas standing" unit="p/day" step={0.01} value={house.hp.gasSC} why={WHY.gasSC} onChange={(v) => upd((h) => { h.hp.gasSC = v; })} />}
+            </div>
+            <h3 className="eyebrow">Carbon factors</h3>
+            <div className="hf-row">
+              {(['elec', 'gas', 'oil', 'lpg'] as const).map((k) => <Num key={k} label={k === 'elec' ? 'Electricity' : FUEL_LABEL[k]} unit="kgCO₂/kWh" step={0.001} value={house.hp.co2[k]} why={WHY.co2} onChange={(v) => upd((h) => { h.hp.co2[k] = v; })} />)}
+            </div>
+    </Card>
   );
 }
 
@@ -170,22 +196,12 @@ export function StoreysPage() {
             <p className="small muted">{(house.storeys[0]?.below ?? 0) > 0
               ? `Basement: the lowest storey's outside walls are in the ground (BS EN ISO 13370 basement walls) and its floor is a basement floor ${house.storeys[0].below} m down.`
               : 'Ground floors are solid slabs unless their build-up is set to suspended timber in the Build-ups list.'}</p>
-            <div className="hf-row">
-              <Num label="Suspended floors: airbricks" unit="mm²/m" step={100} value={house.suspended.vent} onChange={(v) => upd((h) => { h.suspended.vent = Math.max(0, v); })} />
-              <Num label="Void height" unit="m" step={0.05} value={house.suspended.voidH} onChange={(v) => upd((h) => { h.suspended.voidH = Math.max(0.05, v); })} />
-            </div>
           </Card>
       </div>
       <div className="house-col">
           <Card title="Roofs and loft" note={res.loft ? `The loft settles at ${fmt(res.loft.T, 1)} °C on the design day.` : house.roofs.length ? 'No loft: the roofs sit right on the ceilings under them.' : 'No roof: top-storey ceilings are flat roofs.'}
-            right={<a className="btn-link" href={href('plan')}>Draw on the plan ›</a>}>
-            {house.roofs.map((s) => (
-              <details key={s.id} className="fp-sec">
-                <summary><b>{s.name}</b> <span className="small muted">{s.form === 'custom' ? 'edge by edge' : s.form}{s.form === 'flat' ? '' : `, ${s.pitch}°`} · on the {house.storeys[roofStorey(house, s)]?.name.toLowerCase()}</span></summary>
-                <RoofSectionFields house={house} id={s.id} upd={upd} />
-              </details>
-            ))}
-            <button type="button" className="btn-secondary" onClick={() => upd((h) => { h.roofs.push(newRoof(h)); })}>Add a roof that follows the top storey</button>
+            right={<a className="btn-link" href={href('plan')}>Roof layer on the plan ›</a>}>
+            <p className="small">{house.roofs.length ? `${house.roofs.length} roof section${house.roofs.length === 1 ? '' : 's'}: ${house.roofs.map((x) => x.name).join(', ')}.` : 'No roof sections yet.'} Add, shape and pitch them on the plan's Roof layer.</p>
             <div className="hf-row">
               <Num label="Loft ventilation" unit="ach" value={house.loft.ach} min={0} onChange={(v) => upd((h) => { h.loft.ach = v; })} />
             </div>
@@ -263,11 +279,11 @@ function SheetEditor() {
 
 /** The heat source, its output and how its efficiency is worked out. Choosing one sets its typical flow temperatures. */
 export function HeatSourceCard() {
-  const { house, upd } = useProject();
+  const { house, upd, res } = useProject();
   const s = house.hp.source, hp = isHeatPump(s), sheet = activeSheet(house.hp), typ = SOURCE_FLOW[s];
   const typical = house.hp.maxFlow === typ.maxFlow && house.heating.dT === typ.dT;
   return (
-    <Card title="Heat source" note="Choosing a source sets its typical max flow temperature and flow − return drop. Radiators and underfloor loops are checked at that flow, so their output matches the source.">
+    <Card title="Heat source" note="Radiators and underfloor loops are checked at the max flow temperature set below, so their output matches the source. Switching source keeps your flow settings; the typical ones for the source are offered underneath.">
       <div className="chips" role="group" aria-label="Heat source">
         {(Object.keys(SOURCE_LABEL) as HeatSource[]).map((k) => <Chip key={k} on={s === k} onClick={() => upd((h) => setSource(h, k))}>{SOURCE_LABEL[k]}</Chip>)}
       </div>
@@ -276,14 +292,15 @@ export function HeatSourceCard() {
       </div>}
       <p className="small muted">{sheet ? `COP calibrated to the ${sheet.model || 'entered'} datasheet points.` : SOURCE_NOTE[s]}<Why label="How is the efficiency worked out?">{sourceWhy(house.hp)}</Why></p>
       <div className="hf-row">
-        <Num label="Output at design temp" unit="kW" value={house.hp.capacity} min={0} why={WHY.capacity} onChange={(v) => upd((h) => { h.hp.capacity = v; })} />
+        <SheetNum label="Output at design temp" unit="kW" step={0.5} value={house.hp.capacity} why={WHY.capacity} onChange={(v) => upd((h) => { if (v == null) delete h.hp.capacity; else h.hp.capacity = v; })} />
         {s === 'boiler' && <Num label="Seasonal efficiency" unit="%" step={1} value={house.hp.boilerEff} why={WHY.boilerEff} onChange={(v) => upd((h) => { h.hp.boilerEff = v; })} />}
         {hp && !sheet && <Num label="Performance factor" unit="× ideal COP" step={0.01} min={0.2} max={0.8} value={house.hp.hpFactor} why={WHY.hpFactor} onChange={(v) => upd((h) => { h.hp.hpFactor = v; })} />}
       </div>
       <p className={typical ? 'small muted' : 'small'}>{typical
         ? `Flow ${typ.maxFlow} °C, flow − return ${typ.dT} K: typical for this source. Change them under Flow temperature.`
         : <>Your flow is {house.hp.maxFlow} °C, flow − return {house.heating.dT} K; typical for this source is {typ.maxFlow} °C and {typ.dT} K.{' '}
-          <button type="button" className="btn-link inline" onClick={() => upd((h) => { h.hp.maxFlow = typ.maxFlow; h.heating.dT = typ.dT; })}>Use typical</button></>}</p>
+          <button type="button" className="btn-link inline" onClick={() => upd(useTypicalFlow)}>Use typical</button></>}</p>
+      {!given(house.hp.capacity) && <p className="small">No output entered: the runs assume the {hp ? 'heat pump' : 'boiler'} can meet any load, and there is no spare-capacity figure. Enter the output at {res.Tout} °C from the datasheet to check it.</p>}
       {hp && <SheetEditor />}
     </Card>
   );
@@ -300,39 +317,22 @@ export function EnergyPage() {
   return (
     <div className="house">
           <Card title="Running cost" note={`Space heating only (cooling, if on, is shown on its own); hot water comes later. ${res.annualFrom === 'year' ? 'From the typical-year run, hour by hour.' : 'Estimate while the typical year runs…'} To compare heat sources, make a scenario with a different one.`}>
-            <p className="small">{SOURCE_LABEL[s]}{hp ? '' : ` on ${FUEL_LABEL[house.hp.fuel].toLowerCase()}`}, {house.hp.capacity} kW, max flow {house.hp.maxFlow} °C.{' '}
+            <p className="small">{SOURCE_LABEL[s]}{hp ? '' : ` on ${FUEL_LABEL[house.hp.fuel].toLowerCase()}`}{given(house.hp.capacity) ? `, ${house.hp.capacity} kW` : ''}, max flow {house.hp.maxFlow} °C.{' '}
               <a href={href('heating')}>Change the heat source in Heating ›</a></p>
-            <h3 className="eyebrow">Your prices</h3>
-            <div className="hf-row">
-              <Num label="Electricity" unit="p/kWh" step={0.01} value={house.hp.elecP} why={WHY.elecP} onChange={(v) => upd((h) => { h.hp.elecP = v; })} />
-              <Num label="Gas" unit="p/kWh" step={0.01} value={house.hp.gasP} why={WHY.gasP} onChange={(v) => upd((h) => { h.hp.gasP = v; })} />
-              <Num label="Oil" unit="p/kWh" step={0.01} value={house.hp.oilP} why={WHY.oilP} onChange={(v) => upd((h) => { h.hp.oilP = v; })} />
-              <Num label="LPG" unit="p/kWh" step={0.01} value={house.hp.lpgP} why={WHY.lpgP} onChange={(v) => upd((h) => { h.hp.lpgP = v; })} />
-            </div>
-            <div className="hf-row">
-              <label className="hf-lab small"><input type="checkbox" checked={house.hp.gasStanding} onChange={(e) => upd((h) => { h.hp.gasStanding = e.target.checked; })} /> Include the gas standing charge for gas boilers</label>
-              <Why>{WHY.standing}</Why>
-              {house.hp.gasStanding && <Num label="Gas standing" unit="p/day" step={0.01} value={house.hp.gasSC} why={WHY.gasSC} onChange={(v) => upd((h) => { h.hp.gasSC = v; })} />}
-            </div>
-            <h3 className="eyebrow">Carbon factors</h3>
-            <div className="hf-row">
-              {(['elec', 'gas', 'oil', 'lpg'] as const).map((k) => <Num key={k} label={k === 'elec' ? 'Electricity' : FUEL_LABEL[k]} unit="kgCO₂/kWh" step={0.001} value={house.hp.co2[k]} why={WHY.co2} onChange={(v) => upd((h) => { h.hp.co2[k] = v; })} />)}
-            </div>
+            <p className="small muted">Prices and carbon factors are set in <a href={href('settings')}>Project settings</a>.</p>
             <div className="tiles">
               <Tile head={hp ? 'Estimated COP at design' : 'Efficiency at design'} why={sourceWhy(house.hp)} value={hp ? fmt(res.hp.designEff, 2) : fmt(res.hp.designEff * 100)} unit={hp ? `at ${res.Tout} °C outside` : '%'} />
               <Tile head={hp ? 'Estimated SCOP' : 'Seasonal efficiency'} why={WHY.seasonal} value={hp ? fmt(res.hp.seasonal, 2) : fmt(res.hp.seasonal * 100)} unit={hp ? (sheet ? `from ${sheet.model || 'datasheet'}` : 'typical unit') : '%'} />
               <Tile head="Energy bought" why={WHY.bought} value={fmt(res.hp.kwh)} unit={`kWh ${hp ? 'electricity' : FUEL_LABEL[house.hp.fuel].toLowerCase()}`} />
               <Tile head="Running cost" why={WHY.cost(house.hp)} value={`£${fmt(res.hp.cost)}`} unit={tf.standing ? `/yr incl. £${fmt(tf.standing)} standing` : '/yr'} />
               <Tile head="Carbon" why={WHY.carbon} value={fmt(res.hp.co2)} unit="kgCO₂/yr" />
-              {res.cool && <Tile head="Cooling" why="Electricity the heat pump bought for cooling over the typical year, at each hour's EER, on the same tariff; not included in the heating figures beside it." value={`£${fmt(res.cool.cost)}`} unit={`/yr · ${fmt(res.cool.kwh)} kWh for ${fmt(res.cool.removed)} kWh taken out`} />}
+              {res.cool && Number.isFinite(res.cool.kwh) && <Tile head="Cooling" why="Electricity the heat pump bought for cooling over the typical year, at each hour's EER, on the same tariff; not included in the heating figures beside it." value={`£${fmt(res.cool.cost)}`} unit={`/yr · ${fmt(res.cool.kwh)} kWh for ${fmt(res.cool.removed)} kWh taken out`} />}
             </div>
             <div className="h-table-wrap">
               <table className="h-table months-t">
                 <thead><tr><th />{MONTHS.map((m) => <th key={m} className="n">{m}</th>)}</tr></thead>
                 <tbody>
                   <tr><td>Heat kWh</td>{res.months.map((m, i) => <td key={i} className="n mono">{fmt(m.heat)}</td>)}</tr>
-                  <tr><td>Flow °C</td>{res.months.map((m, i) => <td key={i} className="n mono">{fmt(m.flow)}</td>)}</tr>
-                  <tr><td>{hp ? 'Est. COP' : 'Efficiency %'}<Why>{sourceWhy(house.hp)}</Why></td>{res.months.map((m, i) => <td key={i} className="n mono">{hp ? fmt(m.eff, 1) : fmt(m.eff * 100)}</td>)}</tr>
                   <tr><td>Bought kWh<Why>{WHY.bought}</Why></td>{res.months.map((m, i) => <td key={i} className="n mono">{fmt(m.bought)}</td>)}</tr>
                 </tbody>
               </table>

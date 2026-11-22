@@ -26,7 +26,8 @@ const cylRun = (h: House) => h.heating.pipes!.find(isCylRun)!;
 const cooled = (h: House) => {
   const es = h.heating.emitters.filter((e) => e.kind === 'radiator').slice(0, 2);
   for (const e of es) { e.kind = 'fancoil'; e.rated = 2500; }
-  h.heating.cooling = { ...COOLING_DEFAULT };
+  // As if read off a datasheet.
+  h.heating.cooling = { ...COOLING_DEFAULT, capacity: 5, eer: 3.5 };
   return es.map((e) => e.id);
 };
 
@@ -60,7 +61,8 @@ describe('cooling physics', () => {
     expect(coolingOn(h)).toBe(true);
     h.hp.source = 'condensing';
     expect(coolingOn(h)).toBe(false);
-    const c = COOLING_DEFAULT;
+    expect(coolEer(COOLING_DEFAULT, 35)).toBeNaN();
+    const c = { ...COOLING_DEFAULT, eer: 3.5 };
     expect(coolEer(c, 35)).toBe(c.eer);
     expect(coolEer(c, 25)).toBeGreaterThan(c.eer);
     expect(coolEer(c, 80)).toBe(c.eer * 0.5);
@@ -295,10 +297,10 @@ describe('sizing by mode', () => {
     expect(pri.indexDp).toBe(Math.max(...pri.modes.map((m) => m.indexDp)));
   });
 
-  it('applying a plan gives the coil the heat pump output when it has no load yet', () => {
+  it('applying a plan leaves the coil output to be entered, and keeps one that was', () => {
     const h = semi();
     applyPlan(h, 'y');
-    expect(h.heating.coilW).toBe(h.hp.capacity * 1000);
+    expect(h.heating.coilW).toBeUndefined();
     h.heating.coilW = 1234;
     applyPlan(h, 's');
     expect(h.heating.coilW).toBe(1234);
@@ -332,7 +334,12 @@ describe('cooling in the simulation', () => {
     expect(b.coolKWh).toBeGreaterThan(0);
     expect(b.coolBoughtKWh).toBeGreaterThan(0);
     expect(b.coolBoughtKWh).toBeLessThan(b.coolKWh);
-    expect(b.coolPeakW).toBeLessThanOrEqual(h.heating.cooling!.capacity * 1000 + 1e-6);
+    expect(b.coolPeakW).toBeLessThanOrEqual(h.heating.cooling!.capacity! * 1000 + 1e-6);
+    // Without the datasheet figures: no cap on the output, and no electricity made up for it.
+    const blank = structuredClone(h); delete blank.heating.cooling!.capacity; delete blank.heating.cooling!.eer;
+    const c = simulate(blank, 'summer');
+    expect(c.coolKWh).toBeGreaterThanOrEqual(b.coolKWh - 1e-6);
+    expect(c.coolBoughtKWh).toBeNaN();
     expect(b.heatKWh).toBe(0);
     for (const id of rooms) {
       const i = b.rooms.findIndex((r) => r.id === id);

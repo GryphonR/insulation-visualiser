@@ -207,7 +207,6 @@ export function applyPlan(h: House, plan: PlanKind | null): string | null {
   if (plan === 'y' || plan === 's' || plan === 'splus') M.push({ id: 'both', name: 'Heating + hot water', water: 'hot', valves: set([[dhw, 'AB'], [dhw2, 'open']]) });
   if (cools) M.push({ id: 'cool', name: 'Cooling', water: 'chilled', valves: set([[dhw, 'B'], ...coolShut]) });
   h.heating.controls = { plan, valves: V, modes: M };
-  if (hasCyl && plan !== 'combi' && h.heating.coilW == null) h.heating.coilW = Math.round(h.hp.capacity * 1000);
   return null;
 }
 
@@ -252,7 +251,7 @@ export function controlChecks(h: House): Array<{ level: 'error' | 'warn'; text: 
       if (sweat.length) out.push({ level: 'error', text: `${m.name}: chilled water reaches ${sweat.length > 1 ? 'radiators or towel rails' : 'a radiator or towel rail'} in ${[...new Set(sweat.map(emName))].join(', ')}, which cool little and drip with condensation. Shut them off in this mode.` });
       if (r.cylinder) out.push({ level: 'error', text: `${m.name}: chilled water reaches the cylinder coil and would cool the hot water.` });
       if (!hp) out.push({ level: 'error', text: `${m.name}: a boiler cannot cool; only a reversible heat pump can.` });
-      else if (!coolingOn(h)) out.push({ level: 'warn', text: `${m.name}: cooling is off under System & flow, so this mode is never used.` });
+      else if (!coolingOn(h)) out.push({ level: 'warn', text: `${m.name}: cooling is off under Heating › Source & flow, so this mode is never used.` });
     }
     if (m.water === 'hot' && hp && r.cylinder && r.emitters.size) out.push({ level: 'warn', text: `${m.name}: a heat pump heats the cylinder at a higher flow than the heating needs; most divert to one or the other.` });
   }

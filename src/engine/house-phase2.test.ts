@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calcHouse, setOutline } from './house';
+import { calcHouse, setOutline, capacityW } from './house';
 import type { House } from './house';
 import { defaultHouse, withHeating } from './house-default';
 import { DEMOS } from './house-demos';
@@ -64,7 +64,7 @@ describe('hour-by-hour runs', () => {
     hh.gains.bedrooms = Array(24).fill(1);
     const r = simulate(hh, 'design');
     r.rooms.forEach((room, i) => { if (room.heated) expect(Math.min(...r.T[i]), room.name).toBeGreaterThan(room.setpoint - 0.3); });
-    expect(r.peakW).toBeLessThanOrEqual(hh.hp.capacity * 1000 + 1);
+    expect(r.peakW).toBeLessThanOrEqual(capacityW(hh.hp) + 1);
   });
 
   it('design day, demo house: the undersized kitchen radiator leaves the kitchen short even with heating on all day', () => {
