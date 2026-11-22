@@ -133,7 +133,7 @@ function Pricing({ base }: { base: string }) {
     <Frame base={base} here="pricing">
       <article className="site-legal card site-pricing">
         <h1>Pricing</h1>
-        <p className="site-lead">Insuliser free for everyone while in open beta.</p>
+        <p className="site-lead">Insuliser is free for everyone while in open beta.</p>
         <h2>During the beta</h2>
         <p>Every feature is open to everyone, with or without an account. To keep the beta running smoothly, each person can have:</p>
         <ul>
@@ -175,7 +175,7 @@ export function sitePages(base: string, cloud: boolean): Page[] {
       title: s.id === 'start' ? 'Learn · Insuliser' : `${s.title.replace(/^\d+b?\.\s*/, '')} · Insuliser Learn`,
       body: <Frame base={base} here="learn"><div className="site-learn"><LearnPage section={s.id} links={L} /></div></Frame>,
     })),
-    { path: 'pricing/', title: 'Pricing · Insuliser', description: `Insuliser is in open beta and free for everyone: up to ${MAX_PROJECTS} projects with ${MAX_SCENARIOS} scenarios each. After the beta, every feature stays free for personal projects.`, body: <Pricing base={base} /> },
+    { path: 'pricing/', title: 'Pricing · Insuliser', description: `Insuliser is in open beta and free for everyone: up to ${MAX_PROJECTS} projects with ${MAX_SCENARIOS} scenarios each. After the beta, we intend to keep a comprehensively featured Always Free tier for personal users.`, body: <Pricing base={base} /> },
     { path: 'privacy/', title: 'Privacy · Insuliser', description: 'What Insuliser stores, who handles it and your rights. No analytics, no advertising, no tracking cookies.', body: <Frame base={base} here="other"><Privacy /></Frame> },
     { path: 'terms/', title: 'Terms of use · Insuliser', description: "The terms for using Insuliser, including what its results can and can't be relied on for.", body: <Frame base={base} here="other"><Terms base={base} /></Frame> },
     { path: '404', title: 'Page not found · Insuliser', body: <NotFound base={base} /> },
