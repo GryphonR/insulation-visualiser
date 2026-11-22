@@ -240,7 +240,7 @@ p { margin: 0; }
 
 /* Learn page */
 .learn { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
-.learn-toc { flex: 1 1 240px; max-width: 280px; min-width: 0; position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.learn-toc { flex: 1 1 240px; max-width: 280px; min-width: 0; position: sticky; top: calc(var(--head-h, 0px) + 16px); max-height: calc(100vh - var(--head-h, 0px) - 32px); overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
 .learn-toc-group { display: flex; flex-direction: column; gap: 4px; }
 .learn-toc ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .toc-link { background: none; border: 0; padding: 6px 8px; margin: 0 -8px; border-radius: 6px; text-align: left; width: calc(100% + 16px); font-size: 14px; color: var(--ink); cursor: pointer; }

@@ -36,6 +36,7 @@ export function Account() {
             <button type="submit" className="btn-primary">Email me a sign-in link</button>
           </form>
           {google && <button type="button" className="btn-secondary" onClick={async () => setMsg(await signInWithGoogle())}>Continue with Google</button>}
+          <p className="small muted">We keep your email and synced projects. <a href={`${import.meta.env.BASE_URL}privacy/`} target="_blank" rel="noreferrer">Privacy</a></p>
           {msg && <p role="status">{msg}</p>}
         </div>
       </details>

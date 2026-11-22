@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { go, href } from './route';
 import { useProject } from './project';
@@ -46,8 +46,17 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
   const sub = sec ? SUBNAV[sec] : undefined;
   const issues = heatingIssues(res);
   const setActive = (id: string) => setProject((p) => ({ ...p, active: id }));
+  const head = useRef<HTMLDivElement>(null);
+  // Publish the fixed header's height so sticky contents and scrolled-to elements clear it (0 on phones, where it scrolls away).
+  useEffect(() => {
+    const el = head.current!;
+    const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--head-h', `${getComputedStyle(el).position === 'sticky' ? el.offsetHeight : 0}px`));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   return (
     <div className={route === 'plan' ? 'shell fill' : route === 'schematic' ? 'shell wide' : 'shell'}>
+      <div className="shell-head" ref={head}>
       <header className="top">
         <a className="brand" href={import.meta.env.BASE_URL} title="Insuliser home">
           <span className="logo" aria-hidden="true"><span /><span /><span /></span>Insuliser<span className="beta">Beta</span>
@@ -97,6 +106,7 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
           ))}
         </nav>
       )}
+      </div>
       <div className="shell-body">{children}</div>
     </div>
   );

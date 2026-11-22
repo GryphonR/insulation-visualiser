@@ -1,6 +1,9 @@
 /* Whole-house shell (boards 0 and 1a): one header with project context and the four workflow steps,
    a sub-navigation for the current step, a breadcrumb below the plan. */
 .shell { min-height: 100vh; display: flex; flex-direction: column; }
+.shell-head { position: sticky; top: 0; z-index: 30; }
+html { scroll-padding-top: var(--head-h, 0px); }
+@media (max-width: 640px) { .shell-head { position: static; } }
 .top { display: flex; flex-wrap: wrap; align-items: stretch; gap: 0 20px; padding: 0 20px; min-height: 56px; background: var(--paper); border-bottom: 2px solid var(--ink); }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; color: var(--ink); text-decoration: none; }
 .logo { width: 22px; height: 22px; border: 2px solid var(--ink); display: grid; grid-template-columns: repeat(3, 1fr); }

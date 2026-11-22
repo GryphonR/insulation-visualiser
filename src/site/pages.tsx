@@ -5,6 +5,7 @@ import { LEARN_SECTIONS, LEARN_TRACKS, LearnPage } from '../ui/LearnPage';
 import type { LearnLinks } from '../ui/LearnPage';
 import { STEPS } from '../ui/steps';
 import { TAGLINE, Wordmark } from '../ui/Wordmark';
+import { OPERATOR, Privacy, Terms } from './legal';
 
 export interface Page { path: string; title: string; description?: string; body: ReactNode }
 
@@ -48,7 +49,11 @@ function Frame({ base, here, children }: { base: string; here: 'home' | 'learn' 
       <main id="main" className="site-main">{children}</main>
       <footer className="site-foot">
         <span><Logo /> Insuliser · {TAGLINE}</span>
-        <span><a href={`${base}learn/`}>Learn</a> · <a href={`${base}learn/glossary/`}>Glossary</a> · <a href={`${base}app/`}>Open the app</a></span>
+        <nav aria-label="Footer">
+          <a href={`${base}learn/`}>Learn</a> · <a href={`${base}learn/glossary/`}>Glossary</a> · <a href={`${base}app/`}>Open the app</a>
+          {' · '}<a href={`${base}privacy/`}>Privacy</a> · <a href={`${base}terms/`}>Terms</a>
+        </nav>
+        <span className="site-copy">© {new Date().getFullYear()} {OPERATOR}. Results are estimates, not professional advice.</span>
       </footer>
     </div>
   );
@@ -147,6 +152,8 @@ export function sitePages(base: string, cloud: boolean): Page[] {
       title: s.id === 'start' ? 'Learn · Insuliser' : `${s.title.replace(/^\d+b?\.\s*/, '')} · Insuliser Learn`,
       body: <Frame base={base} here="learn"><div className="site-learn"><LearnPage section={s.id} links={L} /></div></Frame>,
     })),
+    { path: 'privacy/', title: 'Privacy · Insuliser', description: 'What Insuliser stores, who handles it and your rights. No analytics, no advertising, no tracking cookies.', body: <Frame base={base} here="other"><Privacy /></Frame> },
+    { path: 'terms/', title: 'Terms of use · Insuliser', description: "The terms for using Insuliser, including what its results can and can't be relied on for.", body: <Frame base={base} here="other"><Terms base={base} /></Frame> },
     { path: '404', title: 'Page not found · Insuliser', body: <NotFound base={base} /> },
   ];
 }
