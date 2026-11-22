@@ -178,9 +178,6 @@ export function partyKeys(h: House, roomId: string, idx: number): string[] {
   return keys;
 }
 
-const flipAlign = (a: WallAlign): WallAlign => (a === 'in' ? 'out' : a === 'out' ? 'in' : a);
-/** The first room of an inside wall's pair: the room its stored alignment is measured from. */
-const refRoom = (key: string) => (key.startsWith('iw:') ? key.split(':')[1].split('|')[0] : '');
 
 /** How thick a piece of wall is drawn, in metres: the layers of its build-up (nothing if it has none). */
 export function pieceThickness(h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'> & Partial<Pick<WallPiece, 'span' | 'oe'>>): number {
@@ -190,18 +187,9 @@ export function pieceThickness(h: House, roomId: string, idx: number, storey: nu
   return b ? b.layers.reduce((t, [, mm]) => t + mm, 0) / 1000 : 0;
 }
 
-/** Where a piece of wall sits on its drawn line, seen from the interior of `roomId`: toward that room (in), centred, or away from it (out). */
-export function pieceAlign(h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'> & Partial<Pick<WallPiece, 'span' | 'oe'>>): WallAlign {
-  const key = pieceKeys(h, roomId, idx, storey, p)[0];
-  const a = (key && h.wallAlign?.[key]) || (p.other ? 'ctr' : 'out');
-  return key && refRoom(key) && refRoom(key) !== roomId ? flipAlign(a) : a;
-}
-
-export function setPieceAlign(h: House, roomId: string, idx: number, storey: number, p: Pick<WallPiece, 'other'> & Partial<Pick<WallPiece, 'span' | 'oe'>>, a: WallAlign): void {
-  const key = pieceKeys(h, roomId, idx, storey, p)[0];
-  if (!key) return;
-  h.wallAlign = h.wallAlign ?? {};
-  h.wallAlign[key] = refRoom(key) && refRoom(key) !== roomId ? flipAlign(a) : a;
+/** Where a piece of wall sits on its drawn line: outside walls outside the line (the line is the inside face), inside walls centred. Old per-wall `wallAlign` picks are ignored. */
+export function pieceAlign(_h: House, _roomId: string, _idx: number, _storey: number, p: Pick<WallPiece, 'other'>): WallAlign {
+  return p.other ? 'ctr' : 'out';
 }
 
 /** The two end points of a piece of a wall, in metres. */

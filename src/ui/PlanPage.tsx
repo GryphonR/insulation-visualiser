@@ -12,7 +12,6 @@ import type { Imagery } from './HouseTrace';
 import { fmt, mix, NumInput } from './hform';
 import { useProject } from './project';
 import { autoPipes, combineRuns, pipeRest, unpiped } from '../engine/house-pipes';
-import { href } from './route';
 
 /** The floor plan as a drawing canvas, layer by layer, with a summary of the selected room. Model draws the rooms; Heating lays out emitters, plant and pipes on the same canvas. */
 export function PlanPage({ selected, mode = 'model' }: { selected?: string; mode?: 'model' | 'heating' }) {
@@ -116,11 +115,6 @@ export function PlanPage({ selected, mode = 'model' }: { selected?: string; mode
         <label className="small">Colour <select className="draw-grid-sel" style={{ width: 'auto' }} value={lens} aria-label="Colour rooms by" onChange={(e) => setLens(e.target.value as typeof lens)}>
           <option value="loss">heat loss</option><option value="temp">temperature</option><option value="cover">emitter cover</option><option value="none">none</option>
         </select></label>
-        {mode === 'model' && <label className="small" title="Turn true north on the plan: the bearing that up on the screen faces. Walls, windows and roof slopes take their direction from it.">
-          <span aria-hidden="true" className="north-arrow" style={{ transform: `rotate(${-(house.north ?? 0)}deg)` }}>↑N</span> Up faces{' '}
-          <NumInput className="thk-input" step={5} value={house.north ?? 0} aria-label="Bearing that up on the plan faces, degrees from north"
-            onChange={(e) => upd((h) => { const v = Number(e.target.value) || 0; h.north = ((v % 360) + 360) % 360; })} />°
-        </label>}
         {view === 'pipes' && house.heating.source && (() => {
           const n = unpiped(house).length, runs = house.heating.pipes?.length ?? 0;
           return <>
@@ -168,30 +162,33 @@ export function PlanPage({ selected, mode = 'model' }: { selected?: string; mode
       <button type="button" className="panel-toggle" aria-expanded={panelOpen} onClick={() => setPanelOpen(!panelOpen)} title={panelOpen ? 'Hide the layers panel' : 'Show the layers panel'}>{panelOpen ? '›' : '‹'}</button>
       {panelOpen && (
         <aside ref={panel} className="float-panel" aria-label="Layers and selection">
-          {hasInspector && (
+          {/* One section at a time: the selection, else its room, else the open layer. */}
+          {hasInspector ? (
             <section className="fp-sec">
+              {band == null && !roofOn && room && !sel.zone && (sel.group?.length ?? 0) < 2 && <button type="button" className="btn-link fp-crumb" onClick={() => setSel({ ...NO_SEL, room: room.id })}>‹ {room.name}</button>}
               <h3>{inspectorTitle}</h3>
               <Inspector house={house} res={res} storey={shown} sel={sel} setSel={setSel} upd={upd} />
             </section>
-          )}
-          {band == null && !roofOn && room && rr && (
+          ) : band == null && !roofOn && room && rr ? (
             <section className="fp-sec">
               <h3>{room.name} <span className="small muted">{fmt(rr.area, 1)} m² · {room.heated ? `${fmt(rr.totalW)} W` : `${fmt(rr.T, 1)} °C`}{room.heated && cv ? ` · ${cv.has ? `${fmt(cv.cover * 100)}% emitters` : 'no emitter'}` : ''}</span></h3>
               <RoomFields house={house} roomId={room.id} upd={upd} onDeleted={() => setSel(NO_SEL)} />
-              <a className="btn-secondary as-link" href={href('room', room.id)}>Open room ›</a>
             </section>
-          )}
-          {/* The open layer's own settings: always for a floor or the roof, for a storey when nothing on it is selected. */}
-          {(band != null || roofOn || (!hasInspector && !room)) && (
+          ) : <>
             <section className="fp-sec">
               <h3>{roofOn ? 'Roof sections' : band != null ? bandName(house, band) : house.storeys[storey]?.name}</h3>
               <LayerSettings house={house} res={res} storey={storey} band={band} roof={roofOn} zone={sel.zone} pickZone={(id) => setSel({ ...NO_SEL, zone: id })} pickStorey={goStorey} pickRoof={goRoof} upd={upd} />
             </section>
-          )}
-          <details className="fp-sec">
-            <summary>Tracing image and map outline</summary>
+            {mode === 'model' && <details className="fp-sec">
+            <summary>Site and tracing</summary>
+            <label className="small" title="Turn true north on the plan: the bearing that up on the screen faces. Walls, windows and roof slopes take their direction from it.">
+          <span aria-hidden="true" className="north-arrow" style={{ transform: `rotate(${-(house.north ?? 0)}deg)` }}>↑N</span> Up faces{' '}
+          <NumInput className="thk-input" step={5} value={house.north ?? 0} aria-label="Bearing that up on the plan faces, degrees from north"
+            onChange={(e) => upd((h) => { const v = Number(e.target.value) || 0; h.north = ((v % 360) + 360) % 360; })} />°
+            </label>
             <TraceControls house={house} res={res} storey={storey} trace={trace} setTrace={setTrace} upd={upd} imagery={imagery} setImagery={(v) => { setImageryState(v); saveImagery(v); }} measuring={!!measure} onMeasure={(len) => setMeasure({ len, pts: [] })} />
-          </details>
+          </details>}
+          </>}
         </aside>
       )}
     </div>

@@ -3,7 +3,7 @@ import { calcHouse, roomArea, roomPoly, setOutline } from './house';
 import { overlapAreaPoly, pointInPoly } from './geom';
 import type { Pt } from './geom';
 import { defaultHouse } from './house-default';
-import { addFloorZone, addRoomAt, syncUfh, addStoreyAbove, copyRooms, cutPlan, flipRooms, innerDoorAt, moveCorners, narrowAtWall, pieceAlign, pieceKeys, pieceThickness, problems, rotateRooms, setPieceAlign, splitRoom, stretchAtWall, wallPieces } from './house-draw';
+import { addFloorZone, addRoomAt, syncUfh, addStoreyAbove, copyRooms, cutPlan, flipRooms, innerDoorAt, moveCorners, narrowAtWall, pieceAlign, pieceKeys, pieceThickness, problems, rotateRooms, splitRoom, stretchAtWall, wallPieces } from './house-draw';
 import { newHouse } from './house-templates';
 import { loopLength, loopMax } from './house-heating';
 
@@ -123,7 +123,7 @@ describe('wall pieces', () => {
 });
 
 describe('wall thickness and alignment', () => {
-  it('is as thick as the build-up, outside walls default outside the line and inside walls centred, and one inside wall reads the same from both rooms', () => {
+  it('is as thick as the build-up, outside walls default outside the line and inside walls centred, from either room', () => {
     const h = newHouse({ template: 'det', age: '1950-66', storeys: 1 });
     addRoomAt(h, 'a', [[0, 0], [7.5, 0], [7.5, 4.5], [0, 4.5]], 0);
     addRoomAt(h, 'b', [[3.5, 4.5], [9.5, 4.5], [9.5, 8], [3.5, 8]], 0);
@@ -132,9 +132,7 @@ describe('wall thickness and alignment', () => {
     expect(pieceThickness(h, 'a', 2, 0, out)).toBeCloseTo(wall.layers.reduce((t, [, mm]) => t + mm, 0) / 1000, 6);
     expect(pieceAlign(h, 'a', 2, 0, out)).toBe('out');
     expect(pieceAlign(h, 'a', 2, 0, inner)).toBe('ctr');
-    setPieceAlign(h, 'a', 2, 0, inner, 'in'); // toward room a
-    expect(pieceAlign(h, 'a', 2, 0, inner)).toBe('in');
-    expect(pieceAlign(h, 'b', 0, 0, { other: 'a' })).toBe('out'); // from room b it is on the far side
+    expect(pieceAlign(h, 'b', 0, 0, { other: 'a' })).toBe('ctr');
   });
 });
 

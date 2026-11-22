@@ -244,6 +244,9 @@ svg.draw .vx.moving { fill: #c2410c; }
 .fp-sec { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line-strong); }
 .fp-sec h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
 .fp-sec summary { cursor: pointer; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.fp-sec .fp-more summary { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted, inherit); }
+.fp-more[open] { display: flex; flex-direction: column; gap: 6px; }
+.fp-crumb { align-self: flex-start; font-size: 12px; }
 .float-panel .layer-stack { border: 0; }
 .float-panel .layer-storey button { min-height: 36px; font-size: 13px; }
 .float-panel .layer-band > button { min-height: 32px; }

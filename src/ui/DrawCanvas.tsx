@@ -16,6 +16,11 @@ import { EMITTER_NAME } from '../engine/house-heating';
 import { uid } from './hform';
 import { href } from './route';
 
+/** Every wall of a storey a piece at a time, so "outside walls" takes only the outside stretches; an inside wall is listed once, from the first room of its pair (or from `only`). */
+export const storeyWalls = (house: House, storey: number, outsideOnly: boolean, only?: string): WallRef[] => house.rooms.filter((r) => onStorey(r, storey) && (!only || r.id === only)).flatMap((r) => roomEdges(r).flatMap((e) =>
+  wallPieces(house, r.id, e.idx, storey).filter((p) => (outsideOnly ? !p.other : !p.other || !!only || r.id < p.other!))
+    .map((p): WallRef => ({ room: r.id, edge: e.idx, span: p.span, ...(p.other ? { other: p.other, gap: p.gap } : {}) }))));
+
 /** What the canvas is for: the rooms and what is in them, or the pipework. Each has its own tools and its own things to pick. */
 export type Lens = 'plan' | 'pipes';
 /** The window and door build-ups the tools place (unset: the first of each). */
@@ -1315,6 +1320,10 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
               choices('Wall build-up', house.buildups.filter((b) => b.kind === 'wall'), house.faceBuildup[keys[0]] ?? house.defaults[keys[0]?.startsWith('w:') ? 'extWall' : 'intWall'],
                 (id) => upd((h) => keys.forEach((k) => { h.faceBuildup[k] = id; }))),
               edit('Wall length', '↔', 'size'),
+              { label: 'Spread windows and doors evenly', glyph: '⇹', run: () => upd((h) => h.openings.forEach((o) => { if (o.room === w.room && wallIndex(h, o) === w.edge) delete o.t; })) },
+              { label: 'Select all outside walls', glyph: '▢', run: () => setSel({ ...NO_SEL, room: sel.room, walls: storeyWalls(house, storey, true) }) },
+              { label: 'Select all walls', glyph: '▣', run: () => setSel({ ...NO_SEL, room: sel.room, walls: storeyWalls(house, storey, false) }) },
+              { label: "Select this room's walls", glyph: '⬚', run: () => setSel({ ...NO_SEL, room: w.room, walls: storeyWalls(house, storey, false, w.room) }) },
             ] };
           }
           if (on.k === 'room') {
