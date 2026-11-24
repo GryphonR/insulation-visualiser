@@ -717,6 +717,7 @@ export const feedsFrom = (a: Attach) => 'run' in a || !(a.id === 'cylinder' || a
 
 /**
  * A run drawn on storey `storey`'s plan through the corners `mid`, from `a` to `b` (an open end, for teeing off later, if null).
+ * Finished on another run, it feeds that run from there on; the stretch of it before that stays as an open end.
  * Drawn from a heater back to its feed, it is turned round. On a floor away from the source it comes off that floor's branch
  * (up the riser, or straight up), made if there is none. A heater or cylinder that already had a run gets this one instead.
  * The corners are kept as drawn, slants and all; with `square`, the last stretch into the heater gets a corner rather than running on the slant.
@@ -727,10 +728,12 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
   if (!src) return { error: 'Place the boiler or heat pump first.' };
   if (b && !feedsFrom(a) && feedsFrom(b)) { [a, b] = [b, a]; mid = [...mid].reverse(); }
   if (!feedsFrom(a)) return { error: 'A run comes from the boiler or heat pump, a riser or another run: start or finish on one.' };
-  if (b && feedsFrom(b)) return { error: 'Finish on a radiator, UFH manifold or the cylinder, or press Enter to leave the end open for teeing off later.' };
+  const into = b && 'run' in b ? b : null;
+  if (b && feedsFrom(b) && !into) return { error: 'Finish on a radiator, UFH manifold, the cylinder or another run, or press Enter to leave the end open for teeing off later.' };
+  if (into && 'run' in a && a.run === into.run) return { error: 'Finish on a different run from the one it starts on.' };
   if (!b && mid.length < 1) return { error: 'Draw at least one stretch.' };
   if (!('run' in a) && a.id !== 'source' && storey === src.storey) return { error: 'On the floor with the heat source, start from the heat source itself.' };
-  const B = b as { id: string } | null; // never a run: checked above
+  const B = into ? null : (b as { id: string } | null);
   const pipes = (h.heating.pipes ??= []);
   // The heater's old run goes, so it is not counted twice.
   // A manifold's run replaces its own old one and any to the loops it now feeds.
@@ -760,8 +763,23 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
     }
     start = a.id; parent = br.id; P0 = at;
   }
-  const end = B ? endPoint(h, B.id)! : mid[mid.length - 1];
-  const raw = tidy([P0, ...(B ? mid : mid.slice(0, -1)), end]);
+  // Finishing on a run: tee into it there, and it carries on from this run instead.
+  let D: Pipe | undefined, T: Pt | undefined;
+  if (into) {
+    const Y = all.find((p) => p.id === into.run), yv = Y ? voidOf(h, Y) : -1;
+    if (!Y) return { error: 'That run is gone.' };
+    if (yv !== storey && yv !== storey + 1) return { error: 'That run is not under this floor or in its ceiling.' };
+    const t = teeAt(h, into.run, into.at);
+    if (!t) return { error: 'That run is gone.' };
+    if (t.parent === Y.id) return { error: 'Finish part way along a run, not at its far end.' };
+    D = Y; T = t.T;
+    // Never feed a run from one that comes off it: that would loop.
+    const below = new Set([D.id]);
+    for (let grew = true; grew; ) { grew = false; for (const p of all) if (p.parent && below.has(p.parent) && !below.has(p.id)) { below.add(p.id); grew = true; } }
+    if (parent && below.has(parent)) return { error: 'That run is fed through this one: finishing on it would make a loop.' };
+  }
+  const end = T ?? (B ? endPoint(h, B.id)! : mid[mid.length - 1]);
+  const raw = tidy([P0, ...(b ? mid : mid.slice(0, -1)), end]);
   const n = raw.length, pts = square && b && n > 1 ? tidy([...raw.slice(0, -1), ...squareInto(h, storey, raw[n - 3], raw[n - 2], raw[n - 1]).slice(1)]) : raw;
   if (pts.length < 2) return { error: 'Draw at least one stretch.' };
   const e = B?.id.startsWith('e:') ? h.heating.emitters.find((x) => x.id === B.id.slice(2)) : undefined, room = e && h.rooms.find((r) => r.id === e.room)?.name;
@@ -770,6 +788,8 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
     name: e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}` : B?.id.startsWith('m:') ? manifoldName(h, B.id.slice(2)) : B ? 'Hot water cylinder coil' : 'Main',
     size: usable(h, e ? (e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : storey === src.storey || storey === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)') : 'Cu 22 mm'),
     ...(e ? { emitter: e.id } : {}), ...(via ? { via } : {}) });
+  // Its floor or ceiling is fixed before it changes parent: following a run upstream stops at a change of floor.
+  if (D) { D.via = viaOf(h, D); D.parent = id; D.ends = [`tee:${id}`, D.ends![1]]; delete D.typed; }
   // A manifold's run is sized for the loops on it.
   if (M) { const s = sizePipes(h, calcHouse(h)); all.find((p) => p.id === id)!.size = fitSize(s.rows.find((r) => r.pipe.id === id)?.flowLpm ?? 0, [], s.paMax, sizesOn(h)); }
   return { id };

@@ -384,6 +384,19 @@ describe('drawing runs by hand', () => {
     expect(livePath(h, x)![0]).toEqual([2.5, 0.5]);
   });
 
+  it('a run finished on another run feeds it from there on, and never in a loop', () => {
+    const h = blank();
+    const main = drawRun(h, 0, { id: 'source' }, [[4.5, 0.5]], null) as { id: string };
+    const r = drawRun(h, 0, { id: 'source' }, [[0.5, 2], [2.5, 2]], { run: main.id, at: [2.5, 0.6] }) as { id: string };
+    const y = h.heating.pipes!.find((p) => p.id === main.id)!, x = h.heating.pipes!.find((p) => p.id === r.id)!;
+    expect(y.parent).toBe(r.id);
+    expect(y.ends![0]).toBe(`tee:${r.id}`);
+    expect(x.leg!.pts[x.leg!.pts.length - 1]).toEqual([2.5, 0.5]);
+    expect(livePath(h, y)![0]).toEqual([2.5, 0.5]);
+    // Feeding the new run from the run it now feeds would loop.
+    expect('error' in drawRun(h, 0, { run: main.id, at: [4, 0.5] }, [[4, 2]], { run: r.id, at: [1.5, 2] })).toBe(true);
+  });
+
   it('upstairs, a run off the source makes the branch through the floor', () => {
     const h = blank(), e = em(h, 1);
     const r = drawRun(h, 1, { id: 'source' }, [], { id: `e:${e.id}` }) as { id: string };

@@ -516,8 +516,13 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     upd((h) => removeRun(h, id)); setSel(NO_SEL);
     if (p) setNote(`Deleted ${p.name}.${kids ? ` The ${kids} run${kids === 1 ? '' : 's'} off it now come${kids === 1 ? 's' : ''} off ${up ?? 'the heat source'}.` : ''} Ctrl+Z puts it back; Draw a pipe run draws a new one.`);
   };
-  /** What a click finishes the pipe being drawn on: only the other kind of end (a heater for a run from a feed, and back). */
-  const pipeEnd = (p: Pt) => { const x = pipeHit(p); return x && pipeFrom && feedsFrom(x.a) !== feedsFrom(pipeFrom) ? x : null; };
+  /** What a click finishes the pipe being drawn on: the other kind of end (a heater for a run from a feed, and back), or another run, which it then feeds. */
+  const pipeEnd = (p: Pt) => {
+    const x = pipeHit(p);
+    if (!x || !pipeFrom) return null;
+    if (feedsFrom(x.a) !== feedsFrom(pipeFrom)) return x;
+    return 'run' in x.a && !('run' in pipeFrom && pipeFrom.run === x.a.run) ? { ...x, label: x.label.replace('Tee off', 'Feed') } : null;
+  };
   /** The next corner of the pipe being drawn: square to the last one, stopping just short of a wall across its way (Shift: free). */
   const pipePt = (p: Pt): Pt => {
     const last = draft[draft.length - 1];
@@ -660,7 +665,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         const hit = pipeHit(p);
         if (!hit) { setNote('Start on the boiler or heat pump, a riser, a radiator, a UFH manifold, the cylinder or an existing run (the green rings).'); return; }
         setPipeFrom(hit.a); setDraft([hit.at]);
-        setNote(feedsFrom(hit.a) ? 'Click each corner; click a radiator, manifold or the cylinder to finish, or press Enter to leave the end open. Backspace undoes a corner, Esc cancels.'
+        setNote(feedsFrom(hit.a) ? 'Click each corner; click a radiator, manifold, the cylinder or another run to finish, or press Enter to leave the end open. Backspace undoes a corner, Esc cancels.'
           : 'Click each corner; click the boiler, a riser or a run to finish. Backspace undoes a corner, Esc cancels.');
         return;
       }
