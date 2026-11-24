@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { SOURCE_LABEL, isHeatPump } from '../engine/house';
 import type { House } from '../engine/house';
 import { EMITTER_NAME, RAD_LABEL, coolingOn, emitterCool, given } from '../engine/house-heating';
-import { PLANS, applyPlan, controlChecks, markCustom, modeSummary, modesOf, passes, posOf, reach, runUse } from '../engine/house-controls';
+import { PLANS, applyPlan, controlChecks, markCustom, modeSummary, modesOf, passes, posOf, reach, runUse, teeOf } from '../engine/house-controls';
 import type { Mode, PlanKind, Pos, Use, Valve, Water } from '../engine/house-controls';
 import { runLength, sizePipes } from '../engine/house-pipes';
 import type { Pipe } from '../engine/house-pipes';
@@ -206,6 +206,34 @@ export function HouseSchematic() {
     </g>;
   };
 
+  // A 3-port sits where its two port runs leave one junction: drawn once there, each port on its own leg.
+  const nodeOf = new Map(nodes.map((n) => [n.p.id, n]));
+  const tees = (ctl?.valves ?? []).flatMap((v) => {
+    const t = v.kind === 'three' ? teeOf(h, v) : null, na = t && nodeOf.get(t.a.id), nb = t && nodeOf.get(t.b.id);
+    if (!t || !na || !nb) return [];
+    const x = (na.px < 0 ? X0 : xOf(na.px)) + O, y = yOf(na.py) - O;
+    const dir = (n: Node): [number, number] => { const d = Math.sign(yOf(n.y) - yOf(n.py)); return d ? [0, d] : [1, 0]; };
+    const legs = [{ port: 'A' as const, run: t.a.id, d: dir(na) }, { port: 'B' as const, run: t.b.id, d: dir(nb) }];
+    // Both legs leave the same way (more runs off this junction): no clear tee to draw, so mark each run instead.
+    return legs[0].d.join() === legs[1].d.join() ? [] : [{ v, x, y, legs }];
+  });
+  const atTee = new Set(tees.map((t) => t.v.id));
+  const tri = (x: number, y: number, [dx, dy]: [number, number]) => `M${x} ${y} L${x + 12 * dx - 6 * dy} ${y + 12 * dy + 6 * dx} L${x + 12 * dx + 6 * dy} ${y + 12 * dy - 6 * dx} Z`;
+  const teeMark = ({ v, x, y, legs }: (typeof tees)[number]): ReactNode => <g key={v.id}>
+    {pick?.v === v.id && <circle cx={x} cy={y} r={19} fill="none" stroke="#0284c7" strokeWidth={2} />}
+    <path d={tri(x, y, [-1, 0])} fill="#fff" stroke={INK} strokeWidth={1.3} />
+    {legs.map(({ port, run, d }) => {
+      const open = running && passes(v, posOf(v, m), run);
+      return <g key={port} className="sx-valve" role="button" aria-label={`${v.id} ${v.name}, port ${port}: ${open ? 'open' : 'shut'}. Drag to another run.`}
+        onPointerDown={(ev) => { ev.preventDefault(); setDrag({ v: v.id, port, from: run, over: null }); }}
+        onClick={() => setPick(pick?.v === v.id && pick.port === port ? null : { v: v.id, port })}>
+        <path d={tri(x, y, d)} fill={open ? '#fff' : INK} stroke={INK} strokeWidth={1.3} className="sx-fill" />
+        <text x={x + 20 * d[0] + (d[0] ? 0 : 9)} y={y + 20 * d[1] + 3.5} textAnchor={d[0] ? 'middle' : 'start'} fontFamily={FONT} fontSize={9.5} fontWeight={600} fill={open ? '#16a34a' : BAD}>{port}</text>
+      </g>;
+    })}
+    <text x={x - 16} y={y - 8} textAnchor="end" fontFamily={FONT} fontSize={9.5} fontWeight={600} fill={INK}>{v.id}</text>
+  </g>;
+
   const srcMode = !running ? 'Standby' : m.water === 'chilled' ? `Cooling · ${cool?.flow ?? 18} °C flow` : m.internal ? 'Hot water (plate HEX)' : got.cylinder && !got.emitters.size ? 'Hot water' : `Heating · ${fmt(flowT, 1)} °C flow`;
   const srcUse: Use = !running ? 'idle' : m.water === 'chilled' ? 'cool' : m.internal || (got.cylinder && !got.emitters.size) ? 'dhw' : 'heat';
 
@@ -249,7 +277,7 @@ export function HouseSchematic() {
                 const xs = n.px < 0 ? X0 : xOf(n.px), lx = xs + 10, bad = r && !r.ok;
                 const ret = `M${x0} ${y0 + O} H${x0 + (n.px < 0 ? 16 : 0) - O} V${y + O} H${x1}`, flo = `M${x0} ${y0 - O} H${x0 + (n.px < 0 ? 16 : 0) + O} V${y - O} H${x1}`;
                 const v = vNow?.get(n.p.id) ?? 0, dur = `${Math.min(6, Math.max(0.5, 0.6 / Math.max(v, 0.05))).toFixed(2)}s`;
-                const vs = valvesOn(h, n.p.id);
+                const vs = valvesOn(h, n.p.id).filter((q) => !atTee.has(q.v.id));
                 const cls = `sx-run${pick ? ' pick' : ''}${drag?.over === n.p.id ? ' drop' : ''}`;
                 return <g key={n.p.id} className={cls} data-run={n.p.id}
                   onPointerEnter={drag ? () => setDrag({ ...drag, over: n.p.id }) : undefined}
@@ -263,13 +291,14 @@ export function HouseSchematic() {
                   </>}
                   <text x={lx} y={y - O - 5} fontFamily={FONT} fontSize={10} fill={bad ? BAD : INK}>{n.p.header ? `${n.p.name} · ` : ''}{short(n.p.size)} · {fmt(runLength(h, n.p), 1)} m</text>
                   {/* This mode's flow; the size (and a red label) follow the busiest mode, named when it is another one. */}
-                  {r && <text x={lx} y={y + O + 13} fontFamily={FONT} fontSize={10} fill={bad ? BAD : MUTED}>{running && now ? (u === 'idle' ? 'No flow' : `${fmt(now.flow.get(n.p.id) ?? 0, 1)} l/min · ${fmt(v, 2)} m/s`) : `Design ${fmt(r.flowLpm, 1)} l/min · ${fmt(r.v, 2)} m/s`}{ctl && r.mode && (!running || r.mode !== m.name) ? ` · sized for ${r.mode}` : ''}</text>}
+                  {r && <text x={lx} y={y + O + 13} fontFamily={FONT} fontSize={10} fill={bad ? BAD : MUTED}>{running && now ? (u === 'idle' ? 'No flow' : !now.flow.get(n.p.id) && u === 'dhw' && !h.heating.coilW ? 'Coil reheat not entered' : `${fmt(now.flow.get(n.p.id) ?? 0, 1)} l/min · ${fmt(v, 2)} m/s`) : `Design ${fmt(r.flowLpm, 1)} l/min · ${fmt(r.v, 2)} m/s`}{ctl && r.mode && (!running || r.mode !== m.name) ? ` · sized for ${r.mode}` : ''}</text>}
                   {(n.p.emitter || leaf) && <>{symbol(n, x1, y)}{label(n, xE + 52, y)}</>}
                   {!leaf && <circle cx={x1 + O} cy={y - O} r={2.5} fill={COL[u][0]} className="sx-fill" />}
                   {!leaf && <circle cx={x1 - O} cy={y + O} r={2.5} fill={COL[u][1]} className="sx-fill" />}
                   {vs.map(({ v: vv, port }, k) => valveMark(vv, port, n.p.id, xs + STEP - 22 - k * 26, y - O))}
                 </g>;
               })}
+              {tees.map(teeMark)}
               {/* Key and the index circuit */}
               <g fontFamily={FONT} fontSize={10.5} transform={`translate(24 ${H - 64})`}>
                 {([['Heating', COL.heat[0]], ['Hot water', COL.dhw[0]], ['Cooling', COL.cool[0]], ['Return', COL.heat[1]], ['No flow', IDLE]] as const).map(([t, c], i) => <g key={t} transform={`translate(${i * 86} 0)`}><line x1={0} x2={24} y1={0} y2={0} stroke={c} strokeWidth={2.5} /><text x={30} y={4} fill={INK}>{t}</text></g>)}

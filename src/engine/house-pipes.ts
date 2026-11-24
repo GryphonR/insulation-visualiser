@@ -471,24 +471,31 @@ function circuitsBelow(pipes: Pipe[], of: CircuitOf): Map<string, string> {
 
 /**
  * A run (a riser, a branch to another floor) feeding more than one circuit becomes one run per circuit along the same route, so each
- * circuit can have its own valve: zoned systems run a flow and return per zone from the plant (edits h in place).
- * shortcut: splits only runs whose own children each stay on one circuit (as autoPipes lays them); deeper mixed trunks stay shared.
+ * circuit can have its own valve: zoned systems run a flow and return per zone from the plant (edits h in place). The runs off the
+ * source stay shared, so the circuits part at a tee at their far end. Returns whether anything was split.
  */
-export function splitCircuits(h: House, of: CircuitOf): void {
-  const pipes = h.heating.pipes ?? [], below = circuitsBelow(pipes, of);
-  for (const X of [...pipes]) {
-    const kids = pipes.filter((p) => p.parent === X.id), cs = [...new Set(kids.map((k) => below.get(k.id) ?? ''))].filter(Boolean);
-    if (!X.parent || cs.length < 2 || kids.some((k) => (below.get(k.id) ?? '').includes('|'))) continue;
-    for (const c of cs.slice(1)) {
-      let n = pipes.length + 1;
-      while (pipes.some((p) => p.id === `P${n}`)) n++;
-      const Y: Pipe = { ...structuredClone(X), id: `P${n}`, name: `${X.name}, ${c}` };
-      pipes.push(Y);
-      for (const k of kids) if (below.get(k.id) === c) { k.parent = Y.id; if (k.ends?.[0] === `tee:${X.id}`) k.ends = [`tee:${Y.id}`, k.ends[1]]; }
+export function splitCircuits(h: House, of: CircuitOf): boolean {
+  let any = false;
+  // Each pass splits the runs whose children each stay on one circuit, so mixed trunks split from the far end back.
+  for (let pass = 0, more = true; more && pass < 50; pass++) {
+    more = false;
+    const pipes = h.heating.pipes ?? [], below = circuitsBelow(pipes, of);
+    for (const X of [...pipes]) {
+      const kids = pipes.filter((p) => p.parent === X.id), cs = [...new Set(kids.map((k) => below.get(k.id) ?? ''))].filter(Boolean);
+      if (!X.parent || cs.length < 2 || kids.some((k) => (below.get(k.id) ?? '').includes('|'))) continue;
+      more = any = true;
+      for (const c of cs.slice(1)) {
+        let n = pipes.length + 1;
+        while (pipes.some((p) => p.id === `P${n}`)) n++;
+        const Y: Pipe = { ...structuredClone(X), id: `P${n}`, name: `${X.name}, ${c}` };
+        pipes.push(Y);
+        for (const k of kids) if (below.get(k.id) === c) { k.parent = Y.id; if (k.ends?.[0] === `tee:${X.id}`) k.ends = [`tee:${Y.id}`, k.ends[1]]; }
+      }
+      X.name = `${X.name}, ${cs[0]}`;
     }
-    X.name = `${X.name}, ${cs[0]}`;
+    h.heating.pipes = pipes;
   }
-  h.heating.pipes = pipes;
+  return any;
 }
 
 /**

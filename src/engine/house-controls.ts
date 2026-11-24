@@ -3,6 +3,7 @@
 // Which runs carry water in a mode follows from the valves on the way from the heat source.
 import type { House } from './house';
 import type { Pipe } from './house-pipes';
+import { splitCircuits } from './house-pipes';
 import type { Emitter } from './house-heating';
 import { canCool, coolingOn } from './house-heating';
 
@@ -46,7 +47,14 @@ export function runEmitters(h: House, p: Pipe): string[] {
   const m = p.ends?.[1]?.startsWith('m:') ? p.ends[1].slice(2) : '';
   return m && placedManifold(h, m) ? h.heating.emitters.filter((e) => e.kind === 'ufh' && e.zone === m).map((e) => e.id) : [];
 }
-export const posOf = (v: Valve, m: Mode): Pos => m.valves[v.id] ?? (v.kind === 'two' ? 'open' : v.mid ? 'AB' : 'B');
+/** A 3-port's tee: its port A and port B runs, when each port is one run and both leave the same junction; else null. */
+export function teeOf(h: House, v: Valve): { a: Pipe; b: Pipe } | null {
+  const pipes = h.heating.pipes ?? [], ids = new Set(pipes.map((p) => p.id));
+  const a = v.runs.length === 1 ? pipes.find((p) => p.id === v.runs[0]) : undefined, b = v.b?.length === 1 ? pipes.find((p) => p.id === v.b![0]) : undefined;
+  const up = (p: Pipe) => (p.parent && ids.has(p.parent) ? p.parent : null);
+  return a && b && up(a) === up(b) ? { a, b } : null;
+}
+export const posOf =(v: Valve, m: Mode): Pos => m.valves[v.id] ?? (v.kind === 'two' ? 'open' : v.mid ? 'AB' : 'B');
 /** Whether flow gets past valve v into run `run` with the valve at `pos`. */
 export function passes(v: Valve, pos: Pos, run: string): boolean {
   if (v.kind === 'two') return !v.runs.includes(run) || pos === 'open';
@@ -179,6 +187,10 @@ export function applyPlan(h: House, plan: PlanKind | null): string | null {
   const zoned = plan === 'splus' || (plan === 'hp' && zones.length + (unzoned ? 1 : 0) >= 2);
   const cools = plan === 'hp' && piped.some(canCool);
   let dhw: Valve | undefined, dhw2: Valve | undefined, ch: Valve | undefined;
+  // Each valve is one body: trunks shared by circuits it switches apart (hot water and heating, and each zone when zoned) become a
+  // run per circuit along the same route, so each circuit leaves from one tee.
+  const zoneOf = (id: string) => { const z = h.heating.emitters.find((e) => e.id === id)?.zone; return zones.some((q) => q.id === z) ? `Zone ${z}` : 'No zone'; };
+  if (plan !== 'combi') splitCircuits(h, (p) => (isCylRun(p) ? 'Hot water' : !runEmitters(h, p).length ? null : zoned ? zoneOf(runEmitters(h, p)[0]) : 'Heating'));
   if (hasCyl && (plan === 'y' || plan === 'w' || plan === 'hp')) {
     const a = header(h, pureRoots(h, (t) => !isEm(t)), 'Hot water circuit'), b = header(h, pureRoots(h, isEm), 'Heating circuit');
     dhw = valve({ name: plan === 'y' ? 'Mid-position valve' : 'Diverter valve', kind: 'three', runs: a, b, mid: plan === 'y' });
@@ -247,8 +259,10 @@ export function controlChecks(h: House): Array<{ level: 'error' | 'warn'; text: 
     const gone = [...v.runs, ...(v.b ?? [])].filter((r) => !ids.has(r));
     if (gone.length) out.push({ level: 'warn', text: `${v.id} ${v.name} sits on runs that are gone (${gone.join(', ')}); move it or apply the plan again.` });
     if (!v.runs.length && !(v.b ?? []).length) out.push({ level: 'warn', text: `${v.id} ${v.name} is on no run, so it does nothing.` });
+    else if (v.kind === 'three' && !teeOf(h, v)) out.push({ level: 'warn', text: `${v.id} ${v.name} is a 3-port valve, so it sits at a tee: port A and port B should each be one run off the same junction. Move a port, or apply the plan again.` });
   }
   const hp = h.hp.source === 'ashp' || h.hp.source === 'gshp';
+  if (!h.heating.coilW && c.modes.some((m) => m.water === 'hot' && !m.internal && reach(h, m).cylinder)) out.push({ level: 'warn', text: 'Hot water: the cylinder coil reheat is not entered, so the hot water runs carry no flow and are not sized for it. Enter it from the cylinder\'s datasheet on the System diagram.' });
   for (const m of c.modes) {
     if (m.water === 'off') continue;
     const r = reach(h, m);

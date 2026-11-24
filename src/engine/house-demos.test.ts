@@ -16,7 +16,8 @@ describe('demo projects', () => {
     for (const s of d.make().scenarios) {
       const h = s.house, hp = h.hp.source === 'ashp' || h.hp.source === 'gshp';
       expect(h.heating.controls?.plan, s.name).toBe(hp ? 'hp' : h.heating.cylinder ? 'splus' : 'combi');
-      expect(controlChecks(h), s.name).toEqual([]);
+      // A heat pump's coil reheat is left for the user to enter from the datasheet, and that alone is flagged.
+      expect(controlChecks(h).map((c) => c.text), s.name).toEqual(hp && h.heating.cylinder ? [expect.stringContaining('coil reheat is not entered')] : []);
       // Each circuit is piped on its own, so every valve sits on one run (a 3-port on one run per port), not on each branch off a shared trunk.
       for (const v of h.heating.controls!.valves) expect([v.runs.length, v.b?.length ?? 0], `${s.name}: ${v.name}`).toEqual([1, v.kind === 'three' ? 1 : 0]);
     }

@@ -4,7 +4,7 @@ import type { House } from './house';
 import { defaultHouse } from './house-default';
 import { DEMOS, fiftiesSemi } from './house-demos';
 import { COOLING_DEFAULT, canCool, coolEer, coolingOn, dewPoint, emitterCool, emitterOut } from './house-heating';
-import { PLANS, applyPlan, controlChecks, isCylRun, modeSummary, modesOf, openRuns, passes, posOf, pureRoots, reach, runUse, served } from './house-controls';
+import { PLANS, applyPlan, controlChecks, isCylRun, modeSummary, modesOf, openRuns, passes, posOf, pureRoots, reach, runUse, served, teeOf } from './house-controls';
 import type { Mode, PlanKind, Valve } from './house-controls';
 import { autoPipes, combineRuns, sizePipes } from './house-pipes';
 import { simulate, verdict, yearRes } from './house-sim';
@@ -195,6 +195,34 @@ describe('control plans', () => {
     expect(controlChecks(h).some((c) => c.text.includes('no mid position'))).toBe(true);
   });
 
+  it('a 3-port plan on shared trunks splits hot water and heating into their own runs, so the valve sits at one tee', () => {
+    const tee = (h: House) => controlChecks(h).some((c) => c.text.includes('sits at a tee'));
+    for (const plan of ['w', 'y', 'hp'] as const) {
+      const h = semi(), res = calcHouse(h), before = sizePipes(h, res).rows.find((r) => !r.pipe.parent)!.loadW;
+      applyPlan(h, plan);
+      const v = h.heating.controls!.valves.find((x) => x.kind === 'three')!;
+      expect(teeOf(h, v)).not.toBeNull();
+      expect(tee(h)).toBe(false);
+      // Every emitter and the cylinder still hang off the pipework, and heating still reaches every emitter.
+      expect(reach(h, mode(h, 'heat')).emitters.size).toBe(h.heating.emitters.length);
+      expect(sizePipes(h, res).rows.find((r) => !r.pipe.parent)!.loadW).toBeCloseTo(before, 0);
+      // Moving a port onto a run off another junction is flagged.
+      v.b = [h.heating.pipes!.find((p) => p.parent === v.b![0])!.id];
+      expect(tee(h)).toBe(true);
+    }
+  });
+
+  it('on shared trunks every plan valve is one body: one run per port, and each zone still heats alone', () => {
+    for (const plan of ['s', 'splus', 'y', 'w', 'hp'] as const) {
+      const h = semi();
+      applyPlan(h, plan);
+      for (const v of h.heating.controls!.valves) expect([v.runs.length, v.b?.length ?? 0], `${plan}: ${v.name}`).toEqual([1, v.kind === 'three' ? 1 : 0]);
+      expect(controlChecks(h).filter((c) => c.level === 'error'), plan).toEqual([]);
+      expect(reach(h, mode(h, 'heat')).emitters.size, plan).toBe(h.heating.emitters.length);
+      for (const m of h.heating.controls!.modes.filter((x) => x.id.startsWith('zone'))) expect(new Set([...reach(h, m).emitters].map((id) => h.heating.emitters.find((e) => e.id === id)!.zone)).size, `${plan}: ${m.name}`).toBe(1);
+    }
+  });
+
   it('heat pump plan with fan coils: cooling shuts the radiators off and reaches only the fan coils', () => {
     const h = semi(), fcs = cooled(h);
     applyPlan(h, 'hp');
@@ -243,11 +271,11 @@ describe('control plans', () => {
     expect(t).toMatch(/No mode heats/);
   });
 
-  it('where the heating leaves the trunk at more than one tee, its valve sits on each of those runs', () => {
-    const h = semi();
+  it('where the heating left the trunk at more than one tee, the S plan gives it its own run, so one valve shuts it', () => {
+    const h = semi(), n = h.heating.pipes!.length;
     applyPlan(h, 's');
-    const chV = h.heating.controls!.valves.find((v) => v.name === 'Heating zone valve')!;
-    expect(chV.runs.length).toBeGreaterThan(1);
+    expect(h.heating.pipes!.length).toBeGreaterThan(n);
+    expect(h.heating.controls!.valves.find((v) => v.name === 'Heating zone valve')!.runs).toHaveLength(1);
     expect(reach(h, mode(h, 'dhw')).emitters.size).toBe(0);
   });
 
@@ -301,9 +329,12 @@ describe('sizing by mode', () => {
     const h = semi();
     applyPlan(h, 'y');
     expect(h.heating.coilW).toBeUndefined();
+    const noCoil = () => controlChecks(h).some((c) => c.text.includes('coil reheat is not entered'));
+    expect(noCoil()).toBe(true);
     h.heating.coilW = 1234;
     applyPlan(h, 's');
     expect(h.heating.coilW).toBe(1234);
+    expect(noCoil()).toBe(false);
   });
 
   it('cooling flows: the fan coils at full cooling output, at the chilled-water rise', () => {
