@@ -119,6 +119,18 @@ export function dropSpikes(p: Pt[]): Pt[] {
   return q;
 }
 
+/** Whether a box dragged from `a` to `b` picks the outline, as in KiCad: dragged rightwards it must hold the whole outline; leftwards, touching it is enough. */
+export function boxPicks(poly: Pt[], a: Pt, b: Pt): boolean {
+  const x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]), y0 = Math.min(a[1], b[1]), y1 = Math.max(a[1], b[1]);
+  const inBox = (q: Pt) => q[0] >= x0 && q[0] <= x1 && q[1] >= y0 && q[1] <= y1;
+  if (b[0] >= a[0]) return poly.every(inBox);
+  const box: Pt[] = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  if (poly.some(inBox) || box.some((q) => pointInPoly(q, poly))) return true;
+  const o = (p1: Pt, p2: Pt, p3: Pt) => Math.sign((p2[0] - p1[0]) * (p3[1] - p1[1]) - (p2[1] - p1[1]) * (p3[0] - p1[0]));
+  const cross = (p1: Pt, p2: Pt, p3: Pt, p4: Pt) => o(p1, p2, p3) * o(p1, p2, p4) < 0 && o(p3, p4, p1) * o(p3, p4, p2) < 0;
+  return poly.some((q, i) => box.some((c, j) => cross(q, poly[(i + 1) % poly.length], c, box[(j + 1) % 4])));
+}
+
 /** Even-odd point-in-polygon test. */
 export function pointInPoly(p: Pt, poly: Pt[]): boolean {
   let c = false;

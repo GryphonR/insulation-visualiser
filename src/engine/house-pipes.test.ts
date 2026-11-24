@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { calcHouse } from './house';
 import { defaultHouse } from './house-default';
-import { lpm } from './house-heating';
-import { PIPE_SIZES, PIPE_WALL, attachments, drawRun, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, joinRun, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitCircuits, splitSegment, squareInto } from './house-pipes';
+import { emitterOut, lpm } from './house-heating';
+import { PIPE_SIZES, PIPE_WALL, attachments, drawRun, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, fitSize, fittingsDp, joinRun, joints, kInsert, sizesOn, usable, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitCircuits, splitSegment, squareInto } from './house-pipes';
 
 /** Place a heater so its pipes connect at `p` (its valve end, for a radiator). */
 const put = (h: ReturnType<typeof defaultHouse>, e: ReturnType<typeof defaultHouse>['heating']['emitters'][number], p: [number, number]) => {
@@ -418,6 +418,47 @@ describe('drawing runs by hand', () => {
   });
 });
 
+describe('UFH manifolds', () => {
+  it('a placed manifold takes the place of its loops: one run to it carries all their load', () => {
+    const h = defaultHouse();
+    h.heating.source = { at: [0.5, 0.5], storey: 0 };
+    h.heating.pipes = [];
+    const loops = h.heating.emitters.filter((e) => h.rooms.find((r) => r.id === e.room)?.storey === 0).slice(0, 2);
+    h.heating.zones.push({ id: 'zm', name: 'Ground', kind: 'ufh', color: '#000', on: true, hours: null, blend: 35, manifold: { x: 3, y: 0.5, storey: 0 } });
+    for (const e of loops) { e.kind = 'ufh'; e.zone = 'zm'; e.area = 12; e.spacing = 150; e.cover = 'Tiles'; }
+    loops[0].area = 1; // too small for its room
+    const ids = attachments(h, 0).map((a) => a.id);
+    expect(ids).toContain('m:zm');
+    for (const e of loops) expect(ids).not.toContain(`e:${e.id}`);
+    expect(unpiped(h)).toContain('m:zm');
+    const r = drawRun(h, 0, { id: 'source' }, [], { id: 'm:zm' }) as { id: string };
+    const res = sizePipes(h, calcHouse(h)), row = res.rows.find((x) => x.pipe.id === r.id)!;
+    // Each loop's share of its room's loss, or its full output if that is less.
+    const flow = calcHouse(h).heat.designFlow, out = (e: (typeof loops)[number]) => emitterOut(e, flow, h.rooms.find((x) => x.id === e.room)!.setpoint, h);
+    expect(row.loadW).toBeCloseTo(loops.reduce((a, e) => a + Math.min(res.emitterW.get(e.id) ?? 0, out(e)), 0), 6);
+    expect(loops.some((e) => out(e) < res.emitterW.get(e.id)!)).toBe(true); // the cap is exercised
+    expect(row.loadW).toBeGreaterThan(0);
+    expect(row.pipe.size).toBe(fitSize(row.flowLpm, [], res.paMax)); // sized for its loops, not a fixed 22 mm
+    for (const e of loops) expect(res.unpiped).not.toContain(e.id);
+    expect(unpiped(h)).not.toContain('m:zm');
+    // Taken off the plan, the loops are piped one by one again.
+    delete h.heating.zones.find((z) => z.id === 'zm')!.manifold;
+    expect(unpiped(h)).toContain(`e:${loops[0].id}`);
+  });
+
+  it('pipes the rest routes one run to a manifold, not one per loop', () => {
+    const h = defaultHouse();
+    h.heating.source = { at: [0.5, 0.5], storey: 0 };
+    h.heating.pipes = [];
+    const loops = h.heating.emitters.filter((e) => h.rooms.find((r) => r.id === e.room)?.storey === 0).slice(0, 2);
+    h.heating.zones.push({ id: 'zm', name: 'UFH manifold', kind: 'ufh', color: '#000', on: true, hours: null, blend: 35, manifold: { x: 3, y: 0.5, storey: 0 } });
+    for (const e of loops) { e.kind = 'ufh'; e.zone = 'zm'; e.area = 12; e.spacing = 150; e.cover = 'Tiles'; }
+    pipeRest(h);
+    expect(h.heating.pipes.filter((p) => p.ends?.[1] === 'm:zm').map((p) => p.name)).toEqual(['UFH manifold']);
+    expect(unpiped(h)).toEqual([]);
+  });
+});
+
 describe('attachment points and filling in', () => {
   it("a radiator's pipes connect at its valve end nearer the heat source", () => {
     const h = defaultHouse(), e = h.heating.emitters.find((x) => x.kind === 'radiator')!;
@@ -449,5 +490,42 @@ describe('attachment points and filling in', () => {
     const r = drawRun(h, 0, { run: main.id, at: [2.5, 0.5] }, [], { id: `e:${e.id}` }) as { id: string };
     expect(viaOf(h, h.heating.pipes.find((p) => p.id === r.id)!)).toBe('ceiling');
     expect('error' in drawRun(h, 1, { run: main.id, at: [2, 0.5] }, [[2, 2]], null)).toBe(false);
+  });
+});
+
+describe('pipe sizes on the project', () => {
+  it('switched-off sizes are swapped for the nearest one on, in layouts and sizing', () => {
+    const h = defaultHouse();
+    h.heating.pipeOff = ['Cu 10 mm (microbore)', 'Cu 22 mm', 'PEX 16 mm'];
+    expect(usable(h, 'Cu 10 mm (microbore)')).toBe('Cu 15 mm');
+    expect(usable(h, 'Cu 22 mm')).toBe('Cu 28 mm');
+    expect(usable(h, 'Cu 15 mm')).toBe('Cu 15 mm');
+    expect(fitSize(0.1, [], 300, sizesOn(h))).toBe('Cu 15 mm');
+    expect(fitSize(12, [], 300, sizesOn(h))).not.toBe('Cu 22 mm');
+    const used = new Set(autoPipes(h).map((p) => p.size));
+    for (const k of h.heating.pipeOff) expect(used.has(k)).toBe(false);
+    // With all of a material off, a plastic loop goes to the nearest size on in another.
+    h.heating.pipeOff = Object.keys(PIPE_SIZES).filter((k) => k.startsWith('PEX'));
+    expect(usable(h, 'PEX 16 mm')).toBe('MLCP 16 mm');
+  });
+});
+
+describe('fitting losses', () => {
+  it('counts elbows on a run laid on the plan, and plastic inserts add to them', () => {
+    const h = defaultHouse();
+    expect(kInsert(13.6, 13.6)).toBe(0);
+    expect(kInsert(11.6, 9.5)).toBeGreaterThan(0.5);
+    h.heating.source = { at: [0.5, 0.5], storey: 0 };
+    h.heating.pipes = autoPipes(h);
+    const p = h.heating.pipes.find((x) => x.leg && joints(h, x)!.elbows > 0 && x.size.startsWith('Cu') && !x.size.includes('micro'))!;
+    const j = joints(h, p)!, q = (992 * 0.7 * 0.7) / 2;
+    expect(fittingsDp(h, p, 0.7, 1000)).toBeCloseTo(q * (j.elbows * 0.8 + (j.tee ? 1 : 0)), 6); // copper: no inserts
+    const cu = fittingsDp(h, p, 0.7, 1000);
+    p.size = 'PEX 15 mm';
+    expect(fittingsDp(h, p, 0.7, 1000)).toBeGreaterThan(cu);
+    h.heating.fitBore = { 'PEX 15 mm': 11.6 }; // fittings as wide as the pipe: back to copper's loss
+    expect(fittingsDp(h, p, 0.7, 1000)).toBeCloseTo(cu, 6);
+    p.typed = true;
+    expect(fittingsDp(h, p, 0.7, 1000)).toBeCloseTo(300, 6); // a typed length keeps the 30% allowance
   });
 });

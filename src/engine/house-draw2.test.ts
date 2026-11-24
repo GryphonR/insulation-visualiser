@@ -248,6 +248,16 @@ describe('underfloor heating zones', () => {
     for (const r of covered.filter((x) => x.heated)) expect(res.heat.rooms.find((q) => q.id === r.id)?.has).toBe(true);
   });
 
+  it("puts the zone's loops on the manifold it is linked to, and '' takes them off every manifold", () => {
+    const { s } = drawn(), mine = (h: H) => h.heating.emitters.filter((e) => e.fromZone);
+    s.zones![s.zones!.length - 1].manifold = 'zm';
+    const on = syncUfh(s);
+    expect(mine(on).every((e) => e.zone === 'zm')).toBe(true);
+    expect(syncUfh(on)).toBe(on);
+    on.zones![on.zones!.length - 1].manifold = '';
+    expect(mine(syncUfh(on)).every((e) => e.zone === '')).toBe(true);
+  });
+
   it('leaves the house untouched when nothing changed, and never alters the house it is given', () => {
     const { h, s } = drawn();
     expect(h.heating.emitters.some((e) => e.fromZone)).toBe(false);

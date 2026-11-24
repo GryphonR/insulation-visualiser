@@ -177,7 +177,7 @@ export function RoomPage({ id, initialTab }: { id: string; initialTab?: string }
                             {face && !isOp ? (
                               <select className="h-sel" value={face.buildup.id} aria-label={`${row.label} build-up`}
                                 onChange={(e) => upd((h) => { h.faceBuildup[row.key] = e.target.value; })}>
-                                {bOpts(fits(face.kind)).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                                {bOpts(fits(face.kind)).map((b) => <option key={b.id} value={b.id}>{b.name} (U {fmt(buildupU(b), 2)})</option>)}
                               </select>
                             ) : row.buildup}
                           </td>

@@ -63,7 +63,7 @@ function pipeAndValve(h: House, plan: PlanKind) {
   const zone = (id: string) => h.heating.zones.find((z) => z.id === id)?.name ?? 'No zone';
   plumb(h, plan === 'combi' ? undefined : (p) => {
     const e = p.emitter && h.heating.emitters.find((x) => x.id === p.emitter);
-    return e ? zone(e.zone) : p.ends?.[1] === 'cylinder' ? 'Hot water' : null;
+    return e ? zone(e.zone) : p.ends?.[1] === 'cylinder' ? 'Hot water' : p.ends?.[1]?.startsWith('m:') ? zone(p.ends[1].slice(2)) : null;
   });
   const err = applyPlan(h, plan);
   if (err) throw new Error(`${h.name}: ${err}`);

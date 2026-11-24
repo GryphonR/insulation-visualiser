@@ -18,6 +18,14 @@ describe('whole-house model', () => {
     expect(buildupU(h.buildups.find((b) => b.id === 'dg')!)).toBe(1.4);
   });
 
+  it('uses a heated room\'s air change override in place of the calculated rate', () => {
+    const r = h.rooms.find((x) => x.heated)!, h2 = structuredClone(h);
+    h2.rooms.find((x) => x.id === r.id)!.achOverride = 3;
+    const was = room(r.id), now = calcHouse(h2).rooms.find((x) => x.room.id === r.id)!;
+    expect(now.n).toBe(3);
+    expect(now.ventW).toBeCloseTo(was.ventW * 3 / was.n, 6);
+  });
+
   it('builds the demo plan with no errors', () => {
     expect(res.checks.filter((c) => c.level === 'error')).toEqual([]);
   });

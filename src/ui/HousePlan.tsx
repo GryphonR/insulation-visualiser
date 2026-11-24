@@ -53,7 +53,8 @@ export function HousePlan({ house, storey, sel, setSel, fill, label, editOutline
       onPointerMove={(e) => { if (!drag) return; const p = fromEvent(e); if (p) setDrag({ ...drag, poly: drag.poly.map((q, i) => (i === drag.i ? p : q)) }); }}
       onPointerUp={() => { if (drag) { onOutline(drag.id, drag.poly); setDrag(null); } }}>
       {underlay?.(to, S)}
-      <text x={PAD + ((b.maxX - b.minX) * S) / 2} y={18} textAnchor="middle" className="plan-n">N</text>
+      {/* North as it lies on this plan: "up" faces house.north degrees clockwise of it. */}
+      <text x={PAD + ((b.maxX - b.minX) * S) / 2} y={18} textAnchor="middle" className="plan-n" transform={`rotate(${-(house.north ?? 0)} ${PAD + ((b.maxX - b.minX) * S) / 2} 14)`}>↑N</text>
       {onThis.map((r) => {
         const p = polyOf(r), c = to(centroid(p));
         return (

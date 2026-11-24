@@ -44,10 +44,12 @@ export interface Zone {
   hours: number[] | null;
   /** UFH blending valve temperature, °C; 0 means connected direct to the system flow. */
   blend: number;
-  /** UFH manifold position on the plan, m (on the storey of its loops). */
-  manifold?: { x: number; y: number };
+  /** UFH manifold position on the plan, m. With a storey it was placed on the heating layout: pipe runs go to it, and it feeds every loop in this zone. */
+  manifold?: { x: number; y: number; storey?: number };
 }
 export interface Plant { at: Pt; storey: number }
+/** Colours for heating zones on the plan, in the order zones are added. */
+export const ZONE_COLOURS = ['#c2410c', '#1f6fb5', '#1f7a4d', '#7a45b8', '#b45309', '#be185d'];
 export interface Heating {
   emitters: Emitter[]; zones: Zone[];
   control: 'fixed' | 'ideal' | 'curve';
@@ -61,6 +63,10 @@ export interface Heating {
   source?: Plant; cylinder?: Plant; risers?: Array<{ id: string; at: Pt }>;
   /** Most a run may lose per metre, Pa/m, even when the pump has head to spare (for balancing and quiet). 300 when unset. */
   paCap?: number;
+  /** Pipe sizes not used on this project: left out of the size lists, the layouts and the sizing. Unset: every size. */
+  pipeOff?: string[];
+  /** Bore through each size's fittings, mm, where it differs from the typical figure. */
+  fitBore?: Record<string, number>;
   /** Pipe runs from the heat pump (board 3), and the pump's available head at the design flow, kPa. */
   pipes?: Pipe[];
   pumpHead?: number;

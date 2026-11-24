@@ -2,11 +2,11 @@ import { useMemo } from 'react';
 import { MONTHS } from '../engine/data';
 import { SOURCE_LABEL, effText, isHeatPump, roomArea } from '../engine/house';
 import type { House } from '../engine/house';
-import { COOLING_DEFAULT, COVERS, given, RAD_LABEL, canCool, dewPoint, emitterCool, UFH_SPACINGS, autoEmitters, emitterOut, loopLength, loopMax, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
+import { COOLING_DEFAULT, COVERS, ZONE_COLOURS, given, RAD_LABEL, canCool, dewPoint, emitterCool, UFH_SPACINGS, autoEmitters, emitterOut, loopLength, loopMax, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
 import type { Emitter, RadType, Zone } from '../engine/house-heating';
 import { Chip } from './controls';
 import { HouseUfh } from './HouseUfh';
-import { MAX_PA_M, MAX_V, PIPE_SIZES, autoPipes, combineRuns, removeRun, runLength, sizePipes } from '../engine/house-pipes';
+import { FIT_BORE, MAX_PA_M, MAX_V, PIPE_SIZES, autoPipes, fitBore, pipeFamily, sizesOn, combineRuns, removeRun, runLength, sizePipes } from '../engine/house-pipes';
 import { addEmitter } from '../engine/house-draw';
 import { Card, Num, SheetNum, Why, fmt, uid, NumInput } from './hform';
 import { WHY, sourceWhy } from './assumptions';
@@ -15,7 +15,7 @@ import { href } from './route';
 import { HeatSourceCard } from './HouseSettings';
 import { coolingLoad } from '../engine/house-sim';
 
-const ZCOL = ['#c2410c', '#1f6fb5', '#1f7a4d', '#7a45b8', '#b45309', '#be185d'];
+const ZCOL = ZONE_COLOURS;
 
 export type HeatingSection = 'system' | 'emitters' | 'zones' | 'pipes';
 
@@ -261,7 +261,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                         <td><select className="h-sel" value={p.parent ?? ''} aria-label="Upstream run" onChange={(e) => setP({ parent: e.target.value || null })}>
                           <option value="">{isHeatPump(house.hp.source) ? 'Heat pump' : 'Boiler'}</option>{(c.pipes ?? []).filter((x) => x.id !== p.id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
                         </select></td>
-                        <td><select className="h-sel" value={p.size} aria-label="Pipe size" onChange={(e) => setP({ size: e.target.value })}>{Object.keys(PIPE_SIZES).map((k) => <option key={k}>{k}</option>)}</select></td>
+                        <td><select className="h-sel" value={p.size} aria-label="Pipe size" onChange={(e) => setP({ size: e.target.value })}>{[...new Set([...sizesOn(house), p.size])].map((k) => <option key={k}>{k}</option>)}</select></td>
                         <td className="n"><NumInput className="thk-input" step={0.5} min={0} value={runLength(house, p)} aria-label="Length m" title={p.leg && !p.typed ? 'Measured along its route on the plan; typing a length overrides it' : undefined}
                           onChange={(e) => setP({ length: Math.max(0, Number(e.target.value) || 0), typed: true })} />
                           {p.leg && p.typed && <button type="button" className="btn-link small" title="Measure along the route on the plan again" onClick={() => setP({ typed: undefined })}>plan</button>}</td>
@@ -283,10 +283,27 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
               <label className="hf"><span className="eyebrow">Pump head available</span><span className="hf-in"><NumInput className="thk-input" step={1} value={c.pumpHead ?? 40} onChange={(e) => upd((h) => { h.heating.pumpHead = Number(e.target.value) || 0; })} /><span className="small muted">kPa at the design flow</span></span></label>
               <label className="hf"><span className="eyebrow">Pa/m cap</span><span className="hf-in"><NumInput className="thk-input" step={10} value={c.paCap ?? MAX_PA_M} onChange={(e) => upd((h) => { h.heating.paCap = Math.max(10, Number(e.target.value) || MAX_PA_M); })} /><span className="small muted">even with head to spare</span></span></label>
             </div>
-            <p className={pipesRes.headOk ? 'small' : 'small warn'}>Index circuit (highlighted): {fmt(pipesRes.indexDp / 1000, 1)} kPa through {pipesRes.indexPath.length} runs, flow and return, with {Math.round((1.3 - 1) * 100)}% for fittings and 5 kPa for the emitter and valves.{' '}
+            <p className={pipesRes.headOk ? 'small' : 'small warn'}>Index circuit (highlighted): {fmt(pipesRes.indexDp / 1000, 1)} kPa through {pipesRes.indexPath.length} runs, flow and return, with each elbow, tee and fitting insert on runs laid on the plan (30% for fittings on typed lengths) and 5 kPa for the emitter and valves.{' '}
               {pipesRes.headOk ? `Within the pump's ${fmt(pipesRes.head / 1000)} kPa.` : `More than the pump's ${fmt(pipesRes.head / 1000)} kPa: upsize the highlighted runs.`}</p>
             {pipesRes.unpiped.length > 0 && <p className="small warn">Not piped yet: {pipesRes.unpiped.map((id) => { const e = c.emitters.find((x) => x.id === id); return e ? `${roomName(e.room)} ${e.kind === 'ufh' ? 'UFH' : id}` : id; }).join(', ')}.</p>}
           </>}
+          <fieldset className="pipe-sizes">
+            <legend className="eyebrow">Pipe sizes on this project</legend>
+            <p className="small muted">Only the sizes ticked are offered for runs and used when laying out and sizing pipework. Sizes are outside diameters; the bore used for the flow is in brackets. The inserts and press sleeves in plastic and multilayer fittings narrow the bore at every joint: set the bore through the fittings you use.</p>
+            <div className="pipe-size-cols">
+              {['Cu', 'PEX', 'MLCP'].map((f) => (
+                <div key={f}><p className="small"><b>{f === 'Cu' ? 'Copper' : f === 'MLCP' ? 'MLCP (multilayer)' : 'PEX'}</b></p>
+                  {Object.keys(PIPE_SIZES).filter((k) => pipeFamily(k) === f).map((k) => (
+                    <label key={k} className="small"><input type="checkbox" checked={!c.pipeOff?.includes(k)}
+                      onChange={(e) => upd((h) => { const off = (h.heating.pipeOff ?? []).filter((x) => x !== k); h.heating.pipeOff = e.target.checked ? off : [...off, k]; if (!h.heating.pipeOff.length) delete h.heating.pipeOff; })} />
+                      {' '}{k.replace(/^\S+ /, '')} <span className="muted">({PIPE_SIZES[k]} mm bore)</span>
+                      {FIT_BORE[k] != null && <> · fittings <NumInput className="thk-input" step={0.5} min={1} max={PIPE_SIZES[k]} value={fitBore(house, k)} aria-label={`${k} fitting bore, mm`}
+                        onChange={(e) => upd((h) => { const n = Number(e.target.value); h.heating.fitBore = { ...h.heating.fitBore, [k]: n > 0 ? Math.min(n, PIPE_SIZES[k]) : FIT_BORE[k] }; })} /> mm</>}</label>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </fieldset>
         </section>
         )}
 

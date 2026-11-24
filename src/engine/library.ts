@@ -11,6 +11,8 @@ export interface Stackup {
   layers: Array<[string, number]>;
   /** Forces the orientation (used for roof presets); otherwise follows the shared environment. */
   orient?: string;
+  /** Ground floor presets: solid slab or suspended timber. */
+  floorType?: 'solid' | 'suspended';
   /** Built-in stackups can be duplicated into a custom copy but not edited or deleted in place. */
   builtin?: boolean;
 }
@@ -20,6 +22,7 @@ export const BUILTIN_STACKUPS: Stackup[] = PRESETS.map((p) => ({
   name: p.name,
   layers: p.layers,
   orient: p.orient,
+  floorType: p.floorType,
   builtin: true,
 }));
 

@@ -1,15 +1,16 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { CIBSE_ACH, SHADING, SOURCE_LABEL, setSource, defaultTemp, listedAs, onStorey, roomEdges, roomHeight } from '../engine/house';
+import { CIBSE_ACH, SHADING, buildupLabel, buildupU, SOURCE_LABEL, setSource, defaultTemp, listedAs, onStorey, roomEdges, roomHeight } from '../engine/house';
 import type { Buildup, BuildupKind, HeatSource, House, HouseResult, Room, RoomType } from '../engine/house';
 import { useProject } from './project';
+import { ADD_BUILDUP, ADD_BUILDUP_LABEL, useAddBuildup } from './AddBuildupFlow';
 import { EMITTER_NAME, RAD_LABEL, UFH_PIPES, UFH_SPACINGS, loopLength, loopMax } from '../engine/house-heating';
 import type { RadType } from '../engine/house-heating';
 import { OPEN_DOORWAY, addBasement, addStoreyAbove, bandName, canAddBasement, canRemoveBasement, canRemoveTop, copyRooms, deleteRoom, flipRooms, innerDoorAt, isOutside, narrowAtWall, openingCentre, partyKeys, pieceGap, pieceKeys, pieceThickness, removeBasement, removeTop, rotateRooms, setWallLength, splitStoreys, wallIndex, wallKeys } from '../engine/house-draw';
 import { polyArea } from '../engine/geom';
 import { Num, fmt, uid, NumInput } from './hform';
-import { NO_SEL, plantOf, removePlant } from './DrawCanvas';
-import { MAX_V, PIPE_SIZES, maxFlow, resetRun, runLength, setBranchRiser, sizePipes, valveTail, viaOf, voidName } from '../engine/house-pipes';
+import { NO_SEL, plantName, plantOf, removePlant } from './DrawCanvas';
+import { MAX_V, PIPE_SIZES, joints, maxFlow, pipeFamily, sizesOn, resetRun, runLength, setBranchRiser, sizePipes, valveTail, viaOf, voidName } from '../engine/house-pipes';
 import type { Lens, OpPick, Sel, Tool } from './DrawCanvas';
 import { href } from './route';
 import { RoofSectionFields, newRoof } from './HouseRoof';
@@ -23,14 +24,14 @@ const GROUPS: Array<{ id: string; label: string; tools: ToolDef[]; list?: 'glazi
   { id: 'stairs', label: 'Stairs', tools: [['stairs', 'Stairwell', '☰']] },
   { id: 'window', label: 'Window', tools: [['window', 'Window', '▬']], list: 'glazing' },
   { id: 'door', label: 'Door', tools: [['door', 'Door', '▯']], list: 'door' },
-  { id: 'heat', label: 'Heating', tools: [['radiator', 'Radiator', '≣'], ['ufh', 'UFH zone', '▦']] },
+  { id: 'heat', label: 'Heating', tools: [['radiator', 'Radiator', '≣'], ['ufh', 'UFH zone', '▦'], ['manifold', 'UFH manifold', '▤']] },
   { id: 'source', label: 'Boiler / heat pump', tools: [['source', 'Boiler / heat pump', '♨']] },
   { id: 'cylinder', label: 'Hot water cylinder', tools: [['cylinder', 'Hot water cylinder', '◍']] },
   { id: 'riser', label: 'Pipe riser', tools: [['riser', 'Pipe riser', '↕']] },
   { id: 'pipe', label: 'Draw a pipe run', tools: [['pipe', 'Draw a pipe run', '⌐']] },
 ];
 const HINT: Record<Tool, string> = {
-  select: 'Drag a wall or a corner to reshape; drag a room to move it and it snaps flush to its neighbours. Shift-drag on empty canvas boxes several rooms; Shift-click a room adds it; Shift-click walls selects several. Arrow keys nudge. Double-click a wall to add a corner, a corner to remove it, a room to open it. Alt stops neighbours following; hold Shift while drawing for free (no snapping). Double-click a tool to keep it.',
+  select: 'Drag a wall or a corner to reshape; drag a room to move it and it snaps flush to its neighbours. Drag on empty canvas to box-select rooms: rightwards takes rooms wholly inside, leftwards anything it touches. On a touchpad, two fingers pan and a pinch zooms; with a mouse, hold Space or the middle button and drag to pan. + and − zoom; 0 or F fits the plan. Shift-click a room adds it; Shift-click walls selects several. Arrow keys nudge. Double-click a wall to add a corner, a corner to remove it, a room to open it. Alt stops neighbours following; hold Shift while drawing for free (no snapping). Double-click a tool to keep it.',
   room: 'Click each corner; lines snap square and 45° and sit flush on other rooms (Shift: free). Type a length and press Enter to set the next wall exactly. Click the first corner, double-click or press Enter to finish; Backspace undoes, Esc cancels.',
   box: 'Drag out a rectangular room, or click one corner then the opposite corner.',
   split: 'Click two points to draw a line across a room; it is cut in two along the line, with its windows, walls and emitters shared out.',
@@ -42,6 +43,7 @@ const HINT: Record<Tool, string> = {
   radiator: 'Click inside a heated room. A radiator snaps to the nearest wall; drag it to move it.',
   source: 'Click where the boiler or heat pump goes (on this floor). There is one: clicking again moves it. Pipes are laid from here to every radiator, along the walls.',
   cylinder: 'Click where the hot water cylinder goes, if there is one. Clicking again moves it.',
+  manifold: 'Click where a UFH manifold goes. Draw one pipe run to it, and it feeds every UFH loop on it: the underfloor zones on this floor are put on it, and you can move them between manifolds in its panel.',
   riser: 'Click where pipes pass up or down through the floors, such as a cupboard or boxing in a corner. Pipes to other floors go up whichever riser makes the runs shortest; with no riser they go straight up from the boiler.',
   pipe: 'Click a green ring (the boiler or heat pump, a riser, a radiator, a UFH manifold or the cylinder) or an existing run to start, click the corners, then click what it feeds to finish. Stretches run square to the grid or to a nearby wall, even one at an angle, and stop 10 cm short of a wall across their way, so the next one runs along it. Hold Shift (or turn snapping off) to draw at any angle. Enter leaves the end open, to tee off later; Backspace undoes a corner. A heater that already had a run gets the new one instead.',
   ufh: "Drag out a rectangle, or click corners for any shape, to draw an underfloor heating zone. Every heated room it covers gets UFH for its part of the zone; set each room's covering and pipe spacing under Emitters. Drag the zone by its tag.",
@@ -65,7 +67,7 @@ const PIPE_SELECT_HINT = 'Click an emitter, an underfloor zone tag or a pipe run
 
 /** The drawing menu: a slim column of tool icons (names on hover) that floats over the canvas; groups open to the right. */
 /** The heating and cooling lens's tools; the rest are the floor plan's. UFH zones are also drawn in a floor layer, which is plan only. */
-const PIPE_TOOLS: Tool[] = ['select', 'radiator', 'ufh', 'source', 'cylinder', 'riser', 'pipe'];
+const PIPE_TOOLS: Tool[] = ['select', 'radiator', 'ufh', 'source', 'cylinder', 'riser', 'manifold', 'pipe'];
 export function DrawMenu({ house, band, tool, setTool, sticky, setSticky, snapOn, setSnapOn, lens = 'plan', opPick, setOpPick }: {
   house: House;
   /** On a floor or ceiling layer: only zones and (on floors) heated-floor loops can be drawn. */
@@ -75,6 +77,7 @@ export function DrawMenu({ house, band, tool, setTool, sticky, setSticky, snapOn
   opPick: OpPick; setOpPick: (p: OpPick) => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
+  const addBuildup = useAddBuildup();
   // The last tool used in each group is the one its button shows and picks.
   const [lastIn, setLastIn] = useState<Record<string, Tool>>({});
   const allowed = (id: Tool) => (lens === 'pipes' ? PIPE_TOOLS.includes(id) : !PIPE_TOOLS.includes(id) || id === 'select' || (id === 'ufh' && band === 'floor')) && (!band || id === 'select' || id === 'room' || id === 'box' || (id === 'ufh' && band === 'floor'));
@@ -100,7 +103,7 @@ export function DrawMenu({ house, band, tool, setTool, sticky, setSticky, snapOn
                 {types.map((b) => (
                   <button key={b.id} type="button" role="menuitemradio" aria-checked={on && chosen === b.id} className={on && chosen === b.id ? 'on' : ''}
                     onClick={() => { setOpPick(g.list === 'glazing' ? { ...opPick, glazing: b.id } : { ...opPick, door: b.id }); pick(g.id, id, false); setOpen(null); }}>
-                    <b>{b.name}</b><span>{b.u != null ? `U ${fmt(b.u, 2)}` : ''}</span>
+                    <b>{b.name}</b><span>U {fmt(buildupU(b), 2)}</span>
                   </button>
                 ))}
                 {g.list === 'door' && (
@@ -109,7 +112,9 @@ export function DrawMenu({ house, band, tool, setTool, sticky, setSticky, snapOn
                     <b>Opening</b><span>between two rooms, no door</span>
                   </button>
                 )}
-                {!types.length && g.list === 'glazing' && <p className="small muted">No glazing build-ups yet: add one under Build-ups.</p>}
+                <button type="button" role="menuitem" onClick={() => { setOpen(null); addBuildup(g.list!, (bid) => { setOpPick(g.list === 'glazing' ? { ...opPick, glazing: bid } : { ...opPick, door: bid }); pick(g.id, id, false); }); }}>
+                  <b>{g.list === 'glazing' ? '＋ Add window type…' : '＋ Add door type…'}</b><span>from the library or your own</span>
+                </button>
               </div>
             ) : (
               <div className="flyout" role="menu" aria-label={g.label}>
@@ -142,11 +147,14 @@ export function GridSelect({ grid, setGrid }: { grid: number; setGrid: (v: numbe
 
 const common = <T,>(xs: T[]): T | '' => (xs.length && xs.every((x) => x === xs[0]) ? xs[0] : '');
 
-function BuildupSelect({ label, value, options, onPick }: { label: string; value: string; options: Buildup[]; onPick: (id: string) => void }) {
+/** `kind`: what an added build-up is, for the Add build-up entry at the bottom. */
+function BuildupSelect({ label, value, options, kind, onPick }: { label: string; value: string; options: Buildup[]; kind: BuildupKind; onPick: (id: string) => void }) {
+  const addBuildup = useAddBuildup();
   return (
-    <select className="select" aria-label={label} value={value} onChange={(e) => e.target.value && onPick(e.target.value)}>
+    <select className="select" aria-label={label} value={value} onChange={(e) => e.target.value === ADD_BUILDUP ? addBuildup(kind, onPick) : e.target.value && onPick(e.target.value)}>
       {value === '' && <option value="">Mixed: pick one for all</option>}
-      {options.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+      {options.map((b) => <option key={b.id} value={b.id}>{buildupLabel(b)}</option>)}
+      <option value={ADD_BUILDUP}>{ADD_BUILDUP_LABEL}</option>
     </select>
   );
 }
@@ -230,7 +238,7 @@ export function LayerSettings({ house, res, storey, band, roof, zone, pickZone, 
           {!house.roofs.some((s) => !s.poly) && <button type="button" className="btn-secondary" onClick={() => { const r = newRoof(house); r.form = 'gable'; upd((h) => { h.roofs.push(r); }); pickRoof(r.id); }}>＋ Roof over the top storey</button>}
           <span className="small muted">Or draw one with Roof or Box roof: a lean-to, a wing, a porch.</span>
           <span className="eyebrow">Loft roof build-up</span>
-          <BuildupSelect label="Loft roof" value={house.defaults.loftRoof} options={ofKind(house, 'roof')} onPick={(id) => upd((h) => { h.defaults.loftRoof = id; })} />
+          <BuildupSelect label="Loft roof" kind="roof" value={house.defaults.loftRoof} options={ofKind(house, 'roof')} onPick={(id) => upd((h) => { h.defaults.loftRoof = id; })} />
     </div>
   );
   if (band != null) {
@@ -242,7 +250,7 @@ export function LayerSettings({ house, res, storey, band, roof, zone, pickZone, 
       <div className="layer-body">
             <span className="eyebrow">Whole layer</span>
             {fs.length
-              ? <BuildupSelect label={`${bandName(house, b)} build-up`} value={common(fs.map((f) => f.buildup.id))} options={ofKind(house, ...kinds)} onPick={(id) => upd((h) => { fs.forEach((f) => { h.faceBuildup[f.key] = id; }); })} />
+              ? <BuildupSelect label={`${bandName(house, b)} build-up`} kind="floor" value={common(fs.map((f) => f.buildup.id))} options={ofKind(house, ...kinds)} onPick={(id) => upd((h) => { fs.forEach((f) => { h.faceBuildup[f.key] = id; }); })} />
               : <span className="small muted">Nothing drawn here yet.</span>}
             {b > 0 && b <= last && <label className="small muted">Thickness <NumInput className="thk-input" step={0.05} min={0} value={house.storeys[b - 1].zone} aria-label="Floor zone thickness" onChange={(e) => upd((h) => { h.storeys[b - 1].zone = Math.max(0, Number(e.target.value) || 0); })} /> m</label>}
             <span className="eyebrow">Zones</span>
@@ -250,7 +258,7 @@ export function LayerSettings({ house, res, storey, band, roof, zone, pickZone, 
             {zs.map((z) => (
               <div key={z.id} className={`zone-row${zone === z.id ? ' on' : ''}`}>
                 <button type="button" className="btn-link" onClick={() => pickZone(z.id)}>{z.name} · {fmt(polyArea(z.poly), 1)} m²</button>
-                <BuildupSelect label={`${z.name} build-up`} value={z.buildup} options={ofKind(house, ...ZONE_KINDS)} onPick={(id) => upd((h) => { const x = h.zones?.find((q) => q.id === z.id); if (x) x.buildup = id; })} />
+                <BuildupSelect label={`${z.name} build-up`} kind="floor" value={z.buildup} options={ofKind(house, ...ZONE_KINDS)} onPick={(id) => upd((h) => { const x = h.zones?.find((q) => q.id === z.id); if (x) x.buildup = id; })} />
                 <button type="button" className="btn-link" aria-label={`Delete ${z.name}`} onClick={() => upd((h) => { h.zones = h.zones?.filter((q) => q.id !== z.id); })}>Delete</button>
               </div>
             ))}
@@ -306,7 +314,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
         <div className="eyebrow">{bandName(house, z.band)} · {fmt(polyArea(z.poly), 1)} m²</div>
         <input className="h-text" value={z.name} aria-label="Zone name" onChange={(e) => set({ name: e.target.value })} />
         <label className="hf"><span className="eyebrow">Build-up</span>
-          <select className="select" value={z.buildup} onChange={(e) => set({ buildup: e.target.value })}>{ofKind(house, ...ZONE_KINDS).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
+          <BuildupSelect label="Build-up" kind="floor" value={z.buildup} options={ofKind(house, ...ZONE_KINDS)} onPick={(id) => set({ buildup: id })} />
         </label>
         <p className="small muted">The part of each room's floor or ceiling under this zone uses this build-up instead of the layer's.</p>
         {z.band < house.storeys.length && <label className="small"><input type="checkbox" checked={!!z.ufh} onChange={(e) => set({ ufh: e.target.checked || undefined })} /> Underfloor heating</label>}
@@ -366,7 +374,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
         {walls.length === 1 && <Num label={info[0].whole - info[0].len > 0.01 ? 'Whole wall length' : 'Length'} unit="m" step={0.05} min={0.1} value={info[0].whole} onChange={(v) => upd((h) => setWallLength(h, walls[0].room, walls[0].edge, v))} />}
         <label className="hf"><span className="eyebrow">Wall build-up{Us.length > 0 && ` · U ${Math.min(...Us) === Math.max(...Us) ? fmt(Us[0], 2) : `${fmt(Math.min(...Us), 2)}–${fmt(Math.max(...Us), 2)}`} W/m²K`}</span>
           {/* Only the selected walls: the house's default wall (which every wall without its own pick follows) is set under Build-ups. */}
-          <BuildupSelect label="Wall build-up" value={common(ids)} options={ofKind(house, 'wall')} onPick={(id) => upd((h) => {
+          <BuildupSelect label="Wall build-up" kind="wall" value={common(ids)} options={ofKind(house, 'wall')} onPick={(id) => upd((h) => {
             info.forEach((i) => i.keys.forEach((k) => { h.faceBuildup[k] = id; }));
           })} />
         </label>
@@ -396,7 +404,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
           </div>
         )}
         <a className="btn-link" href={href('buildups')}>Edit build-up layers ›</a>
-        <p className="small muted">Right-click a wall to select all walls, spread its windows and more.</p>
+        <p className="small muted">Right-click a wall to select several at once.</p>
       </>
     );
   }
@@ -417,7 +425,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
           <Num label="Height" unit="m" step={0.05} min={0.3} max={maxH} value={o.h} onChange={(v) => set({ h: Math.min(maxH, Math.max(0.3, v)) })} />
         </div>
         <label className="hf"><span className="eyebrow">{kind === 'door' ? 'Door type' : 'Glazing'}</span>
-          <select className="select" value={o.buildup} onChange={(e) => set({ buildup: e.target.value })}>{ofKind(house, kind === 'door' ? 'door' : 'glazing').map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
+          <BuildupSelect label={kind === 'door' ? 'Door type' : 'Glazing'} kind={kind === 'door' ? 'door' : 'glazing'} value={o.buildup} options={ofKind(house, kind === 'door' ? 'door' : 'glazing')} onPick={(id) => set({ buildup: id })} />
         </label>
         {ob?.kind !== 'door' && <label className="hf"><span className="eyebrow">Shading</span>
           <select className="select" value={o.shade ?? 'none'} onChange={(e) => set({ shade: e.target.value as keyof typeof SHADING })}>{Object.entries(SHADING).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}</select>
@@ -447,7 +455,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
     const walk = (x: typeof p) => { if (x.emitter) served.push(x.emitter); house.heating.pipes!.filter((c) => c.parent === x.id).forEach(walk); };
     walk(p);
     const idMM = PIPE_SIZES[p.size] ?? 13.6, cap = maxFlow(idMM, pr.paMax), flowL = row?.flowLpm ?? 0;
-    const family = Object.keys(PIPE_SIZES).filter((k) => k.startsWith(p.size.startsWith('PEX') ? 'PEX' : 'Cu')).sort((a, b) => PIPE_SIZES[a] - PIPE_SIZES[b]);
+    const family = sizesOn(house).filter((k) => pipeFamily(k) === pipeFamily(p.size)).sort((a, b) => PIPE_SIZES[a] - PIPE_SIZES[b]);
     const fits = family.find((k) => maxFlow(PIPE_SIZES[k], pr.paMax) >= flowL);
     const st = p.leg ? house.storeys[p.leg.storey]?.name.toLowerCase() : '';
     // The run it comes off, when that is on the same floor: it can follow its floor or ceiling.
@@ -460,7 +468,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
         <p className="small"><b>{p.name}</b> · {runLength(house, p)} m{p.typed ? ' (typed in)' : ''}{p.rise ? `, ${p.rise.toFixed(1)} m of it between floors` : ''}{tail && !p.typed ? `, ${tail.toFixed(2)} m of it ${viaOf(house, p) === 'ceiling' ? 'down the wall to' : 'up to'} the valves` : ''}.</p>
         <div className="hf-row">
           <label className="hf"><span className="eyebrow">Pipe size</span>
-            <select className="select" value={p.size} onChange={(e) => setRun({ size: e.target.value })}>{Object.keys(PIPE_SIZES).map((k) => <option key={k}>{k}</option>)}</select>
+            <select className="select" value={p.size} onChange={(e) => setRun({ size: e.target.value })}>{[...new Set([...sizesOn(house), p.size])].map((k) => <option key={k}>{k}</option>)}</select>
           </label>
           {p.leg && <label className="hf"><span className="eyebrow">Runs in the</span>
             <select className="select" name="via" value={p.via ?? (upSame ? 'same' : 'floor')} onChange={(e) => setRun({ via: e.target.value === 'same' ? undefined : (e.target.value as 'floor' | 'ceiling') })}>
@@ -483,6 +491,10 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
           <Gauge label="Velocity" val={row?.v ?? 0} max={MAX_V(idMM)} unit="m/s" dp={2} />
           <Gauge label="Pressure drop" val={row?.paM ?? 0} max={pr.paMax} unit="Pa/m" dp={0} />
         </div>
+        {row && row.dp > 0 && (() => { const j = joints(house, p); return (
+          <p className="small">Loses {fmt(row.dp / 1000, 2)} kPa each way: {fmt(row.dp - row.fitDp)} Pa along the pipe, {fmt(row.fitDp)} Pa in fittings
+            {j ? ` (${j.elbows} elbow${j.elbows === 1 ? '' : 's'}${j.tee ? ', a tee' : ''} and the joints at each end)` : ' (30% allowance, as the length is typed in)'}.</p>
+        ); })()}
         <p className="small muted">
           {pr.longest > 0 && <>Pump budget: {fmt(pr.head / 1000)} kPa of head, less 5 kPa for the heater and valves, over the {fmt(pr.longest, 1)} m longest circuit, flow and return, plus 30% for fittings: {fmt(pr.paPump)} Pa/m. </>}
           {pr.paMax < pr.paPump ? `Capped at ${fmt(pr.paCap)} Pa/m.` : 'Under the cap, so the pump sets the limit.'} Flow − return, pump head and the cap are set under Pipework.
@@ -510,7 +522,31 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
   if (sel.item?.k === 'plant') {
     const id = sel.item.id, at = plantOf(house, id);
     if (!at) return null;
-    const what = id === 'cylinder' ? 'Hot water cylinder' : id === 'source' ? (house.hp.source === 'ashp' || house.hp.source === 'gshp' ? 'Heat pump' : 'Boiler') : 'Pipe riser';
+    const what = plantName(house, id);
+    if (id.startsWith('m:')) {
+      const zid = id.slice(2), zn = house.heating.zones.find((z) => z.id === zid)!, others = house.heating.zones.filter((z) => z.kind === 'ufh' && z.id !== zid);
+      const ufhZones = (house.zones ?? []).filter((z) => z.ufh), loops = house.heating.emitters.filter((e) => e.kind === 'ufh' && e.zone === zid);
+      const onIt = (fz: { id: string }) => house.heating.emitters.some((e) => e.fromZone === fz.id && e.zone === zid);
+      return (
+        <>
+          <div className="eyebrow">UFH manifold · {house.storeys[zn.manifold?.storey ?? 0]?.name}</div>
+          <input className="h-text" value={zn.name} aria-label="Manifold name" onChange={(e) => upd((h) => { const z = h.heating.zones.find((x) => x.id === zid); if (z) z.name = e.target.value; })} />
+          <p className="small muted">One pipe run to it feeds every loop on it: {loops.length} loop{loops.length === 1 ? '' : 's'}, {fmt(loops.reduce((a, e) => a + e.area, 0), 1)} m². Its blend temperature and hours are under Zones &amp; UFH.</p>
+          <div className="eyebrow">Feeds these underfloor zones</div>
+            {ufhZones.length ? ufhZones.map((fz) => {
+              const elsewhere = !onIt(fz) && house.heating.emitters.find((e) => e.fromZone === fz.id)?.zone, from = elsewhere && others.find((z) => z.id === elsewhere);
+              return (
+                <label key={fz.id} className="small" style={{ display: 'block' }}><input type="checkbox" checked={onIt(fz)} onChange={(e) => upd((h) => { const x = h.zones?.find((q) => q.id === fz.id); if (x) x.manifold = e.target.checked ? zid : ''; })} />
+                  {fz.name} <span className="small muted">({house.storeys[fz.band]?.name ?? `floor ${fz.band}`}{from ? `; on ${from.name} now` : ''})</span></label>
+              );
+            }) : <p className="small muted">No underfloor zones yet: draw one with the UFH zone tool.</p>}
+          <div className="row-between">
+            <a className="btn-link" href={href('zones')}>Zones &amp; UFH ›</a>
+            <button type="button" className="btn-danger" onClick={() => { upd((h) => removePlant(h, id)); setSel(NO_SEL); }}>Remove from plan</button>
+          </div>
+        </>
+      );
+    }
     return (
       <>
         <p className="small"><b>{what}</b> at {at.at[0].toFixed(2)}, {at.at[1].toFixed(2)} m.
@@ -573,7 +609,7 @@ export function SplitStoreys({ roomId, upd }: { roomId: string; upd: (fn: (h: Ho
 }
 
 /** Name, use and heating of the selected room, with delete. */
-export function RoomFields({ house, roomId, upd, onDeleted }: { house: House; roomId: string; upd: (fn: (h: House) => void) => void; onDeleted: () => void }) {
+export function RoomFields({ house, roomId, calcAch, upd, onDeleted }: { house: House; roomId: string; calcAch?: number; upd: (fn: (h: House) => void) => void; onDeleted: () => void }) {
   const r = house.rooms.find((x) => x.id === roomId);
   if (!r) return null;
   const set = (fn: (x: Room, h: House) => void) => upd((h) => { const x = h.rooms.find((q) => q.id === roomId); if (x) fn(x, h); });
@@ -595,9 +631,21 @@ export function RoomFields({ house, roomId, upd, onDeleted }: { house: House; ro
             {(Object.keys(CIBSE_ACH) as RoomType[]).map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
         </label>
-        <Num label="Setpoint" unit="°C" step={0.5} value={r.setpoint} onChange={(v) => set((x) => { x.setpoint = v; })} />
+        {r.heated
+          ? <Num label="Setpoint" unit="°C" step={0.5} value={r.setpoint} onChange={(v) => set((x) => { x.setpoint = v; })} />
+          : <Num label="Air changes" unit="ach" step={0.1} min={0} value={r.ach} onChange={(v) => set((x) => { x.ach = Math.max(0, v); })} />}
       </div>
       <label className="small"><input type="checkbox" checked={r.heated} onChange={(e) => set((x) => { x.heated = e.target.checked; })} /> Heated</label>
+      {r.heated && (
+        <label className="hf"><span className="eyebrow">Air changes{r.achOverride == null ? ' · calculated' : ' · overridden'}</span>
+          <span className="hf-in">
+            <NumInput className="thk-input" step={0.1} min={0} aria-label="Air changes per hour override" value={r.achOverride ?? (calcAch != null ? +calcAch.toFixed(2) : '')}
+              onChange={(e) => set((x) => { x.achOverride = Math.max(0, Number(e.target.value)); })} />
+            <span className="small muted">ach</span>
+            {r.achOverride != null && <button type="button" className="btn-link small" onClick={() => set((x) => { delete x.achOverride; })}>Use calculated</button>}
+          </span>
+        </label>
+      )}
       {r.span > 1 && <details className="fp-more"><summary>More</summary><SplitStoreys roomId={roomId} upd={upd} /></details>}
       <div className="row-between">
         <a className="btn-link" href={href('room', roomId)}>Open room ›</a>

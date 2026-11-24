@@ -170,7 +170,25 @@
 /* Drawing canvas (board 1) */
 svg.draw { display: block; width: 100%; height: 100%; background: #fff; touch-action: none; outline: none; user-select: none; }
 svg.draw:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+/* While panning, the hand wins over the rooms' and walls' own cursors. */
+svg.draw.grab, svg.draw.grab * { cursor: grab !important; }
+svg.draw.grabbing, svg.draw.grabbing * { cursor: grabbing !important; }
+svg.draw.moving g[filter] { filter: none; }
 .draw-zoom { position: absolute; right: 10px; bottom: 10px; z-index: 2; display: flex; gap: 4px; }
+.draw-north { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); z-index: 2; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; }
+.draw-north.fixed { cursor: default; }
+.draw-north svg, .dn-dial svg { width: 100%; height: 100%; display: block; }
+.dn-ring { fill: rgba(255, 255, 255, 0.92); stroke: var(--ink); stroke-width: 1.5; }
+.dn-n { fill: #c2410c; }
+.dn-s { fill: #9fb0bc; }
+.dn-t { font: 700 8px var(--sans); fill: var(--ink); }
+.draw-north:focus-visible, .dn-dial:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 50%; }
+.draw-north-tool { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); z-index: 5; width: 200px; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px; border: 1.5px solid var(--ink); background: #fff; }
+.draw-north-tool p { margin: 0; text-align: center; }
+.dn-dial { width: 132px; height: 132px; cursor: grab; touch-action: none; user-select: none; }
+.dn-dial:active { cursor: grabbing; }
+.dn-acts { display: flex; gap: 8px; }
+.dn-acts button { min-width: 44px; min-height: 32px; }
 .draw-zoom .btn-secondary { min-height: 32px; padding: 0 10px; background: var(--card); }
 .draw-note { position: absolute; left: 62px; bottom: 56px; max-width: 50%; padding: 6px 10px; background: #fdf3ea; border: 1px solid #c2410c; font-size: 13px; }
 .draw-note-acts { display: flex; gap: 12px; margin-top: 4px; }
@@ -239,18 +257,23 @@ svg.draw .vx.moving { fill: #c2410c; }
   .float-top { right: 44px; max-width: none; }
   .plan-hint { left: 56px; transform: none; max-width: calc(100% - 184px); }
 }
-.panel-toggle { position: absolute; right: 10px; top: 10px; z-index: 4; width: 24px; height: 34px; border: 1.5px solid var(--ink); background: #fff; cursor: pointer; padding: 0; }
-.float-panel { position: absolute; right: 40px; top: 10px; bottom: 56px; z-index: 3; width: 264px; overflow: auto; display: flex; flex-direction: column; border: 1.5px solid var(--ink); background: rgba(255, 255, 255, 0.96); font-size: 13px; }
+.panel-toggle { position: absolute; right: 0; top: 10px; z-index: 4; width: 24px; height: 34px; border: 1.5px solid var(--ink); border-right: 0; background: #fff; cursor: pointer; padding: 0; }
+/* Open: a tab on the panel's left edge; the panel itself sits flush with the right of the screen. */
+.panel-toggle[aria-expanded="true"] { right: 262.5px; }
+.float-panel { position: absolute; right: 0; top: 10px; bottom: 56px; z-index: 3; width: 264px; overflow: auto; display: flex; flex-direction: column; border: 1.5px solid var(--ink); border-right: 0; background: rgba(255, 255, 255, 0.96); font-size: 13px; }
 .fp-sec { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line-strong); }
 .fp-sec h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
 .fp-sec summary { cursor: pointer; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
 .fp-sec .fp-more summary { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted, inherit); }
 .fp-more[open] { display: flex; flex-direction: column; gap: 6px; }
 .fp-crumb { align-self: flex-start; font-size: 12px; }
+.fp-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin: 0 0 4px; }
+.fp-stats dt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted, inherit); }
+.fp-stats dd { margin: 0; font-family: var(--mono); font-size: 13px; }
+.fp-stats dd .muted { font-size: 11px; }
 .float-panel .layer-stack { border: 0; }
 .float-panel .layer-storey button { min-height: 36px; font-size: 13px; }
 .float-panel .layer-band > button { min-height: 32px; }
-.north-arrow { display: inline-block; font-weight: 700; line-height: 1; transition: transform 0.15s; }
 .float-top .thk-input { width: 4.5em; }
 
 /* 3D view */
@@ -275,7 +298,7 @@ svg.draw .vx.moving { fill: #c2410c; }
 .lt-add:disabled { opacity: 0.5; cursor: default; }
 .lt-faint { flex: none; align-self: center; white-space: nowrap; }
 .plan-stage .plan-hint { bottom: calc(var(--tabs-h) + 10px); }
-.plan-stage .float-panel { bottom: calc(var(--tabs-h) + 56px); }
+.plan-stage .float-panel { bottom: auto; max-height: calc(100% - var(--lens-h) - var(--tabs-h) - 66px); }
 @media (max-width: 640px) { .lt-faint { display: none; } }
 /* The help note floats over the page, placed beside its "?" by Why. */
 .why-pop { position: fixed; z-index: 1000; margin: 0; box-shadow: 0 6px 20px rgba(20, 33, 43, 0.18); }
@@ -350,3 +373,6 @@ svg.draw .vx.moving { fill: #c2410c; }
 .wiz-opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; margin-bottom: 12px; }
 .wiz-opt { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line-strong); background: #fff; cursor: pointer; }
 .wiz-opt.on { border-color: var(--accent); background: #fbe6d8; }
+.pipe-sizes { border: 0; padding: 0; margin: 16px 0 0; }
+.pipe-size-cols { display: flex; flex-wrap: wrap; gap: 8px 32px; }
+.pipe-size-cols label { display: block; }

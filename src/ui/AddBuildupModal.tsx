@@ -9,12 +9,12 @@ import { useFavorites } from './useFavorites';
 type Preset = Omit<Buildup, 'id'>;
 interface Item { key: string; preset: Preset }
 
-const CATS: Array<[string, string]> = [['all', 'All'], ['fav', '★ Favourites'], ['wall', 'Walls'], ['roof', 'Roofs'], ['glazing', 'Windows'], ['door', 'Doors']];
+const CATS: Array<[string, string]> = [['all', 'All'], ['fav', 'Favourites'], ['wall', 'Walls'], ['roof', 'Roofs'], ['floor', 'Floors'], ['glazing', 'Windows'], ['door', 'Doors']];
 
 const custom = (key: string) => !/^(preset:|g:|d:)/.test(key);
 
 /** Categories on the left, matching presets on the right, stars remembered across projects. Custom presets can be deleted. */
-export function PresetBrowser({ library, have, onAdd, onDelete, tools, actionLabel = 'Add', layeredOnly, onCat }: {
+export function PresetBrowser({ library, have, onAdd, onDelete, tools, actionLabel = 'Add', layeredOnly, onCat, initialCat = 'all' }: {
   library: Stackup[]; have: Set<string>; onAdd: (p: Preset, key: string) => void; onDelete?: (id: string) => void;
   actionLabel?: string;
   /** Walls and roofs only: for picking something to simulate. */
@@ -23,16 +23,18 @@ export function PresetBrowser({ library, have, onAdd, onDelete, tools, actionLab
   tools?: boolean;
   /** Told whenever the category changes. */
   onCat?: (c: string) => void;
+  /** The category it opens on. */
+  initialCat?: string;
 }) {
   const [pick, setPick] = useState<string[]>([]);
   const togglePick = (k: string) => setPick((p) => (p.includes(k) ? p.filter((x) => x !== k) : p.length < 2 ? [...p, k] : p));
   const { fav, toggleBuildup } = useFavorites();
-  const [cat, setCatState] = useState('all');
+  const [cat, setCatState] = useState(initialCat);
   const setCat = (c: string) => { setCatState(c); onCat?.(c); };
   const [q, setQ] = useState('');
   const cats = layeredOnly ? CATS.filter(([c]) => c !== 'glazing' && c !== 'door') : CATS;
   const items = useMemo<Item[]>(() => [
-    ...library.map((s): Item => ({ key: s.id, preset: { name: s.name, kind: s.orient === 'roof' ? 'roof' : 'wall', layers: s.layers.map(([m, t]) => [m, t]) } })),
+    ...library.map((s): Item => ({ key: s.id, preset: { name: s.name, kind: s.orient === 'roof' ? 'roof' : s.orient === 'floor' ? 'floor' : 'wall', layers: s.layers.map(([m, t]) => [m, t]), ...(s.floorType ? { floorType: s.floorType } : {}) } })),
     ...GLAZING_LIBRARY.map((g): Item => ({ key: `g:${g.name}`, preset: { kind: 'glazing', layers: [], ...g } })),
     ...DOOR_LIBRARY.map((d): Item => ({ key: `d:${d.name}`, preset: { kind: 'door', layers: [], ...d } })),
   ].filter((i) => !layeredOnly || i.preset.layers.length > 0), [library, layeredOnly]);
@@ -83,13 +85,13 @@ export function PresetBrowser({ library, have, onAdd, onDelete, tools, actionLab
 }
 
 /** Pick presets to add to the project. */
-export function AddBuildupModal({ library, have, onAdd, onCustom, onCustomFixed, onClose, title = 'Add build-up to project', actionLabel, layeredOnly }: {
+export function AddBuildupModal({ library, have, onAdd, onCustom, onCustomFixed, onClose, title = 'Add build-up to project', actionLabel, layeredOnly, initialCat = 'all' }: {
   library: Stackup[]; have: Set<string>; onAdd: (p: Preset, key: string) => void; onCustom?: () => void; onClose: () => void;
   /** A window or door typed in by U-value (and g and frame share for glazing) rather than from layers. */
   onCustomFixed?: (kind: 'glazing' | 'door') => void;
-  title?: string; actionLabel?: string; layeredOnly?: boolean;
+  title?: string; actionLabel?: string; layeredOnly?: boolean; initialCat?: string;
 }) {
-  const [cat, setCat] = useState('all');
+  const [cat, setCat] = useState(initialCat);
   const fixed = onCustomFixed && (cat === 'glazing' || cat === 'door') ? cat : null;
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -101,7 +103,7 @@ export function AddBuildupModal({ library, have, onAdd, onCustom, onCustomFixed,
           </button>
         </div>
         <div className="modal-body" style={{ padding: 0 }}>
-          <PresetBrowser library={library} have={have} onAdd={onAdd} actionLabel={actionLabel} layeredOnly={layeredOnly} onCat={setCat} />
+          <PresetBrowser library={library} have={have} onAdd={onAdd} actionLabel={actionLabel} layeredOnly={layeredOnly} onCat={setCat} initialCat={initialCat} />
         </div>
         <div className="modal-actions" style={{ justifyContent: 'space-between' }}>
           {onCustom ? <button type="button" className="btn-secondary" onClick={() => (fixed ? onCustomFixed!(fixed) : onCustom())}>

@@ -747,17 +747,17 @@ export function addEmitter(h: House, room: string, kind: Emitter['kind'], id: st
  * nothing changes, else a changed copy, so it never alters the house it is given.
  */
 export function syncUfh(h: House): House {
-  const want = new Map<string, { room: string; zone: string; area: number; spacing: number; pipe: number }>();
+  const want = new Map<string, { room: string; zone: string; area: number; spacing: number; pipe: number; heat?: string }>();
   for (const z of h.zones ?? []) {
     if (!z.ufh) continue;
     for (const r of h.rooms) {
       if (r.storey !== z.band || !r.heated) continue;
       const area = +overlapAreaPoly(z.poly, roomPoly(r)).toFixed(2);
-      if (area >= 0.1) want.set(`u-${z.id}-${r.id}`, { room: r.id, zone: z.id, area, spacing: z.spacing ?? 150, pipe: z.pipe ?? 16 });
+      if (area >= 0.1) want.set(`u-${z.id}-${r.id}`, { room: r.id, zone: z.id, area, spacing: z.spacing ?? 150, pipe: z.pipe ?? 16, heat: z.manifold });
     }
   }
   const es = h.heating.emitters;
-  const same = (e: Emitter, w?: { area: number; spacing: number; pipe: number }) => !!w && w.area === e.area && w.spacing === e.spacing && w.pipe === (e.pipe ?? 16);
+  const same = (e: Emitter, w?: { area: number; spacing: number; pipe: number; heat?: string }) => !!w && w.area === e.area && w.spacing === e.spacing && w.pipe === (e.pipe ?? 16) && (w.heat == null || w.heat === e.zone);
   if (es.every((e) => !e.fromZone || same(e, want.get(e.id))) && [...want.keys()].every((id) => es.some((e) => e.id === id))) return h;
   const n = structuredClone(h);
   n.heating.emitters = n.heating.emitters.filter((e) => !e.fromZone || want.has(e.id));
@@ -765,6 +765,7 @@ export function syncUfh(h: House): House {
     let e = n.heating.emitters.find((x) => x.id === id);
     if (!e) { addEmitter(n, w.room, 'ufh', id); e = n.heating.emitters[n.heating.emitters.length - 1]; e.fromZone = w.zone; }
     e.area = w.area; e.spacing = w.spacing; e.pipe = w.pipe;
+    if (w.heat != null) e.zone = w.heat;
   }
   return n;
 }

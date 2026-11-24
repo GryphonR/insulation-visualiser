@@ -192,7 +192,7 @@ export function OpeningsPage() {
                     return (
                       <tr key={o.id}>
                         <td>{room ? <a href={href('room', room.id, 'openings')}>{room.name}</a> : '—'}</td><td>{o.name}</td><td>{(() => { const f = res.rooms.find((r) => r.room.id === o.room)?.faces.find((x) => x.key === `op:${o.id}`); return f?.az != null ? bearingLabel(f.az) : o.side; })()}</td><td className="n mono">{fmt(o.w * o.h, 1)}</td>
-                        <td><select className="h-sel" value={o.buildup} aria-label={`${o.name} type`} onChange={(e) => set(o.id, { buildup: e.target.value })}>{glass.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></td>
+                        <td><select className="h-sel" value={o.buildup} aria-label={`${o.name} type`} onChange={(e) => set(o.id, { buildup: e.target.value })}>{glass.map((b) => <option key={b.id} value={b.id}>{b.name} (U {fmt(buildupU(b), 2)})</option>)}</select></td>
                         <td>{isGlass ? <select className="h-sel" value={o.shade ?? 'none'} aria-label={`${o.name} shading`} onChange={(e) => set(o.id, { shade: e.target.value })}>{Object.entries(SHADING).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}</select> : '—'}</td>
                         <td className="n mono">{fmt(loss.get(o.id) ?? 0)}</td>
                       </tr>

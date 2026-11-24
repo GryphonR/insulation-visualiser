@@ -9,8 +9,9 @@ import { TraceControls, loadImagery, saveImagery, traceOf, traceUnderlay } from 
 import { roofStorey, storeyLevel } from '../engine/house';
 import type { TraceSettings } from '../engine/house';
 import type { Imagery } from './HouseTrace';
-import { fmt, mix, NumInput } from './hform';
+import { fmt, mix } from './hform';
 import { useProject } from './project';
+import { AddBuildupProvider } from './AddBuildupFlow';
 import { autoPipes, combineRuns, pipeRest, unpiped } from '../engine/house-pipes';
 
 /** The floor plan as a drawing canvas, layer by layer, with a summary of the selected room. Model draws the rooms; Heating lays out emitters, plant and pipes on the same canvas. */
@@ -78,6 +79,7 @@ export function PlanPage({ selected, mode = 'model' }: { selected?: string; mode
   const inspectorTitle = roofSel ? 'Roof' : sel.zone ? (() => { const zz = house.zones?.find((x) => x.id === sel.zone); return zz?.ufh ? 'Underfloor heating zone' : zz?.buildup === 'open-stairwell' ? 'Stairwell' : 'Floor zone'; })() : (sel.group?.length ?? 0) > 1 ? 'Rooms' : sel.walls.length ? 'Walls' : sel.item?.k === 'op' ? 'Window or door' : sel.item?.k === 'plant' ? 'Heating plant' : sel.item?.k === 'pipe' ? 'Pipe run' : 'Heat emitter';
 
   return (
+    <AddBuildupProvider>
     <div className="plan-stage">
         <DrawCanvas key={`${shown}-${band}-${roofOn}`} house={house} storey={shown} band={band ?? undefined} roof={roofOn} tool={measure ? 'select' : tool} setTool={setTool} sel={sel} setSel={setSel} upd={upd} below={showBelow} sticky={sticky} grid={grid} snapOn={snapOn} onEdit={editSel} lens={view} opPick={opPick} viewRef={canvasView} zoomStart={<GridSelect grid={grid} setGrid={setGrid} />}
           underlay={traceUnderlay(house, trace, storey, imagery)}
@@ -115,28 +117,6 @@ export function PlanPage({ selected, mode = 'model' }: { selected?: string; mode
         <label className="small">Colour <select className="draw-grid-sel" style={{ width: 'auto' }} value={lens} aria-label="Colour rooms by" onChange={(e) => setLens(e.target.value as typeof lens)}>
           <option value="loss">heat loss</option><option value="temp">temperature</option><option value="cover">emitter cover</option><option value="none">none</option>
         </select></label>
-        {view === 'pipes' && house.heating.source && (() => {
-          const n = unpiped(house).length, runs = house.heating.pipes?.length ?? 0;
-          return <>
-            {n > 0 && runs > 0 && <button type="button" className="btn-secondary small" title="A plain square run from the heat source, or the floor's riser, to each heater with none. Runs already drawn stay."
-              onClick={() => upd((h) => { pipeRest(h); })}>Pipe the {n} unpiped</button>}
-            {ask ? <span className="small" role="alert">
-              {ask === 'auto' ? `Replace all ${runs} pipe run${runs === 1 ? '' : 's'} with an automatic layout? Runs you drew or moved are lost.` : `Delete all ${runs} pipe run${runs === 1 ? '' : 's'}? The boiler, cylinder, risers and heaters stay.`}{' '}
-              <button type="button" className="btn-secondary small" autoFocus onClick={() => {
-                if (ask === 'auto') upd((h) => { h.heating.pipes = autoPipes(h); combineRuns(h, res); });
-                else { upd((h) => { h.heating.pipes = []; }); setSel(NO_SEL); }
-                setAsk(null);
-              }}>{ask === 'auto' ? 'Yes, replace' : 'Yes, delete'}</button>{' '}
-              <button type="button" className="btn-secondary small" onClick={() => setAsk(null)}>Cancel</button>
-              {' '}(Ctrl+Z undoes)
-            </span> : <>
-              <button type="button" className="btn-secondary small" title="Lay every run from the plan: from the heat source, up the riser that makes the runs shortest, to every heater, with runs that leave together sharing a pipe."
-                onClick={() => { if (runs) setAsk('auto'); else upd((h) => { h.heating.pipes = autoPipes(h); combineRuns(h, res); }); }}>Auto route</button>
-              {runs > 0 && <button type="button" className="btn-secondary small" title="Take out every pipe run, to draw them yourself."
-                onClick={() => setAsk('unroute')}>Unroute all</button>}
-            </>}
-          </>;
-        })()}
         {res.checks.length > 0 && (
           <details className="plan-checks">
             <summary>⚠ {res.checks.length} check{res.checks.length === 1 ? '' : 's'}</summary>
@@ -171,26 +151,58 @@ export function PlanPage({ selected, mode = 'model' }: { selected?: string; mode
             </section>
           ) : band == null && !roofOn && room && rr ? (
             <section className="fp-sec">
-              <h3>{room.name} <span className="small muted">{fmt(rr.area, 1)} m² · {room.heated ? `${fmt(rr.totalW)} W` : `${fmt(rr.T, 1)} °C`}{room.heated && cv ? ` · ${cv.has ? `${fmt(cv.cover * 100)}% emitters` : 'no emitter'}` : ''}</span></h3>
-              <RoomFields house={house} roomId={room.id} upd={upd} onDeleted={() => setSel(NO_SEL)} />
+              <h3>Room</h3>
+              <dl className="fp-stats">
+                <div><dt>Area</dt><dd>{fmt(rr.area, 1)} m²</dd></div>
+                {room.heated ? <>
+                  <div><dt>Heat loss</dt><dd>{fmt(rr.totalW)} W <span className="muted">{fmt(rr.perM2)} W/m²</span></dd></div>
+                  <div><dt>Emitters</dt><dd>{cv?.has ? `${fmt(cv.cover * 100)}% cover` : 'none yet'}</dd></div>
+                </> : <div><dt>Temperature</dt><dd>{fmt(rr.T, 1)} °C</dd></div>}
+                <div><dt>Ventilation</dt><dd>{fmt(rr.n, 2)} ach</dd></div>
+              </dl>
+              <RoomFields house={house} roomId={room.id} calcAch={rr.n} upd={upd} onDeleted={() => setSel(NO_SEL)} />
             </section>
           ) : <>
+            {view === 'pipes' && (
+              <section className="fp-sec">
+                <h3>Pipe runs</h3>
+                {!house.heating.source ? <p className="small muted">Place the boiler or heat pump first: pipes run from it to every heater.</p> : (() => {
+                  const n = unpiped(house).length, runs = house.heating.pipes?.length ?? 0;
+                  return ask ? (
+                    <>
+                      <p className="small" role="alert">{ask === 'auto' ? `Replace all ${runs} pipe run${runs === 1 ? '' : 's'} with an automatic layout? Runs you drew or moved are lost.` : `Delete all ${runs} pipe run${runs === 1 ? '' : 's'}? The boiler, cylinder, risers and heaters stay.`} Ctrl+Z undoes it.</p>
+                      <div className="row-between">
+                        <button type="button" className="btn-secondary" onClick={() => setAsk(null)}>Cancel</button>
+                        <button type="button" className={ask === 'auto' ? 'btn-primary' : 'btn-danger'} autoFocus onClick={() => {
+                          if (ask === 'auto') upd((h) => { h.heating.pipes = autoPipes(h); combineRuns(h, res); });
+                          else { upd((h) => { h.heating.pipes = []; }); setSel(NO_SEL); }
+                          setAsk(null);
+                        }}>{ask === 'auto' ? 'Replace' : 'Delete all'}</button>
+                      </div>
+                    </>
+                  ) : <>
+                    <p className="small muted">{runs ? `${runs} run${runs === 1 ? '' : 's'}` : 'No runs yet'}{n ? `; ${n} heater${n === 1 ? '' : 's'} not piped.` : runs ? '; every heater is piped.' : '.'}</p>
+                    <button type="button" className="btn-secondary" title="Lay every run from the plan: from the heat source, up the riser that makes the runs shortest, to every heater, with runs that leave together sharing a pipe."
+                      onClick={() => { if (runs) setAsk('auto'); else upd((h) => { h.heating.pipes = autoPipes(h); combineRuns(h, res); }); }}>Auto route all</button>
+                    {n > 0 && runs > 0 && <button type="button" className="btn-secondary" title="A plain square run from the heat source, or the floor's riser, to each heater with none. Runs already drawn stay."
+                      onClick={() => upd((h) => { pipeRest(h); })}>Pipe the {n} unpiped</button>}
+                    {runs > 0 && <button type="button" className="btn-link" title="Take out every pipe run, to draw them yourself." onClick={() => setAsk('unroute')}>Unroute all</button>}
+                  </>;
+                })()}
+              </section>
+            )}
             <section className="fp-sec">
               <h3>{roofOn ? 'Roof sections' : band != null ? bandName(house, band) : house.storeys[storey]?.name}</h3>
               <LayerSettings house={house} res={res} storey={storey} band={band} roof={roofOn} zone={sel.zone} pickZone={(id) => setSel({ ...NO_SEL, zone: id })} pickStorey={goStorey} pickRoof={goRoof} upd={upd} />
             </section>
             {mode === 'model' && <details className="fp-sec">
             <summary>Site and tracing</summary>
-            <label className="small" title="Turn true north on the plan: the bearing that up on the screen faces. Walls, windows and roof slopes take their direction from it.">
-          <span aria-hidden="true" className="north-arrow" style={{ transform: `rotate(${-(house.north ?? 0)}deg)` }}>↑N</span> Up faces{' '}
-          <NumInput className="thk-input" step={5} value={house.north ?? 0} aria-label="Bearing that up on the plan faces, degrees from north"
-            onChange={(e) => upd((h) => { const v = Number(e.target.value) || 0; h.north = ((v % 360) + 360) % 360; })} />°
-            </label>
             <TraceControls house={house} res={res} storey={storey} trace={trace} setTrace={setTrace} upd={upd} imagery={imagery} setImagery={(v) => { setImageryState(v); saveImagery(v); }} measuring={!!measure} onMeasure={(len) => setMeasure({ len, pts: [] })} />
           </details>}
           </>}
         </aside>
       )}
     </div>
+    </AddBuildupProvider>
   );
 }

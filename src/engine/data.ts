@@ -150,6 +150,8 @@ export interface Preset {
   name: string;
   orient?: string;
   layers: Array<[string, number]>;
+  /** Ground floors: a slab on the ground or timber over a ventilated void (sets how the ground's effect is worked out). */
+  floorType?: 'solid' | 'suspended';
 }
 
 export const PRESETS: Preset[] = [
@@ -171,6 +173,12 @@ export const PRESETS: Preset[] = [
   // Sized to U ≤ 0.16 by the series sum (no rafter bridging).
   { id: 'warmbetween_pir', name: 'Pitched warm roof, between + under rafters, all PIR', orient: 'roof', layers: [['m_roof_tile_concrete', 15], ['vgap', 40], ['pir', 100], ['pir', 30], ['pb', 12.5]] },
   { id: 'warmbetween_wf', name: 'Pitched warm roof, between + under rafters, wood fibre', orient: 'roof', layers: [['m_roof_tile_concrete', 15], ['vgap', 40], ['h_wf_flex', 150], ['wf', 85], ['pb', 12.5]] },
+  // Floors, ground side first.
+  { id: 'fl_solid0', name: 'Solid ground floor, uninsulated', orient: 'floor', floorType: 'solid', layers: [['m_concrete_reinforced', 150], ['m_cement_sand', 50]] },
+  { id: 'fl_solid100', name: 'Solid ground floor, 100 mm PIR under screed', orient: 'floor', floorType: 'solid', layers: [['m_concrete_reinforced', 100], ['pir', 100], ['m_cement_sand', 65]] },
+  { id: 'fl_susp0', name: 'Suspended timber ground floor, uninsulated', orient: 'floor', floorType: 'suspended', layers: [['m_timber_500_kg_m', 22]] },
+  { id: 'fl_susp150', name: 'Suspended timber ground floor, 150 mm mineral wool between joists', orient: 'floor', floorType: 'suspended', layers: [['mw', 150], ['m_timber_500_kg_m', 22]] },
+  { id: 'fl_joist', name: 'Timber joist floor between storeys', orient: 'floor', layers: [['pb', 12.5], ['cavity', 150], ['m_timber_500_kg_m', 20]] },
   { id: 'warmfoil', name: 'Pitched warm roof, multifoil + between rafters', orient: 'roof', layers: [['m_roof_tile_concrete', 15], ['vgap', 40], ['tlx', 33], ['mw', 100], ['pb', 12.5]] },
 ];
 

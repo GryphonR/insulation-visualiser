@@ -192,6 +192,8 @@ export interface Room {
   heated: boolean; setpoint: number;
   /** Air changes per hour, unheated rooms only. */
   ach: number;
+  /** Heated rooms: air changes per hour to use instead of the ventilation model's figure. Unset = calculated. */
+  achOverride?: number;
   /**
    * Under a roof: how high its ceiling goes on its top storey. Unset = flat at the storey height (the roof slopes it where it
    * comes lower); a number = a flat collar at that height; 'roof' = open to the roof (vaulted).
@@ -218,6 +220,8 @@ export interface Opening {
 export interface FloorZone { id: string; band: number; name: string; poly: Pt[]; buildup: string;
   /** Underfloor heating: every heated room on the storey above this floor gets a loop for its part of the zone, with this pipe spacing and outside diameter (mm; 150 and 16 when unset). */
   ufh?: boolean; spacing?: number; pipe?: number;
+  /** The UFH heating zone (manifold) its loops are on; '' for none. Unset: the loops keep the zone they were given. */
+  manifold?: string;
 }
 export interface Device { id: string; room: string; name: string; fan: boolean; opts: Array<[string, number]>; pick: number }
 export interface Factor { id: string; label: string; dq: number; on: boolean }
@@ -359,6 +363,8 @@ export const CIBSE_ACH: Record<RoomType, number> = {
 
 export const layersR = (b: Buildup) => b.layers.reduce((s, [m, t]) => (MAT[m] ? s + layerR(MAT[m], t) : s), 0);
 export const buildupU = (b: Buildup, films = FILMS.extWall) => b.u ?? 1 / (films + layersR(b));
+/** A build-up's name with its U-value, for pickers. */
+export const buildupLabel = (b: Buildup) => `${b.name} (U ${buildupU(b).toFixed(2)})`;
 
 /**
  * BS EN ISO 13370 slab on ground (λ 2.0 W/mK soil, 0.3 m wall); `z` > 0 for a basement floor that depth below ground.
@@ -1115,6 +1121,7 @@ export function calcHouse(h: House): HouseResult {
           if (air < 0.5) { const top = 0.5 - air; nMech += top * lossShare; n += top * lossShare; }
         }
       }
+      if (r.achOverride != null) n = r.achOverride;
     } else if (!r.heated) n = r.ach;
     const ventW = r.heated ? 0.33 * n * V * (Ti - Tout) : 0;
     if (r.heated) rows.push({ key: `vent:${r.id}`, label: 'Ventilation', to: 'outside', buildup: `${n.toFixed(2)} ach · ${V.toFixed(1)} m³`, area: 0, U: 0, dT: Ti - Tout, W: ventW, kind: 'vent' });

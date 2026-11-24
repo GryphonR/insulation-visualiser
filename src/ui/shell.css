@@ -99,7 +99,7 @@ a.btn-primary { color: var(--paper); }
 .lib-list { flex: 1 1 300px; max-width: 360px; border-right: var(--bw) solid var(--ink); display: flex; flex-direction: column; min-width: 0; }
 .lib-list .filters { padding: 12px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--line-strong); }
 .lib-items { overflow: auto; max-height: 70vh; }
-.lib-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; width: 100%; padding: 8px 12px; border: 0; border-bottom: 1px solid #dfe3e6; background: transparent; text-align: left; border-left: 4px solid transparent; cursor: pointer; color: var(--ink); }
+.lib-row { display: grid; grid-template-columns: 1fr auto; justify-content: space-between; align-items: baseline; gap: 2px 8px; width: 100%; padding: 8px 12px; border: 0; border-bottom: 1px solid #dfe3e6; background: transparent; text-align: left; border-left: 4px solid transparent; cursor: pointer; color: var(--ink); }
 .lib-row.on { background: #fbe6d8; border-left-color: var(--accent); }
 .lib-main { flex: 999 1 560px; min-width: 0; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
 .start-wide { max-width: 980px; margin: 0 auto; width: 100%; }

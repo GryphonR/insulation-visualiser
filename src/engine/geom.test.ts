@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { centroid, compass, dropSpikes, edges, faceReach, overlapAreaPoly, polyArea, selfIntersects, sharedSpan, triangulate } from './geom';
+import { boxPicks, centroid, compass, dropSpikes, edges, faceReach, overlapAreaPoly, polyArea, selfIntersects, sharedSpan, triangulate } from './geom';
 import type { Pt } from './geom';
 
 const rect = (x: number, y: number, w: number, d: number): Pt[] => [[x, y], [x + w, y], [x + w, y + d], [x, y + d]];
@@ -67,5 +67,19 @@ describe('wall faces meeting at a corner', () => {
   it('at an inside corner the outer face stops short, by the other wall\'s thickness', () => {
     expect(at(2, 0.1, 3, 0.1)).toBeCloseTo(-0.1);
     expect(at(2, 0, 3, 0)).toBeCloseTo(0);
+  });
+});
+
+describe('boxPicks', () => {
+  const sq: Pt[] = [[0, 0], [4, 0], [4, 4], [0, 4]];
+  it('dragged right, takes only outlines wholly inside the box', () => {
+    expect(boxPicks(sq, [-1, -1], [5, 5])).toBe(true);
+    expect(boxPicks(sq, [-1, -1], [3, 5])).toBe(false);
+  });
+  it('dragged left, takes anything the box touches', () => {
+    expect(boxPicks(sq, [3, 5], [-1, -1])).toBe(true); // overlaps a corner
+    expect(boxPicks(sq, [3, 3], [1, 1])).toBe(true); // box inside the room
+    expect(boxPicks(sq, [5, 2], [-1, 1])).toBe(true); // a band right across the room: no corner of either inside the other
+    expect(boxPicks(sq, [9, 1], [6, 3])).toBe(false);
   });
 });

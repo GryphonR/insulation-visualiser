@@ -6,20 +6,44 @@ import type { Pt } from './geom';
 import { calcHouse, onStorey, roomEdges, roomPoly } from './house';
 import { emitterPose } from './house-draw';
 import { canCool, emitterCool, emitterOut, lpm } from './house-heating';
-import { isCylRun, modesOf, openRuns } from './house-controls';
+import { isCylRun, modesOf, openRuns, placedManifold, runEmitters } from './house-controls';
 import type { Emitter } from './house-heating';
 
 /** Pipe sizes: label → internal diameter, mm. */
 export const PIPE_SIZES: Record<string, number> = {
-  'Cu 8 mm (microbore)': 6.0, 'Cu 10 mm (microbore)': 8.0, 'Cu 15 mm': 13.6, 'Cu 22 mm': 20.2, 'Cu 28 mm': 26.2, 'Cu 35 mm': 32.6,
-  'PEX 16 mm': 12, 'PEX 20 mm': 16, 'PEX 25 mm': 20, 'PEX 32 mm': 26,
+  'Cu 8 mm (microbore)': 6.0, 'Cu 10 mm (microbore)': 8.0, 'Cu 15 mm': 13.6, 'Cu 22 mm': 20.2, 'Cu 28 mm': 26.2, 'Cu 35 mm': 32.6, 'Cu 42 mm': 39.6,
+  // Plastic plumbing pipe made to copper sizes (Hep2O, Speedfit) alongside the UFH sizes; bores are typical, by make.
+  'PEX 10 mm': 6.7, 'PEX 15 mm': 11.6, 'PEX 16 mm': 12, 'PEX 20 mm': 16, 'PEX 22 mm': 18, 'PEX 25 mm': 20, 'PEX 28 mm': 23, 'PEX 32 mm': 26,
+  'MLCP 16 mm': 12, 'MLCP 20 mm': 16, 'MLCP 26 mm': 20, 'MLCP 32 mm': 26,
 };
+/** A size's material, the first word of its label: Cu, PEX or MLCP. */
+export const pipeFamily = (size: string) => size.split(' ')[0];
+/** The sizes this project uses: every size but those switched off. */
+export const sizesOn = (h: Pick<House, 'heating'>) => Object.keys(PIPE_SIZES).filter((k) => !h.heating.pipeOff?.includes(k));
+/** A size the project uses for `size`: itself if on, else the nearest bigger one on in its material (then smaller), else the nearest bigger on in any material. */
+export function usable(h: Pick<House, 'heating'>, size: string): string {
+  const on = sizesOn(h), id = PIPE_SIZES[size] ?? 0;
+  if (on.includes(size) || !on.length) return size;
+  const by = (ks: string[]) => [...ks].sort((a, b) => PIPE_SIZES[a] - PIPE_SIZES[b]), fam = by(on.filter((k) => pipeFamily(k) === pipeFamily(size))), any = by(on);
+  return fam.find((k) => PIPE_SIZES[k] >= id) ?? fam[fam.length - 1] ?? any.find((k) => PIPE_SIZES[k] >= id) ?? any[any.length - 1];
+}
 /** Design limits: velocity (m/s, lower for small bores to keep noise down) and pressure drop per metre (Pa/m). */
 export const MAX_V = (id: number) => (id <= 8 ? 0.8 : id <= 14 ? 1.0 : 1.5);
 /** Default cap on Pa/m, a common design limit for balancing and noise. */
 export const MAX_PA_M = 300;
-/** Allowance for fittings (bends, tees, valves) on top of the straight-pipe loss. */
+/** Allowance for fittings on top of the straight-pipe loss, where they cannot be counted: a typed length, and the pump budget. */
 const FITTINGS = 1.3;
+/** Loss coefficients, x the velocity pressure in the pipe: a 90 degree elbow fitting, and a tee (between running through, about 0.4, and turning into the branch, about 1.3). */
+const K_ELBOW = 0.8, K_TEE = 1.0;
+/** Typical bore through a fitting, mm: the insert or press sleeve narrows plastic and multilayer pipe; copper fittings keep the pipe's bore. */
+export const FIT_BORE: Record<string, number> = {
+  'PEX 10 mm': 4.8, 'PEX 15 mm': 9.5, 'PEX 16 mm': 9.5, 'PEX 20 mm': 12.5, 'PEX 22 mm': 15.5, 'PEX 25 mm': 16, 'PEX 28 mm': 20, 'PEX 32 mm': 21,
+  'MLCP 16 mm': 9.5, 'MLCP 20 mm': 13, 'MLCP 26 mm': 17, 'MLCP 32 mm': 23,
+};
+/** The bore through a size's fittings: the project's figure, else the typical one, else the pipe's own. */
+export const fitBore = (h: Pick<House, 'heating'>, size: string) => h.heating.fitBore?.[size] ?? FIT_BORE[size] ?? PIPE_SIZES[size] ?? 13.6;
+/** Loss at one insert (narrowing into the fitting's bore, then widening back), x the velocity pressure in the pipe. */
+export const kInsert = (pipe: number, fit: number) => { const a = Math.min(1, (fit / pipe) ** 2); return (0.5 * (1 - a) + (1 - a) ** 2) / (a * a); };
 /** Pressure drop across an emitter and its valves, Pa. */
 const EMITTER_DP = 5000;
 
@@ -30,7 +54,7 @@ export interface Pipe {
   size: string; length: number;
   /** Emitter at the end of this run, if any. */
   emitter?: string;
-  /** Its route on the plan, what its two ends are attached to ('source', 'cylinder', a riser id, or 'e:' + emitter id), and its climb between floors, m. */
+  /** Its route on the plan, what its two ends are attached to ('source', 'cylinder', a riser id, 'e:' + emitter id or 'm:' + a UFH zone's manifold), and its climb between floors, m. */
   leg?: PipeLeg; ends?: [string, string]; rise?: number;
   /** The length was typed in, so it no longer follows the route. */
   typed?: boolean;
@@ -41,7 +65,8 @@ export interface Pipe {
 }
 
 export interface PipeRow {
-  pipe: Pipe; loadW: number; flowLpm: number; v: number; paM: number; dp: number;
+  /** dp: the run's pressure drop one way, Pa, of which fitDp is its fittings. */
+  pipe: Pipe; loadW: number; flowLpm: number; v: number; paM: number; dp: number; fitDp: number;
   ok: boolean; why: string[]; index: boolean;
   /** The mode with the biggest flow through this run, which it is sized for (with no control plan, the one implicit mode). */
   mode: string;
@@ -64,7 +89,7 @@ export function paBudget(h: House): { paMax: number; longest: number; paPump: nu
   const pipes = h.heating.pipes ?? [], byId = new Map(pipes.map((p) => [p.id, p]));
   let longest = 0;
   for (const p of pipes) {
-    if (!p.emitter) continue;
+    if (!runEmitters(h, p).length) continue;
     let L = 0, n = 0;
     for (let cur: Pipe | undefined = p; cur && n < 50; cur = cur.parent ? byId.get(cur.parent) : undefined, n++) L += runLength(h, cur);
     longest = Math.max(longest, L);
@@ -89,17 +114,22 @@ export function sizePipes(h: House, res: HouseResult): PipeResult {
   const pipes = h.heating.pipes ?? [], { paMax, longest, paPump, paCap } = paBudget(h);
   const flow = res.heat.designFlow, cool = h.heating.cooling;
   // Each emitter carries its share of its room's design loss (by output at the design flow).
-  const load = new Map<string, number>();
+  const load = new Map<string, number>(), outW = new Map<string, number>();
   for (const r of res.rooms) {
     const ems = h.heating.emitters.filter((e) => e.room === r.room.id);
     const outs = ems.map((e) => emitterOut(e, flow, r.room.setpoint, h)), tot = outs.reduce((a, b) => a + b, 0);
-    ems.forEach((e, i) => load.set(e.id, tot > 0 ? (r.totalW * outs[i]) / tot : 0));
+    ems.forEach((e, i) => { load.set(e.id, tot > 0 ? (r.totalW * outs[i]) / tot : 0); outW.set(e.id, outs[i]); });
   }
   // In cooling, each cooling emitter at its full output at the chilled flow and the cooling setpoint.
   const coolLoad = new Map(h.heating.emitters.filter(canCool).map((e) => [e.id, cool ? emitterCool(e, cool.flow, cool.setpoint, h) : 0]));
   const kids = (id: string) => pipes.filter((p) => p.parent === id);
   const byPipe = new Map(pipes.map((p) => [p.id, p]));
-  const ownLoad = (p: Pipe, chilled: boolean) => (p.emitter ? (chilled ? coolLoad.get(p.emitter) ?? 0 : load.get(p.emitter) ?? 0) : !chilled && isCylRun(p) ? h.heating.coilW ?? 0 : 0);
+  const ownLoad = (p: Pipe, chilled: boolean) => {
+    const es = runEmitters(h, p);
+    // A manifold's run carries each loop's share of the loss, or the loop's full output if that is less.
+    const cap = (id: string) => (p.ends?.[1]?.startsWith('m:') ? outW.get(id) ?? Infinity : Infinity);
+    return es.length ? es.reduce((a, id) => a + Math.min((chilled ? coolLoad : load).get(id) ?? 0, chilled ? Infinity : cap(id)), 0) : !chilled && isCylRun(p) ? h.heating.coilW ?? 0 : 0;
+  };
   // Per mode: the load through each open run, its flow and pressure drop, and the mode's index circuit.
   const modes = modesOf(h).filter((m) => m.water !== 'off').map((m) => {
     const open = openRuns(h, m), chilled = m.water === 'chilled', dT = chilled ? cool?.dT ?? 3 : h.heating.dT;
@@ -116,13 +146,13 @@ export function sizePipes(h: House, res: HouseResult): PipeResult {
     for (const p of pipes) {
       if (!open.has(p.id)) continue;
       const w = pipeLoad(p), f = lpm(w, dT), { v, paM } = pipeFlow(f, PIPE_SIZES[p.size] ?? 13.6);
-      W.set(p.id, w); F.set(p.id, f); V.set(p.id, v); DP.set(p.id, paM * runLength(h, p) * FITTINGS);
+      W.set(p.id, w); F.set(p.id, f); V.set(p.id, v); DP.set(p.id, paM * runLength(h, p) + fittingsDp(h, p, v, paM * runLength(h, p)));
     }
     // Index circuit: the path from the source to an emitter (or a loaded cylinder coil) with the highest total pressure drop.
     let indexDp = 0, indexPath: string[] = [];
     for (const p of pipes) {
-      if (!open.has(p.id) || !(p.emitter || (isCylRun(p) && ownLoad(p, chilled) > 0))) continue;
-      if (chilled && !(p.emitter && (coolLoad.get(p.emitter) ?? 0) > 0)) continue;
+      if (!open.has(p.id) || !(runEmitters(h, p).length || (isCylRun(p) && ownLoad(p, chilled) > 0))) continue;
+      if (chilled && !(runEmitters(h, p).length && ownLoad(p, true) > 0)) continue;
       const path: string[] = [];
       let dp = EMITTER_DP;
       for (let cur: Pipe | undefined = p; cur && path.length < 50; cur = cur.parent ? byPipe.get(cur.parent) : undefined) { path.unshift(cur.id); dp += (DP.get(cur.id) ?? 0) * 2; } // flow and return
@@ -138,14 +168,15 @@ export function sizePipes(h: House, res: HouseResult): PipeResult {
     const why: string[] = [];
     if (v > MAX_V(id)) why.push(`${v.toFixed(2)} m/s is over ${MAX_V(id)} m/s: noisy`);
     if (paM > paMax) why.push(`${Math.round(paM)} Pa/m is over the ${paMax < paCap ? "pump's" : ''} ${Math.round(paMax)} Pa/m limit`);
-    return { pipe: p, loadW, flowLpm, v, paM, dp: paM * runLength(h, p) * FITTINGS, ok: !why.length, why, index: false, mode: top?.name ?? '' };
+    const fitDp = fittingsDp(h, p, v, paM * runLength(h, p));
+    return { pipe: p, loadW, flowLpm, v, paM, dp: paM * runLength(h, p) + fitDp, fitDp, ok: !why.length, why, index: false, mode: top?.name ?? '' };
   });
   const worst = modes.reduce<(typeof modes)[number] | null>((b, m) => (m.indexDp > (b?.indexDp ?? -1) ? m : b), null);
   const indexDp = worst?.indexDp ?? 0, indexPath = worst?.indexPath ?? [];
   const byId = new Map(rows.map((r) => [r.pipe.id, r]));
   for (const id of indexPath) byId.get(id)!.index = true;
   const head = (h.heating.pumpHead ?? 40) * 1000;
-  const piped = new Set(pipes.map((p) => p.emitter).filter(Boolean));
+  const piped = new Set(pipes.flatMap((p) => runEmitters(h, p)));
   return { rows, indexDp, indexPath, head, headOk: indexDp <= head, unpiped: h.heating.emitters.filter((e) => !piped.has(e.id)).map((e) => e.id), emitterW: load, paMax, longest, paPump, paCap,
     modes: modes.map(({ id, name, flow, v, indexDp, indexPath }) => ({ id, name, flow, v, indexDp, indexPath })) };
 }
@@ -155,7 +186,7 @@ export interface PipeLeg { storey: number; pts: Pt[] }
 /** One storey's feed: where it comes up (the source itself, or a riser), the legs that get it there, and its rise between floors. */
 interface Feed { hub: Pt; legs: PipeLeg[]; run: number; rise: number; riser?: string }
 /** Every routed pipe: the storey feeds, and a tail from the feed to each emitter and to the cylinder. */
-export interface PipeRoute { feeds: Map<number, Feed>; tails: Array<{ emitter?: string; cylinder?: true; storey: number; leg: PipeLeg; run: number }> }
+export interface PipeRoute { feeds: Map<number, Feed>; tails: Array<{ emitter?: string; manifold?: string; cylinder?: true; storey: number; leg: PipeLeg; run: number }> }
 
 // Pipes follow the walls and joists: along one axis then the other, turning inside the house where that is possible.
 export const ell = (h: House, s: number, a: Pt, b: Pt): Pt[] => {
@@ -171,12 +202,13 @@ export function routePipes(h: House): PipeRoute | null {
   const src = h.heating.source;
   if (!src) return null;
   const risers = h.heating.risers ?? [];
-  const ends = h.heating.emitters.flatMap((e) => {
-    const r = h.rooms.find((x) => x.id === e.room), at = emitterPort(h, e) ?? undefined;
-    return r && at ? [{ emitter: e.id as string | undefined, storey: r.storey, at }] : [];
+  const ends: Array<{ emitter?: string; manifold?: string; storey: number; at: Pt }> = h.heating.emitters.flatMap((e) => {
+    const r = h.rooms.find((x) => x.id === e.room), at = fedByManifold(h, e) ? undefined : emitterPort(h, e) ?? undefined;
+    return r && at ? [{ emitter: e.id, storey: r.storey, at }] : [];
   });
+  for (const z of manifolds(h)) ends.push({ manifold: z.id, storey: z.manifold!.storey!, at: [z.manifold!.x, z.manifold!.y] });
   const cyl = h.heating.cylinder;
-  const all = cyl ? [...ends, { emitter: undefined, storey: cyl.storey, at: cyl.at }] : ends;
+  const all: typeof ends = cyl ? [...ends, { storey: cyl.storey, at: cyl.at }] : ends;
   const feeds = new Map<number, Feed>();
   for (const s of new Set(all.map((x) => x.storey))) {
     if (s === src.storey) { feeds.set(s, { hub: src.at, legs: [], run: 0, rise: 0 }); continue; }
@@ -189,7 +221,7 @@ export function routePipes(h: House): PipeRoute | null {
   }
   const tails = all.map((x) => {
     const hub = feeds.get(x.storey)!.hub;
-    return { emitter: x.emitter, cylinder: x.emitter ? undefined : (true as const), storey: x.storey, leg: { storey: x.storey, pts: ell(h, x.storey, hub, x.at) }, run: runOf(hub, x.at) };
+    return { emitter: x.emitter, manifold: x.manifold, cylinder: x.emitter || x.manifold ? undefined : (true as const), storey: x.storey, leg: { storey: x.storey, pts: ell(h, x.storey, hub, x.at) }, run: runOf(hub, x.at) };
   });
   return { feeds, tails };
 }
@@ -208,11 +240,17 @@ export function emitterPort(h: House, e: Emitter): Pt | null {
 }
 
 const m1 = (v: number) => Math.max(0.5, Math.round(v * 10) / 10);
+/** UFH zones with a manifold placed on the heating layout. */
+export const manifolds = (h: House) => h.heating.zones.filter((z) => z.kind === 'ufh' && z.manifold?.storey != null);
+/** A UFH loop fed through its zone's placed manifold rather than piped on its own. */
+export const fedByManifold = (h: House, e: Emitter) => e.kind === 'ufh' && !!placedManifold(h, e.zone);
+/** A manifold run's name: the zone's, which is often already called a manifold. */
+export const manifoldName = (h: House, zone: string) => { const n = h.heating.zones.find((z) => z.id === zone)?.name ?? 'UFH'; return /manifold/i.test(n) ? n : `${n} manifold`; };
 
 /** Typical pipework to start from: 28 mm primary, 22 mm to each storey, 15 mm (10 mm upstairs) tails, PEX to UFH loops. Measured from the plan when the heat source is placed. */
 export function autoPipes(h: House): Pipe[] {
   const route = routePipes(h);
-  if (route) return planPipes(h, route);
+  if (route) return planPipes(h, route).map((p) => ({ ...p, size: usable(h, p.size) }));
   const out: Pipe[] = [{ id: 'P1', name: 'Heat pump → manifold / tee', parent: null, size: 'Cu 28 mm', length: 8 }];
   let n = 1;
   h.storeys.forEach((s, si) => {
@@ -226,7 +264,7 @@ export function autoPipes(h: House): Pipe[] {
         size: e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : si === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)', length: e.kind === 'ufh' ? 3 : 5, emitter: e.id });
     }
   });
-  return out;
+  return out.map((p) => ({ ...p, size: usable(h, p.size) }));
 }
 
 /** The pipe tree from a routed plan: lengths are the measured runs, sizes as in the typical layout. */
@@ -241,7 +279,8 @@ function planPipes(h: House, route: PipeRoute): Pipe[] {
     if (other) out.push({ id: branch, name: `To ${s?.name.toLowerCase() ?? `storey ${si}`}${f.riser ? ' (up the riser)' : other ? ' (through the floor)' : ''}`, parent: 'P1', size: 'Cu 22 mm', length: m1(f.run),
       ends: ['source', hub], rise: f.rise, ...(f.legs[0] ? { leg: f.legs[0] } : {}) });
     for (const t of route.tails.filter((x) => x.storey === si)) {
-      const e = h.heating.emitters.find((x) => x.id === t.emitter), at = { leg: t.leg, ends: [hub, e ? `e:${e.id}` : 'cylinder'] as [string, string] };
+      const e = h.heating.emitters.find((x) => x.id === t.emitter), at = { leg: t.leg, ends: [hub, e ? `e:${e.id}` : t.manifold ? `m:${t.manifold}` : 'cylinder'] as [string, string] };
+      if (t.manifold) { out.push({ id: `P${++n}`, name: manifoldName(h, t.manifold), parent: branch, size: 'Cu 22 mm', length: m1(t.run), ...at }); continue; }
       if (!e) { out.push({ id: `P${++n}`, name: 'Hot water cylinder coil', parent: branch, size: 'Cu 22 mm', length: m1(t.run), ...at }); continue; }
       const room = h.rooms.find((r) => r.id === e.room)?.name ?? e.room;
       out.push({ id: `P${++n}`, name: `${room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}`, parent: branch,
@@ -258,6 +297,7 @@ export function endPoint(h: House, id: string): Pt | null {
   if (id === 'source' || id === 'cylinder') return h.heating[id]?.at ?? null;
   if (id.startsWith('tee:')) { const p = h.heating.pipes?.find((x) => x.id === id.slice(4)), pts = p && livePath(h, p); return pts ? pts[pts.length - 1] : null; }
   if (id.startsWith('e:')) { const e = h.heating.emitters.find((x) => x.id === id.slice(2)); return (e && emitterPort(h, e)) ?? null; }
+  if (id.startsWith('m:')) { const m = placedManifold(h, id.slice(2))?.manifold; return m ? [m.x, m.y] : null; }
   return h.heating.risers?.find((r) => r.id === id)?.at ?? null;
 }
 
@@ -303,6 +343,29 @@ export function runLength(h: House, p: Pipe): number {
   if (!pts) return p.length;
   const e = p.emitter ? h.heating.emitters.find((x) => x.id === p.emitter) : undefined;
   return Math.round((pathLen(pts) + (p.rise ?? 0) + (e ? valveTail(h, p.leg!.storey, viaOf(h, p), e.kind) : 0)) * 10) / 10;
+}
+
+/** The joints on a run laid on the plan: an elbow at each corner, two where it climbs between floors and one up or down to the valves, and whether it tees off another run. Null for a typed length. */
+export function joints(h: House, p: Pipe): { elbows: number; tee: boolean } | null {
+  const pts = p.typed ? null : livePath(h, p);
+  if (!pts) return null;
+  let elbows = 0;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [a, b, c] = [pts[i - 1], pts[i], pts[i + 1]];
+    if (Math.abs((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])) > 1e-9) elbows++;
+  }
+  if (p.rise) elbows += 2;
+  const e = p.emitter ? h.heating.emitters.find((x) => x.id === p.emitter) : undefined;
+  if (e && valveTail(h, p.leg!.storey, viaOf(h, p), e.kind) > 0) elbows++;
+  return { elbows, tee: !!p.ends?.[0]?.startsWith('tee:') };
+}
+
+/** Pressure drop through a run's fittings at velocity v (m/s), Pa: each elbow and tee, and an insert at each end and two per elbow. A typed length gets 30% of its pipe loss instead. */
+export function fittingsDp(h: House, p: Pipe, v: number, pipeDp: number): number {
+  const j = joints(h, p);
+  if (!j) return pipeDp * (FITTINGS - 1);
+  const ki = kInsert(PIPE_SIZES[p.size] ?? 13.6, fitBore(h, p.size));
+  return ((RHO * v * v) / 2) * (j.elbows * (K_ELBOW + 2 * ki) + 2 * ki + (j.tee ? K_TEE : 0));
 }
 
 /** Height of radiator valves above the floor, m. */
@@ -373,7 +436,8 @@ export function setBranchRiser(h: House, branchId: string, riser: string): void 
   for (const c of h.heating.pipes!) if (c.parent === branchId && c.ends) { c.ends = [riser, c.ends[1]]; resetRun(h, c.id); }
 }
 
-const CU_UP = ['Cu 15 mm', 'Cu 22 mm', 'Cu 28 mm', 'Cu 35 mm'], PEX_UP = ['PEX 16 mm', 'PEX 20 mm', 'PEX 25 mm', 'PEX 32 mm'];
+/** Sizes a shared or trunk run may be, by material (no microbore). */
+const UP: Record<string, string[]> = { Cu: ['Cu 15 mm', 'Cu 22 mm', 'Cu 28 mm', 'Cu 35 mm', 'Cu 42 mm'], PEX: ['PEX 15 mm', 'PEX 16 mm', 'PEX 20 mm', 'PEX 22 mm', 'PEX 25 mm', 'PEX 28 mm', 'PEX 32 mm'], MLCP: ['MLCP 16 mm', 'MLCP 20 mm', 'MLCP 26 mm', 'MLCP 32 mm'] };
 /** The most a pipe of internal diameter id (mm) can carry within the velocity and Pa/m limits, l/min. */
 export function maxFlow(idMM: number, paMax = MAX_PA_M): number {
   let lo = 0, hi = 500;
@@ -381,9 +445,9 @@ export function maxFlow(idMM: number, paMax = MAX_PA_M): number {
   return lo;
 }
 
-/** The smallest pipe within the velocity and Pa/m limits for a flow, and no smaller than any pipe it feeds. */
-export function fitSize(flowLpm: number, feeds: string[], paMax = MAX_PA_M): string {
-  const list = feeds.some((f) => f.startsWith('PEX')) ? PEX_UP : CU_UP, min = Math.max(0, ...feeds.map((f) => PIPE_SIZES[f] ?? 0));
+/** The smallest pipe within the velocity and Pa/m limits for a flow, and no smaller than any pipe it feeds: plastic if it feeds plastic, of the sizes `on` (all of a material if none of it is on). */
+export function fitSize(flowLpm: number, feeds: string[], paMax = MAX_PA_M, on: string[] = Object.keys(PIPE_SIZES)): string {
+  const all = UP[pipeFamily(feeds.find((f) => pipeFamily(f) !== 'Cu') ?? 'Cu')] ?? UP.Cu, mine = all.filter((k) => on.includes(k)), list = mine.length ? mine : all, min = Math.max(0, ...feeds.map((f) => PIPE_SIZES[f] ?? 0));
   return list.find((k) => { const id = PIPE_SIZES[k]; if (id < min) return false; const { v, paM } = pipeFlow(flowLpm, id); return v <= MAX_V(id) && paM <= paMax; }) ?? list[list.length - 1];
 }
 
@@ -470,7 +534,7 @@ export function combineRuns(h: House, res: HouseResult = calcHouse(h), of?: Circ
   h.heating.pipes = pipes;
   // Innermost shared runs first, so each one is at least as big as the shared runs it feeds.
   const sized = sizePipes(h, res), flows = new Map(sized.rows.map((r) => [r.pipe.id, r.flowLpm]));
-  for (const t of [...made].reverse()) t.size = fitSize(flows.get(t.id) ?? 0, pipes.filter((c) => c.parent === t.id).map((c) => c.size), sized.paMax);
+  for (const t of [...made].reverse()) t.size = fitSize(flows.get(t.id) ?? 0, pipes.filter((c) => c.parent === t.id).map((c) => c.size), sized.paMax, sizesOn(h));
   return made.length;
 }
 
@@ -541,7 +605,7 @@ export function joinRun(h: House, id: string, res?: HouseResult): boolean {
     X.parent = S.id; X.ends = [`tee:${S.id}`, X.ends[1]]; X.leg = { storey: xs, pts: rest };
     h.heating.pipes = pipes;
     const sized = sizePipes(h, res ?? calcHouse(h));
-    S.size = fitSize(sized.rows.find((r) => r.pipe.id === S.id)?.flowLpm ?? 0, [Y.size, X.size], sized.paMax);
+    S.size = fitSize(sized.rows.find((r) => r.pipe.id === S.id)?.flowLpm ?? 0, [Y.size, X.size], sized.paMax, sizesOn(h));
   }
   delete X.typed;
   h.heating.pipes = pipes;
@@ -563,8 +627,9 @@ export function attachments(h: House, storey: number): Array<{ id: string; at: P
   if (hs.source?.storey === storey) out.push({ id: 'source', at: hs.source.at, label: hp ? 'Heat pump' : 'Boiler' });
   if (hs.cylinder?.storey === storey) out.push({ id: 'cylinder', at: hs.cylinder.at, label: 'Hot water cylinder' });
   (hs.risers ?? []).forEach((r, i) => out.push({ id: r.id, at: r.at, label: `Riser ${i + 1}` }));
+  for (const z of manifolds(h)) if (z.manifold!.storey === storey) out.push({ id: `m:${z.id}`, at: [z.manifold!.x, z.manifold!.y], label: manifoldName(h, z.id) });
   for (const e of hs.emitters) {
-    const r = h.rooms.find((x) => x.id === e.room), at = r?.storey === storey ? emitterPort(h, e) ?? undefined : undefined;
+    const r = h.rooms.find((x) => x.id === e.room), at = r?.storey === storey && !fedByManifold(h, e) ? emitterPort(h, e) ?? undefined : undefined;
     if (r && at) out.push({ id: `e:${e.id}`, at, label: `${r.name} ${e.kind === 'ufh' ? 'UFH manifold' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : 'radiator'}` });
   }
   return out;
@@ -641,7 +706,7 @@ function teeAt(h: House, id: string, at: Pt): { start: string; parent: string | 
 }
 
 /** True for what a run can come from: the source, a riser or another run (not a heater or the cylinder). */
-export const feedsFrom = (a: Attach) => 'run' in a || !(a.id === 'cylinder' || a.id.startsWith('e:'));
+export const feedsFrom = (a: Attach) => 'run' in a || !(a.id === 'cylinder' || a.id.startsWith('e:') || a.id.startsWith('m:'));
 
 /**
  * A run drawn on storey `storey`'s plan through the corners `mid`, from `a` to `b` (an open end, for teeing off later, if null).
@@ -661,7 +726,9 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
   const B = b as { id: string } | null; // never a run: checked above
   const pipes = (h.heating.pipes ??= []);
   // The heater's old run goes, so it is not counted twice.
-  if (B) for (const old of pipes.filter((p) => (B.id === 'cylinder' ? p.ends?.[1] === 'cylinder' : p.emitter === B.id.slice(2)))) removeRun(h, old.id);
+  // A manifold's run replaces its own old one and any to the loops it now feeds.
+  const fed = B?.id.startsWith('m:') ? runEmitters(h, { id: '', name: '', parent: null, size: '', length: 0, ends: ['', B.id] }) : [];
+  if (B) for (const old of pipes.filter((p) => (B.id === 'cylinder' || B.id.startsWith('m:') ? p.ends?.[1] === B.id : p.emitter === B.id.slice(2)) || (!!p.emitter && fed.includes(p.emitter)))) removeRun(h, old.id);
   const all = h.heating.pipes!, root = all.find((p) => p.parent === null && !p.leg)?.id ?? null;
   let start: string, parent: string | null, P0: Pt;
   let via: Pipe['via'];
@@ -680,7 +747,7 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
     const v = rise(h, src.storey, storey), at = endPoint(h, a.id)!, riser = a.id !== 'source';
     let br = all.find((p) => p.ends?.[0] === 'source' && p.ends[1] === a.id && Math.abs((p.rise ?? -1) - v) < 1e-6);
     if (!br) {
-      br = { id: nextId(all), name: `To ${h.storeys[storey]?.name.toLowerCase() ?? `storey ${storey}`}${riser ? ' (up the riser)' : ' (through the floor)'}`, parent: root, size: 'Cu 22 mm',
+      br = { id: nextId(all), name: `To ${h.storeys[storey]?.name.toLowerCase() ?? `storey ${storey}`}${riser ? ' (up the riser)' : ' (through the floor)'}`, parent: root, size: usable(h, 'Cu 22 mm'),
         length: m1((riser ? runOf(src.at, at) : 0) + v), ends: ['source', a.id], rise: v, ...(riser ? { leg: { storey: src.storey, pts: ell(h, src.storey, src.at, at) } } : {}) };
       all.push(br);
     }
@@ -691,18 +758,22 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
   const n = raw.length, pts = square && b && n > 1 ? tidy([...raw.slice(0, -1), ...squareInto(h, storey, raw[n - 3], raw[n - 2], raw[n - 1]).slice(1)]) : raw;
   if (pts.length < 2) return { error: 'Draw at least one stretch.' };
   const e = B?.id.startsWith('e:') ? h.heating.emitters.find((x) => x.id === B.id.slice(2)) : undefined, room = e && h.rooms.find((r) => r.id === e.room)?.name;
-  const id = nextId(all);
+  const id = nextId(all), M = B?.id.startsWith('m:');
   all.push({ id, parent, leg: { storey, pts }, ends: [start, B?.id ?? ''], length: m1(pathLen(pts)),
-    name: e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}` : B ? 'Hot water cylinder coil' : 'Main',
-    size: e ? (e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : storey === src.storey || storey === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)') : 'Cu 22 mm',
+    name: e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}` : B?.id.startsWith('m:') ? manifoldName(h, B.id.slice(2)) : B ? 'Hot water cylinder coil' : 'Main',
+    size: usable(h, e ? (e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : storey === src.storey || storey === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)') : 'Cu 22 mm'),
     ...(e ? { emitter: e.id } : {}), ...(via ? { via } : {}) });
+  // A manifold's run is sized for the loops on it.
+  if (M) { const s = sizePipes(h, calcHouse(h)); all.find((p) => p.id === id)!.size = fitSize(s.rows.find((r) => r.pipe.id === id)?.flowLpm ?? 0, [], s.paMax, sizesOn(h)); }
   return { id };
 }
 
 /** Heaters, and the cylinder, with no run to them. */
 export function unpiped(h: House): string[] {
   const ps = h.heating.pipes ?? [], has = new Set(ps.map((p) => p.emitter));
-  return [...h.heating.emitters.filter((e) => !has.has(e.id)).map((e) => `e:${e.id}`), ...(h.heating.cylinder && !ps.some((p) => p.ends?.[1] === 'cylinder') ? ['cylinder'] : [])];
+  return [...h.heating.emitters.filter((e) => !has.has(e.id) && !fedByManifold(h, e)).map((e) => `e:${e.id}`),
+    ...manifolds(h).filter((z) => !ps.some((p) => p.ends?.[1] === `m:${z.id}`)).map((z) => `m:${z.id}`),
+    ...(h.heating.cylinder && !ps.some((p) => p.ends?.[1] === 'cylinder') ? ['cylinder'] : [])];
 }
 
 /** A plain square run from the source, or the floor's riser, to each heater and the cylinder that has none; the runs already drawn stay. Returns how many were added (edits h in place). */
@@ -711,7 +782,7 @@ export function pipeRest(h: House): number {
   if (!route) return 0;
   let n = 0;
   for (const t of route.tails) {
-    const id = t.emitter ? `e:${t.emitter}` : 'cylinder';
+    const id = t.emitter ? `e:${t.emitter}` : t.manifold ? `m:${t.manifold}` : 'cylinder';
     if (todo.has(id) && 'id' in drawRun(h, t.storey, { id: route.feeds.get(t.storey)?.riser ?? 'source' }, [], { id })) n++;
   }
   return n;

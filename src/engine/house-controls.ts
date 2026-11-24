@@ -38,6 +38,14 @@ export const PLANS: Record<PlanKind, { name: string; note: string }> = {
 
 /** The run that feeds the cylinder coil. */
 export const isCylRun = (p: Pipe) => p.ends?.[1] === 'cylinder';
+/** A UFH zone whose manifold is placed on the heating layout, so a run to it feeds all its loops. */
+export const placedManifold = (h: House, zone: string) => { const z = h.heating.zones.find((x) => x.id === zone && x.kind === 'ufh'); return z?.manifold?.storey != null ? z : undefined; };
+/** The emitters a run feeds: its own, or every UFH loop on the placed manifold at its end. */
+export function runEmitters(h: House, p: Pipe): string[] {
+  if (p.emitter) return [p.emitter];
+  const m = p.ends?.[1]?.startsWith('m:') ? p.ends[1].slice(2) : '';
+  return m && placedManifold(h, m) ? h.heating.emitters.filter((e) => e.kind === 'ufh' && e.zone === m).map((e) => e.id) : [];
+}
 export const posOf = (v: Valve, m: Mode): Pos => m.valves[v.id] ?? (v.kind === 'two' ? 'open' : v.mid ? 'AB' : 'B');
 /** Whether flow gets past valve v into run `run` with the valve at `pos`. */
 export function passes(v: Valve, pos: Pos, run: string): boolean {
@@ -74,7 +82,7 @@ export function openRuns(h: House, m: Mode): Set<string> {
 /** What a mode reaches: the emitters on open runs and whether the cylinder coil is fed. */
 export function reach(h: House, m: Mode): { emitters: Set<string>; cylinder: boolean; runs: Set<string> } {
   const runs = openRuns(h, m), pipes = (h.heating.pipes ?? []).filter((p) => runs.has(p.id));
-  return { runs, emitters: new Set(pipes.flatMap((p) => (p.emitter ? [p.emitter] : []))), cylinder: pipes.some(isCylRun) };
+  return { runs, emitters: new Set(pipes.flatMap((p) => runEmitters(h, p))), cylinder: pipes.some(isCylRun) };
 }
 
 /**
@@ -90,7 +98,7 @@ export function served(h: House): { heated: Set<string>; cooled: Set<string> } {
     // An emitter without a run is still taken as heated: the pipework page flags it as unpiped.
     for (const id of reach(h, m).emitters) (m.water === 'hot' ? heated : cooled).add(id);
   }
-  const piped = new Set((h.heating.pipes ?? []).map((p) => p.emitter));
+  const piped = new Set((h.heating.pipes ?? []).flatMap((p) => runEmitters(h, p)));
   for (const e of all) if (!piped.has(e.id)) { heated.add(e.id); if (canCool(e)) cooled.add(e.id); }
   for (const id of [...cooled]) if (!canCool(all.find((e) => e.id === id) ?? { kind: 'radiator' })) cooled.delete(id);
   return { heated, cooled };
@@ -113,8 +121,8 @@ function kidsOf(h: House): Map<string | null, Pipe[]> {
 export function pureRoots(h: House, ok: (t: Term) => boolean): string[] {
   const kids = kidsOf(h), out: string[] = [];
   const own = (p: Pipe): Term[] => {
-    const e = p.emitter ? h.heating.emitters.find((x) => x.id === p.emitter) : undefined;
-    return e ? [{ e }] : isCylRun(p) ? [{ cyl: true }] : [];
+    const es = runEmitters(h, p).flatMap((id) => h.heating.emitters.filter((x) => x.id === id));
+    return es.length ? es.map((e) => ({ e })) : isCylRun(p) ? [{ cyl: true }] : [];
   };
   // 'none': leads nowhere, 'pure': only accepted ends, 'mixed': at least one other.
   const walk = (p: Pipe, n: number): 'none' | 'pure' | 'mixed' => {
@@ -165,7 +173,7 @@ export function applyPlan(h: House, plan: PlanKind | null): string | null {
   const V: Valve[] = [];
   const valve = (v: Omit<Valve, 'id'>) => { const x = { id: `V${V.length + 1}`, ...v }; V.push(x); return x; };
   const isEm = (t: Term): t is { e: Emitter } => 'e' in t;
-  const piped = h.heating.emitters.filter((e) => pipes.some((p) => p.emitter === e.id));
+  const piped = h.heating.emitters.filter((e) => pipes.some((p) => runEmitters(h, p).includes(e.id)));
   const zones = h.heating.zones.filter((z) => piped.some((e) => e.zone === z.id));
   const unzoned = piped.some((e) => !zones.some((z) => z.id === e.zone));
   const zoned = plan === 'splus' || (plan === 'hp' && zones.length + (unzoned ? 1 : 0) >= 2);
@@ -256,7 +264,7 @@ export function controlChecks(h: House): Array<{ level: 'error' | 'warn'; text: 
     if (m.water === 'hot' && hp && r.cylinder && r.emitters.size) out.push({ level: 'warn', text: `${m.name}: a heat pump heats the cylinder at a higher flow than the heating needs; most divert to one or the other.` });
   }
   const { heated } = served(h);
-  const never = h.heating.emitters.filter((e) => pipes.some((p) => p.emitter === e.id) && !heated.has(e.id));
+  const never = h.heating.emitters.filter((e) => pipes.some((p) => runEmitters(h, p).includes(e.id)) && !heated.has(e.id));
   if (never.length) out.push({ level: 'warn', text: `No mode heats ${[...new Set(never.map((e) => emName(e.id)))].join(', ')}.` });
   if (pipes.some(isCylRun) && !c.modes.some((m) => m.water === 'hot' && reach(h, m).cylinder)) out.push({ level: 'warn', text: 'No mode reheats the cylinder.' });
   return out;
@@ -268,7 +276,7 @@ export function runUse(h: House, m: Mode): Map<string, Use> {
   const open = openRuns(h, m), kids = kidsOf(h), out = new Map<string, Use>();
   // Whether an open run leads to an emitter, and to the cylinder.
   const walk = (p: Pipe, n: number): { em: boolean; cyl: boolean } => {
-    let em = !!p.emitter, cyl = isCylRun(p);
+    let em = runEmitters(h, p).length > 0, cyl = isCylRun(p);
     for (const c of n > 50 ? [] : kids.get(p.id) ?? []) if (open.has(c.id)) { const r = walk(c, n + 1); em ||= r.em; cyl ||= r.cyl; }
     out.set(p.id, m.water === 'chilled' ? 'cool' : cyl && !em ? 'dhw' : 'heat');
     return { em, cyl };
