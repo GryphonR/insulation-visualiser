@@ -99,7 +99,6 @@ export function Account() {
       <div className="acct-pop">
         <p>Signed in as <b>{info.email}</b></p>
         {info.message && <p role="alert">{info.message}</p>}
-        {updatesBox(!!info.updates, (v) => void setConsent(v).then((ok) => ok || alert("Couldn't save that. Check your connection and try again.")))}
         {isAdmin && <a className="btn-secondary as-btn" href={href('admin')}>Admin</a>}
         <button type="button" className="btn-secondary" onClick={() => void syncNow()}>Sync now</button>
         <button type="button" className="btn-secondary" onClick={() => void signOut(false)}>Sign out</button>
@@ -108,6 +107,7 @@ export function Account() {
           if (!confirm('Delete your account and every project stored in the cloud? Projects on this device stay. This can\'t be undone.')) return;
           if (!(await deleteAccount())) alert('Couldn\'t delete the account. Check your connection and try again.');
         }}>Delete account…</button>
+        {updatesBox(!!info.updates, (v) => void setConsent(v).then((ok) => ok || alert("Couldn't save that. Check your connection and try again.")))}
       </div>
     </details>
   );

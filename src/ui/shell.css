@@ -38,7 +38,7 @@ html { scroll-padding-top: var(--head-h, 0px); }
 .acct-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .acct-dot.synced { background: #1d7a3a; }
 .acct-dot.error { background: #b3261e; }
-.as-btn { display: inline-flex; align-items: center; text-decoration: none; color: var(--ink); }
+.as-btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; color: var(--ink); }
 .sub { display: flex; flex-wrap: wrap; align-items: stretch; padding: 0 20px; border-bottom: 1px solid var(--line-strong); background: var(--card); }
 .sub a { min-height: 44px; display: flex; align-items: center; padding: 0 16px; font-size: 14px; color: #3d4b58; text-decoration: none; border-bottom: 3px solid transparent; }
 .sub a.on { color: var(--ink); font-weight: 600; border-bottom-color: var(--ink); }

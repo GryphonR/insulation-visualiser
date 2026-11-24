@@ -47,6 +47,8 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
   const here = SAME_AS[route] ?? route;
   const errors = res.checks.filter((c) => c.level === 'error').length;
   const setActive = (id: string) => setProject((p) => ({ ...p, active: id }));
+  // Project list and admin aren't about one project: no project, scenario or workflow controls there.
+  const inProject = route !== 'projects' && route !== 'admin';
   const head = useRef<HTMLDivElement>(null);
   // Publish the fixed header's height so sticky contents and scrolled-to elements clear it (0 on phones, where it scrolls away).
   useEffect(() => {
@@ -62,6 +64,7 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
         <a className="brand" href={import.meta.env.BASE_URL} title="Insuliser home">
           <span className="logo" aria-hidden="true"><span /><span /><span /></span>Insuliser<span className="beta">Beta</span>
         </a>
+        {inProject && <>
         <div className="ctx">
           <span className="eb">Project</span>
           <a className="ctx-v" href={href('projects')} title="Switch, create or delete projects">{project.scenarios[0].house.name || 'My house'} ▾</a>
@@ -77,19 +80,20 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
           <span className="eb">Conditions</span>
           <a className="ctx-v" href={href('settings')} title="The design outside temperature, from the postcode: change it in Project settings">Design day {fmt(res.Tout, 1)} °C ▾</a>
         </div>
+        </>}
         <nav className="wf" aria-label="Workflow">
-          {SECTIONS.map((s) => (
+          {inProject && SECTIONS.map((s) => (
             <a key={s.id} href={href(s.to)} className={sec === s.id ? 'on' : ''} aria-current={sec === s.id ? 'page' : undefined}>
               <span className="n">{s.n}</span>{s.label}
               {s.id === 'heating' && issues > 0 && <span className="warn" aria-label={`${issues} issues`}>{issues}</span>}
             </a>
           ))}
-          <a href={href('settings')} className={route === 'settings' ? 'on' : ''} aria-current={route === 'settings' ? 'page' : undefined}>Settings</a>
+          {inProject && <a href={href('settings')} className={route === 'settings' ? 'on' : ''} aria-current={route === 'settings' ? 'page' : undefined}>Settings</a>}
           <a href={href('learn')} className={route === 'learn' ? 'on' : ''} aria-current={route === 'learn' ? 'page' : undefined}>Learn</a>
         </nav>
         <div className="run">
-          <button type="button" className="btn-secondary icon-only" disabled={!canUndo} onClick={undo} title="Undo (Ctrl+Z)" aria-label="Undo"><Arrow /></button>
-          <button type="button" className="btn-secondary icon-only" disabled={!canRedo} onClick={redo} title="Redo (Ctrl+Y)" aria-label="Redo"><Arrow flip /></button>
+          {inProject && <button type="button" className="btn-secondary icon-only" disabled={!canUndo} onClick={undo} title="Undo (Ctrl+Z)" aria-label="Undo"><Arrow /></button>}
+          {inProject && <button type="button" className="btn-secondary icon-only" disabled={!canRedo} onClick={redo} title="Redo (Ctrl+Y)" aria-label="Redo"><Arrow flip /></button>}
           <Account />
         </div>
       </header>
