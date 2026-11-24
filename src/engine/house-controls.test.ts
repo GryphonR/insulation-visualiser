@@ -313,11 +313,11 @@ describe('sizing by mode', () => {
     h.heating.coilW = 4000;
     const open = sizePipes(h, res), root = (p: ReturnType<typeof sizePipes>) => p.rows.find((r) => !r.pipe.parent)!;
     // No valves: heating and the coil at once.
-    expect(root(open).loadW).toBeCloseTo(res.peakW + 4000, 0);
+    expect(root(open).loadW).toBeCloseTo(res.roomSumW + 4000, 0);
     applyPlan(h, 'w');
     const pri = sizePipes(h, res);
-    expect(root(pri).loadW).toBeCloseTo(Math.max(res.peakW, 4000), 0);
-    expect(root(pri).mode).toBe(res.peakW > 4000 ? 'Heating' : 'Hot water');
+    expect(root(pri).loadW).toBeCloseTo(Math.max(res.roomSumW, 4000), 0);
+    expect(root(pri).mode).toBe(res.roomSumW > 4000 ? 'Heating' : 'Hot water');
     // The cylinder run is sized in the hot water mode.
     expect(pri.rows.find((r) => isCylRun(r.pipe))!.mode).toBe('Hot water');
     expect(pri.modes.map((m) => m.name)).toEqual(['Heating', 'Hot water']);

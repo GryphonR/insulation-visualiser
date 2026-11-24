@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
+import type { Basis } from '../engine/house';
 import { go, href } from './route';
 import { useProject } from './project';
 import { fmt } from './hform';
@@ -40,7 +41,7 @@ const Arrow = ({ flip }: { flip?: boolean }) => (
 );
 
 export function Shell({ route, children }: { route: string; children: ReactNode }) {
-  const { project, active, house, res, ordered, depth, setProject, undo, redo, canUndo, canRedo, saveOk } = useProject();
+  const { project, active, house, res, ordered, depth, setProject, undo, redo, canUndo, canRedo, saveOk, basis, setBasis } = useProject();
   const sec = sectionOf(route);
   const sub = sec ? SUBNAV[sec] : undefined;
   const issues = heatingIssues(res, house.heating.emitters.length);
@@ -80,6 +81,13 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
           <span className="eb">Conditions</span>
           <a className="ctx-v" href={href('settings')} title="The design outside temperature, from the postcode: change it in Project settings">Design day {fmt(res.Tout, 1)} °C ▾</a>
         </div>
+        <label className="ctx" title="MCS design: the rules an installer is held to (MCS outside temperature, MIS room minimums, a thermal bridging allowance). Best estimate: your own settings and the most accurate method, for what the house will really do. Running costs always use the best estimate; the MCS report always uses MCS design.">
+          <span className="eb">Basis</span>
+          <select className="ctx-sel" value={basis} onChange={(e) => setBasis(e.target.value as Basis)} aria-label="Basis the figures follow">
+            <option value="mcs">MCS design</option>
+            <option value="best">Best estimate</option>
+          </select>
+        </label>
         </>}
         <nav className="wf" aria-label="Workflow">
           {inProject && SECTIONS.map((s) => (

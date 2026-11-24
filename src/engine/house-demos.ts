@@ -32,7 +32,7 @@ function size(h: House) {
   const res = calcHouse(h);
   h.heating.emitters = autoEmitters(h, res.rooms.filter((r) => r.room.heated).map((r) => ({ room: r.room, need: r.totalW })))
     .map((e) => ({ ...e, zone: ['bedroom', 'bathroom'].includes(h.rooms.find((r) => r.id === e.room)?.type ?? '') ? 'z2' : 'z1' }));
-  h.hp.capacity = HP_SIZES.find((k) => k * 1000 >= res.peakW * 1.05) ?? HP_SIZES[HP_SIZES.length - 1];
+  h.hp.capacity = HP_SIZES.find((k) => k * 1000 >= calcHouse(h, 'mcs').peakW * 1.05) ?? HP_SIZES[HP_SIZES.length - 1];
 }
 
 const at = (x: number, y: number, storey = 0): Plant => ({ at: [x, y], storey });
@@ -250,7 +250,7 @@ export function fiftiesSemi(): Project {
   h.faceBoundary = Object.fromEntries(['w:living:W:0', 'w:dining:W:0', 'w:bed1:W:1', 'w:bed3:W:1'].map((k) => [k, 'party' as const]));
   h.openings = h.openings.filter((o) => o.to || o.side !== 'W');
   // Heat pump outside the utility on the east gable, the cylinder in the utility: the smallest size that covers the peak.
-  const peak = calcHouse(h).peakW;
+  const peak = calcHouse(h, 'mcs').peakW;
   h.hp.capacity = HP_SIZES.find((k) => k * 1000 >= peak * 1.05) ?? HP_SIZES[HP_SIZES.length - 1];
   h.heating.source = at(9.5, 6.0); h.heating.cylinder = at(8.6, 6.6);
   pipeAndValve(h, 'hp');

@@ -177,7 +177,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
       }
       else if (f.kind === 'ceiling' && f.to.k === 'out') roofSun(i, UA, faceOrient({ ...f, tilt: f.tilt ?? 0 }));
     }
-    Hvent[i] = 0.33 * r.n * r.V;
+    Hvent[i] = 0.33 * r.nZone * r.V; // the whole-house flow: a room's design-wind share (eq. 17) would count every side at once
     Hout[i] += Hvent[i];
   });
   if (base.loft) {

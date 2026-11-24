@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { FUEL_LABEL, SOURCE_LABEL, calcHouse, isHeatPump, onStorey, roomPoly } from '../engine/house';
+import { FUEL_LABEL, SOURCE_LABEL, calcHouse, isHeatPump, mcsOf, onStorey, roomPoly } from '../engine/house';
 import { centroid } from '../engine/geom';
 import type { Pt } from '../engine/geom';
 import { planBounds } from './HousePlan';
@@ -27,7 +27,7 @@ const KIND_LABEL: Record<Scenario['kind'], string> = { base: 'base · the house 
 
 /** The scenario tree with the bar to branch, rename and delete, and two scenarios side by side on the plan. Changes are made in the model, build-ups and heating pages. */
 export function ScenariosPage({ initial = 'changes' }: { initial?: 'changes' | 'compare' }) {
-  const { project, setProject, active, results, ordered, depth } = useProject();
+  const { project, setProject, active, results, ordered, depth, pick } = useProject();
   const [show, setShow] = useState(initial);
   const full = project.scenarios.length >= MAX_SCENARIOS;
   const branch = () => {
@@ -66,7 +66,7 @@ export function ScenariosPage({ initial = 'changes' }: { initial?: 'changes' | '
         <div className="chips" role="group" aria-label="Scenarios">
           {ordered.map((s) => (
             <Chip key={s.id} on={s.id === active.id} onClick={() => setProject((p) => ({ ...p, active: s.id }))}>
-              {'· '.repeat(depth(s))}{s.name} <span className="mono small">{fmt((results.get(s.id)?.peakW ?? 0) / 1000, 2)} kW</span>
+              {'· '.repeat(depth(s))}{s.name} <span className="mono small">{fmt((results.has(s.id) ? pick(results.get(s.id)!).peakW : 0) / 1000, 2)} kW</span>
             </Chip>
           ))}
         </div>
@@ -113,10 +113,11 @@ function ScenariosView({ project, active, results, ordered, setProject }: {
 
   const cols = ordered.map((s) => ({ s, r: results.get(s.id)! }));
   const rowsM: Array<[string, (r: HouseResult) => number, number, string]> = [
-    ['Peak heat loss, kW', (r) => r.peakW / 1000, 2, ''],
+    ['Design heat loss (MCS), kW', (r) => mcsOf(r).peakW / 1000, 2, ''],
+    ['Peak heat loss, best estimate, kW', (r) => r.peakW / 1000, 2, ''],
     ['Space heating, kWh/yr', (r) => r.annualKWh, 0, '%'],
     ['Heat loss parameter, W/m²K', (r) => r.hlp, 2, ''],
-    ['Heat source spare, %', (r) => r.hp.spare * 100, 0, ''],
+    ['Heat source spare on the MCS design, %', (r) => mcsOf(r).hp.spare * 100, 0, ''],
     ['Heat per kWh bought (est. SCOP or efficiency)', (r) => r.hp.seasonal, 2, ''],
     ['Energy bought, kWh/yr', (r) => r.hp.kwh, 0, '%'],
     ['Running cost, £/yr', (r) => r.hp.cost, 0, '%'],

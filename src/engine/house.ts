@@ -9,7 +9,7 @@ import { edgeTilt, footprint, roofAt, roofModel } from './house-roof';
 import type { RoofEdge, RoofModel } from './house-roof';
 export type { RoofEdge };
 export { bearingLabel };
-import { MCS_HDD, MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS, climateFromPostcode, designTemp, postcodeArea } from './climate-mcs';
+import { MCS_HDD, MCS_MEAN_TEMPS, MCS_STATIONS, MIS_TABLE1, ROOM_TEMPS, climateFromPostcode, designTemp, postcodeArea } from './climate-mcs';
 
 /** The MCS station and region for a house: from its postcode unless set by hand, with a location for sun and weather. */
 export function climateOf(h: House): { station: number; region: number; lat: number; lon: number; fromPostcode: boolean; km: number } {
@@ -298,8 +298,21 @@ export interface House {
   ageBand?: 'AJ' | 'K';
   /** The user's own default temperature for each room type, overriding the table. */
   roomTemps?: Partial<Record<RoomType, number>>;
+  /** MCS paperwork for the report (MIS 3005-D 5.9.2 and 7.2.1): who and where, and figures only the installer can give. */
+  mcs?: McsDetails;
+  /** Thermal bridging allowance ΔU added to every face of the heated envelope, W/m²K. Unset: by age band (tbDefault). */
+  tb?: number;
   /** A dashed footprint (metres) to draw within, from the new-project dialog or, with `poly`, an OpenStreetMap outline; not a room. */
   guide?: { w: number; d: number; poly?: Pt[] };
+}
+
+export interface McsDetails {
+  client?: string; site?: string; contractor?: string; certNo?: string; designer?: string;
+  /** Cylinder make, model and size; its recovery time, minutes. */
+  cylinder?: string; recovery?: number;
+  /** The heat pump's SCoP from the MCS product directory at the design flow temperature. */
+  scop?: number;
+  metering?: string;
 }
 
 /** A floor-plan image placed under one storey's plan: top-left corner and width in plan metres. */
@@ -319,6 +332,15 @@ export const storeyLevel = (h: Pick<House, 'storeys'>, storey: number) => storey
 /** Default setpoint for a room type: the user's own figure, else MCS / CIBSE Table 2-2 for the house's age band. */
 export const defaultTemp = (h: Pick<House, 'ageBand' | 'roomTemps'>, type: RoomType) =>
   h.roomTemps?.[type] ?? (ROOM_TEMPS[type] ?? ROOM_TEMPS.other)[h.ageBand === 'K' ? 1 : 0];
+
+/** Thermal bridging ΔU by age band, W/m²K, as the MCS calculator takes it from RdSAP 10 Table 21: 0.15 before 2007 (bands A–I; J is 0.11), 0.08 from band K. */
+export const tbDefault = (h: Pick<House, 'ageBand'>) => (h.ageBand === 'K' ? 0.08 : 0.15);
+
+/** MIS 3005-D 5.6.2 daily hot water demand, litres: 45 × the greater of bedrooms + 1 and the occupants. */
+export function dhwDemand(h: Pick<House, 'rooms' | 'gains'>): { litres: number; n: number; bedrooms: number } {
+  const bedrooms = h.rooms.filter((r) => r.type === 'bedroom').length, n = Math.max(bedrooms + 1, h.gains.people);
+  return { litres: 45 * n, n, bedrooms };
+}
 
 /** Occupancy, heating schedule and gains for the hour-by-hour runs (board 6a). */
 export interface Gains {
@@ -348,13 +370,14 @@ export interface Face {
   len?: number;
   /** Walls: which wall of the room (roomEdges index), on which storey, and the stretches of it this face covers, metres from its start. */
   along?: { edge: number; storey: number; t: Array<[number, number]> };
+  /** Suspended ground floor: on the design day its ΔT is to the design outside air (MIS 3005-D 5.5.1 d), not the ground. */
+  designOut?: boolean;
 }
 
 const EPS = 1e-6;
 const near = (a: number, b: number) => Math.abs(a - b) < EPS;
 // Surface resistances Rsi + Rse by face type, m²K/W (BS EN ISO 6946).
 const FILMS = { extWall: 0.17, intWall: 0.26, intFloor: 0.27, loftCeiling: 0.2, roof: 0.14, exposedFloor: 0.21 };
-const HABITABLE: RoomType[] = ['living', 'dining', 'bedroom', 'study'];
 /** Older CIBSE room-type air change rates (pre-2000 houses), ach. */
 export const CIBSE_ACH: Record<RoomType, number> = {
   living: 1.5, dining: 1.5, kitchen: 2, bedroom: 1, bathroom: 3, wc: 2, hall: 2, landing: 2, utility: 2, study: 1.5, store: 1, other: 1.5,
@@ -831,7 +854,7 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
     const junction = A > EPS ? lossPerK / A : 0;
     const groundU = (x: Buildup) => (ground > 0 ? groundFloorU(x, ctx.Bp, ground) : x.floorType === 'suspended' ? suspendedFloorU(x, ctx.Bp, h.suspended.vent, h.suspended.voidH) : groundFloorU(x, ctx.Bp, 0, h.floorEdge) + junction);
     const label = ground > 0 ? 'Basement floor' : b.floorType === 'suspended' ? 'Suspended floor' : 'Floor';
-    zoned({ key: `gf:${r.id}`, label, kind: 'floor', to: { k: 'ground' }, area: A, buildup: b, U: groundU(b) }, 0, (z) => overlapAreaPoly(z.poly, rp), groundU);
+    zoned({ key: `gf:${r.id}`, label, kind: 'floor', to: { k: 'ground' }, area: A, buildup: b, U: groundU(b), ...(ground === 0 && b.floorType === 'suspended' ? { designOut: true } : {}) }, 0, (z) => overlapAreaPoly(z.poly, rp), groundU);
   } else {
     let covered = 0;
     for (const o of h.rooms) {
@@ -898,11 +921,14 @@ export function roomFaces(h: House, r: Room, ctx: Ctx): Face[] {
   return faces;
 }
 
-export interface Row { key: string; label: string; to: string; buildup: string; area: number; U: number; dT: number; W: number; kind: Face['kind'] | 'vent'; canParty?: boolean; party?: boolean }
+export interface Row {
+  key: string; label: string; to: string; buildup: string; area: number; U: number; dT: number; W: number; kind: Face['kind'] | 'vent'; canParty?: boolean; party?: boolean;
+}
 export interface RoomResult {
   room: Room; area: number; V: number; T: number;
-  n: number; nInf: number; nDev: number; nMech: number;
-  fabricW: number; ventW: number; totalW: number; perM2: number;
+  /** Air changes counted for the room's own design loss (eq. 17) and its part of the whole house's (eq. 16); nMech is the supply air's share. */
+  n: number; nZone: number; nInf: number; nMech: number;
+  fabricW: number; ventW: number; ventZoneW: number; totalW: number; perM2: number;
   rows: Row[]; faces: Face[];
 }
 export interface HouseResult {
@@ -918,7 +944,14 @@ export interface HouseResult {
   /** The loft: its temperature, floor area and volume, and the roof over it as slopes (true bearing, tilt, m²) of U-value `U`. */
   loft: { T: number; area: number; V: number; U: number; slopes: LoftSlope[] } | null;
   q50: number; n50: number; envelope: number; heatedV: number; heatedA: number;
-  peakW: number; paths: Array<{ label: string; W: number }>;
+  /** Which rules these figures follow: the best estimate, or MCS design (see mcsHouse). */
+  basis: Basis;
+  /** The same house worked out on the MCS design basis, attached by calcBoth to a best-estimate result. */
+  mcs?: HouseResult;
+  /** Design heat loss of the whole house (BS EN 12831-1 eq. 16 ventilation), W; roomSumW is its rooms' own losses added up (eq. 17). */
+  peakW: number; roomSumW: number;
+  /** Thermal bridging allowance ΔU on the heated envelope, W/m²K: 0 on the best estimate, which uses the calculated floor-edge Ψ. */
+  tb: number; paths: Array<{ label: string; W: number }>;
   htc: number; hlp: number; annualKWh: number;
   /** HTC for the year, W/K: party walls left out, since next door is lived in (the neighbour temperature is a design-day allowance). */
   htcYear: number;
@@ -1031,7 +1064,38 @@ export function tariff(hp: House['hp']): { p: number; standing: number; co2: num
 
 export interface LoftSlope { az: number; tilt: number; area: number }
 
-export function calcHouse(h: House): HouseResult {
+export type Basis = 'best' | 'mcs';
+
+/**
+ * The house as MCS design sees it: the rules an installer is held to, where they differ from the best estimate.
+ * Outside: the MCS figure, never your own. Rooms: no cooler than MIS 3005-D Table 1. Next door: 10 °C (CIBSE DHDG).
+ * Airtightness: as measured or estimated, not adjusted to the bills. Thermal bridging: the ΔU allowance (added in
+ * calcHouse) in place of the calculated floor-edge Ψ. Everything measured or drawn is the same in both.
+ */
+export function mcsHouse(h: House): House {
+  return {
+    ...h,
+    climate: { ...h.climate, designT: undefined },
+    rooms: h.rooms.map((r) => { const min = MIS_TABLE1[r.type]; return r.heated && min != null && r.setpoint < min ? { ...r, setpoint: min } : r; }),
+    neighbourT: 10,
+    calib: undefined,
+    floorEdge: h.floorEdge && { ...h.floorEdge, upstand: 'off' },
+  };
+}
+
+/** Both bases at once: the best estimate, with its MCS design result attached as `mcs`. */
+export function calcBoth(h: House): HouseResult {
+  const best = calcHouse(h);
+  best.mcs = calcHouse(h, 'mcs');
+  return best;
+}
+
+/** The MCS design result for a house's figures: itself if it is one, else the one calcBoth attached. */
+export const mcsOf = (r: HouseResult): HouseResult => (r.basis === 'mcs' ? r : r.mcs!);
+
+export function calcHouse(given0: House, basis: Basis = 'best'): HouseResult {
+  // Room temperatures below Table 1 are flagged on the house as drawn, whichever basis this is.
+  const drawn = given0, h = basis === 'mcs' ? mcsHouse(given0) : given0;
   const cl = climateOf(h);
   const ToutMcs = designTemp(cl.station, h.climate.altitude, h.climate.pct);
   const Tout = Number.isFinite(h.climate.designT) ? h.climate.designT! : ToutMcs;
@@ -1047,7 +1111,12 @@ export function calcHouse(h: House): HouseResult {
   const Bp = P > EPS ? gA / (0.5 * P) : 1000;
   const ctx = { Bp, junctions: new Map<string, Junction>() };
 
-  const faces = new Map(h.rooms.map((r) => [r.id, roomFaces(h, r, ctx)]));
+  // MCS design: thermal bridging as the MCS calculator takes it (BS EN 12831-1 ΔU_TB) on every face between heated space and
+  // outside, the ground, the loft or an unheated room, both sides of that partition so the balance stays symmetric.
+  // The best estimate keeps the floor-edge Ψ it works out instead (mcsHouse switches that off).
+  const tb = basis === 'mcs' ? h.tb ?? tbDefault(h) : 0, heatedIds = new Set(h.rooms.filter((r) => r.heated).map((r) => r.id));
+  const bounds = (r: Room, f: Face) => (f.to.k === 'room' ? heatedIds.has(r.id) !== heatedIds.has(f.to.id) : r.heated && f.to.k !== 'party');
+  const faces = new Map(h.rooms.map((r) => [r.id, roomFaces(h, r, ctx).map((f) => (tb > 0 && bounds(r, f) ? { ...f, U: f.U + tb } : f))]));
   const junctions = [...ctx.junctions.values()], jLen = junctions.reduce((t, j) => t + j.len, 0);
   const junctionPsi = jLen > EPS ? junctions.reduce((t, j) => t + j.psi * j.len, 0) / jLen : 0;
   const T: Record<string, number> = {};
@@ -1062,6 +1131,7 @@ export function calcHouse(h: House): HouseResult {
   const roofU = buildupU(roofB, FILMS.roof);
   T.loft = (Tout + 10) / 2;
   const tempOf = (to: To): number => (to.k === 'out' ? Tout : to.k === 'ground' ? Tg : to.k === 'party' ? h.neighbourT : to.k === 'loft' ? T.loft : T[to.id] ?? Tout);
+  const tempOfF = (f: Face) => (f.designOut ? Tout : tempOf(f.to));
   const vol = (r: Room) => roomVolume(h, r);
 
   // Unheated rooms and the loft settle where heat in balances heat out (Gauss-Seidel; converges as every space has a path outside).
@@ -1070,7 +1140,7 @@ export function calcHouse(h: House): HouseResult {
     for (const r of unheated) {
       const Hv = 0.33 * r.ach * vol(r);
       let num = Hv * Tout, den = Hv;
-      for (const f of faces.get(r.id) ?? []) { num += f.U * f.area * tempOf(f.to); den += f.U * f.area; }
+      for (const f of faces.get(r.id) ?? []) { num += f.U * f.area * tempOfF(f); den += f.U * f.area; }
       T[r.id] = den > EPS ? num / den : Tout;
     }
     if (hasLoft) {
@@ -1081,60 +1151,78 @@ export function calcHouse(h: House): HouseResult {
     }
   }
 
-  // Ventilation (board 1d): one airtightness figure shared by exposure, plus devices and mechanical ventilation.
+  // Ventilation: BS EN 12831-1:2017 6.3.3.3 with the heated rooms as one ventilation zone, as OpenEnergyMonitor's open
+  // implementation (openenergymonitor/tools, ventilation_12831) applies it, with its Annex B defaults: f_qv 0.05 (Table B.8),
+  // f_fac 8 (12 with one exposed façade), f_dir 2, leakage exponent 0.67, ATDs at 4 Pa, f_i-z 0.5. Each room (eq. 17) takes
+  // the wind on its own side (f_dir), which can't happen on every side at once, so the whole house (eq. 16) leaves it out.
   const heated = h.rooms.filter((r) => r.heated);
   const heatedV = heated.reduce((t, r) => t + vol(r), 0), heatedA = heated.reduce((t, r) => t + roomArea(r) * r.span, 0);
-  // Leakage envelope: heated rooms' faces to outside, ground, loft and unheated rooms.
-  const toHeated = (to: To) => to.k === 'room' && !!h.rooms.find((o) => o.id === to.id)?.heated;
-  const envelope = heated.reduce((t, r) => t + (faces.get(r.id) ?? []).filter((f) => f.to.k !== 'party' && !toHeated(f.to)).reduce((s, f) => s + f.area, 0), 0);
+  // Leakage envelope: heated rooms' faces to outside, ground, loft and unheated rooms (party walls are not envelope).
+  const toHeated = (to: To) => to.k === 'room' && heatedIds.has(to.id);
+  const envOf = (r: Room) => (faces.get(r.id) ?? []).filter((f) => f.to.k !== 'party' && !toHeated(f.to)).reduce((s, f) => s + f.area, 0);
+  const envelope = heated.reduce((t, r) => t + envOf(r), 0);
   const v = h.vent;
   // A bills calibration scales an estimated q50; a measured one stands.
   const q50 = v.source === 'meas' ? v.q50 : v.factors.filter((f) => f.on).reduce((t, f) => t + f.dq, 0) * (h.calib?.q ?? 1);
-  const n50 = heatedV > EPS ? (q50 * envelope) / heatedV : 0, base = n50 / 20;
+  const n50 = heatedV > EPS ? (q50 * envelope) / heatedV : 0;
   const fansOff = v.mech !== 'none';
+  // Extract fans, chimneys and flues draw air out (exhaust and combustion air); other openings let it in (air terminal devices).
+  const exhausts = (d: Device) => d.fan || /chimney|flue|fire/i.test(d.name);
+  const devs = (r: Room, ex: boolean) => v.devices.filter((d) => d.room === r.id && exhausts(d) === ex && !(fansOff && d.fan)).reduce((t, d) => t + deviceM3(d), 0);
+  const mechOf = (r: Room) => (fansOff && heatedV > EPS ? (v.mechFlow * vol(r)) / heatedV : 0);
+  const supOf = (r: Room) => (v.mech === 'mvhr' ? mechOf(r) : 0), exhOf = (r: Room) => devs(r, true) + mechOf(r), atdOf = (r: Room) => devs(r, false);
+  const Tz = heatedV > EPS ? heated.reduce((t, r) => t + T[r.id] * vol(r), 0) / heatedV : 21;
+  // Supply air arrives at the outside temperature, or warmed by the MVHR's recovery from the extract air (MCS calculator).
+  const Trec = v.mech === 'mvhr' ? Tout + (v.eta / 100) * (Tz - Tout) : Tout;
+  const FQV = 0.05, FDIR = 2;
+  const facades = new Set(heated.flatMap((r) => (faces.get(r.id) ?? []).filter((f) => f.kind === 'wall' && f.to.k === 'out').map((f) => f.side))).size;
+  const exhZ = heated.reduce((t, r) => t + exhOf(r), 0), supZ = heated.reduce((t, r) => t + supOf(r), 0), atdZ = heated.reduce((t, r) => t + atdOf(r), 0);
+  const atd50 = atdZ * (50 / 4) ** 0.67, leak50 = q50 * envelope + atd50;
+  const aAtd = leak50 > EPS ? atd50 / leak50 : 0;
+  const fe = 1 / (1 + ((facades > 1 ? 8 : 12) / FQV) * (leak50 > EPS ? (exhZ - supZ) / leak50 : 0) ** 2);
+  const infAdd = leak50 * FQV * fe, envZ = Math.max(exhZ - supZ, 0) + infAdd;
+  const fiz = heated.length > 1 ? 0.5 : 1;
 
   const rooms: RoomResult[] = h.rooms.map((r) => {
     const fs = faces.get(r.id) ?? [], V = vol(r), Ti = T[r.id];
     const rows: Row[] = fs.map((f) => {
-      const to = tempOf(f.to);
+      const to = tempOfF(f);
       return {
         key: f.key, label: f.label, buildup: f.buildup.name, area: f.area, U: f.U, dT: Ti - to, W: f.U * f.area * (Ti - to), kind: f.kind, canParty: f.canParty, party: f.to.k === 'party',
         to: f.to.k === 'out' ? 'outside' : f.to.k === 'ground' ? 'ground' : f.to.k === 'party' ? 'neighbour' : f.to.k === 'loft' ? 'loft' : h.rooms.find((o) => o.id === (f.to as { id: string }).id)?.name ?? '?',
       };
     });
-    let n = 0, nInf = 0, nDev = 0, nMech = 0;
+    let n = 0, nZone = 0, nInf = 0, nMech = 0;
+    const dT = Ti - Tout;
     if (r.heated && V > EPS) {
-      const extSides = new Set(fs.filter((f) => f.kind === 'wall' && f.to.k === 'out').map((f) => f.side)).size;
-      const underRoof = fs.some((f) => f.kind === 'ceiling' && (f.to.k === 'loft' || f.to.k === 'out')) ? 1 : 0;
-      nInf = base * (0.5 + 0.25 * extSides + 0.15 * underRoof);
-      nDev = v.devices.filter((d) => d.room === r.id && !(fansOff && d.fan)).reduce((t, d) => t + deviceM3(d), 0) / V;
-      const lossShare = v.mech === 'mvhr' ? 1 - v.eta / 100 : 1;
-      const supplied = fansOff && heatedV > EPS ? (v.mechFlow * (V / heatedV)) / V : 0;
-      nMech = supplied * lossShare;
-      n = v.method === 'cibse' ? CIBSE_ACH[r.type] : nInf + nDev + nMech;
-      // MCS 0.5 ach minimum for habitable rooms applies to the fresh air supplied. Any top-up comes through the
-      // mechanical system, so under MVHR only its unrecovered share counts as heat loss.
-      if (v.minAch && HABITABLE.includes(r.type)) {
-        if (v.method === 'cibse') n = Math.max(n, 0.5);
-        else {
-          const air = nInf + nDev + supplied;
-          if (air < 0.5) { const top = 0.5 - air; nMech += top * lossShare; n += top * lossShare; }
-        }
+      const envA = envOf(r);
+      // Minimum ventilation (CIBSE DHDG 2026 Table 2-18, as the MCS calculator uses it): 0.5 ach in any room with outside envelope.
+      const qMin = v.minAch && envA > EPS ? 0.5 * V : 0;
+      if (v.method === 'cibse') n = nZone = nInf = Math.max(CIBSE_ACH[r.type], qMin / V);
+      else {
+        const leakAtd = (envelope > EPS ? ((1 - aAtd) * envZ * envA) / envelope : 0) + (atdZ > EPS ? (aAtd * envZ * atdOf(r)) / atdZ : 0);
+        const envI = envZ > EPS ? (infAdd / envZ) * Math.min(envZ, leakAtd * FDIR) + ((envZ - infAdd) / envZ) * leakAtd : 0;
+        const techn = Math.max(supOf(r), exhOf(r)), supLoss = Math.abs(dT) > EPS ? (supOf(r) * (Ti - Trec)) / dT : 0;
+        const qRoom = Math.max(envI, qMin - techn), qZone = Math.max(leakAtd, fiz * qMin - techn);
+        n = (qRoom + supLoss) / V; nZone = (qZone + supLoss) / V; nInf = qRoom / V; nMech = supLoss / V;
       }
-      if (r.achOverride != null) n = r.achOverride;
-    } else if (!r.heated) n = r.ach;
-    const ventW = r.heated ? 0.33 * n * V * (Ti - Tout) : 0;
+      if (r.achOverride != null) n = nZone = r.achOverride;
+    } else if (!r.heated) n = nZone = r.ach;
+    const ventW = r.heated ? 0.33 * n * V * dT : 0, ventZoneW = r.heated ? 0.33 * nZone * V * dT : 0;
     if (r.heated) rows.push({ key: `vent:${r.id}`, label: 'Ventilation', to: 'outside', buildup: `${n.toFixed(2)} ach · ${V.toFixed(1)} m³`, area: 0, U: 0, dT: Ti - Tout, W: ventW, kind: 'vent' });
     const fabricW = r.heated ? rows.filter((x) => x.kind !== 'vent').reduce((t, x) => t + x.W, 0) : 0;
     const a = roomArea(r);
-    return { room: r, area: a, V, T: Ti, n, nInf, nDev, nMech, fabricW, ventW, totalW: fabricW + ventW, perM2: a > EPS ? (fabricW + ventW) / a : 0, rows, faces: fs };
+    const totalW = fabricW + ventW;
+    return { room: r, area: a, V, T: Ti, n, nZone, nInf, nMech, fabricW, ventW, ventZoneW, totalW, perM2: a > EPS ? totalW / a : 0, rows, faces: fs };
   });
 
   const hr = rooms.filter((x) => x.room.heated);
-  const peakW = hr.reduce((t, x) => t + x.totalW, 0);
+  // The house's design heat loss (eq. 16 ventilation) is less than its rooms' sum, which sizes the emitters and pipes.
+  const roomSumW = hr.reduce((t, x) => t + x.totalW, 0);
+  const peakW = hr.reduce((t, x) => t + x.fabricW + x.ventZoneW, 0);
   const sum = (pred: (row: Row) => boolean) => hr.reduce((t, x) => t + x.rows.filter(pred).reduce((s, row) => s + row.W, 0), 0);
   const paths = [
-    { label: 'Ventilation', W: sum((x) => x.kind === 'vent') },
+    { label: 'Ventilation', W: hr.reduce((t, x) => t + x.ventZoneW, 0) },
     { label: 'Walls', W: sum((x) => x.kind === 'wall') },
     { label: 'Windows', W: sum((x) => x.kind === 'window') },
     { label: 'Doors', W: sum((x) => x.kind === 'door') },
@@ -1193,6 +1281,8 @@ export function calcHouse(h: House): HouseResult {
       checks.push({ level: 'warn', text: `${z.name} is open (${b.name}) but has no room over or under part of it; draw it inside the rooms it joins.` });
   }
   for (const r of h.rooms) {
+    const min = MIS_TABLE1[r.type], own = drawn.rooms.find((x) => x.id === r.id)?.setpoint ?? r.setpoint;
+    if (r.heated && min != null && own < min) checks.push({ level: 'warn', text: `${r.name} is set to ${own} °C, below the ${min} °C MIS 3005-D Table 1 minimum for a ${r.type}; the MCS design uses ${min} °C.` });
     if (roomArea(r) <= 0.01) checks.push({ level: 'error', text: `${r.name} has no floor area.` });
     if (r.poly && selfIntersects(r.poly)) checks.push({ level: 'error', text: `${r.name}'s outline crosses itself.` });
     if (r.storey + r.span > h.storeys.length) checks.push({ level: 'error', text: `${r.name} rises above the top storey.` });
@@ -1211,6 +1301,8 @@ export function calcHouse(h: House): HouseResult {
       if (wall < 0.05) checks.push({ level: 'error', text: `${r.name}: ${ops.map((o) => o.name).join(', ')} on ${isPoly ? `wall ${e.idx + 1}` : `the ${e.side} side`}, which has no outside wall left.` });
     }
   }
+  if (basis === 'mcs' && Number.isFinite(drawn.climate.designT)) checks.push({ level: 'warn', text: `Your own design temperature of ${drawn.climate.designT} °C is for the best estimate only; the MCS design uses ${ToutMcs} °C.` });
+  if (h.climate.pct === '99' && !Number.isFinite(h.climate.designT)) checks.push({ level: 'warn', text: 'Design temperature at 99%: MIS 3005-D 5.5.1 asks for an intermittent heating uplift with column A, which this calculation does not add. Use 99.6% unless the heating runs continuously.' });
   if (!hddKnown) checks.push({ level: 'warn', text: `Postcode area "${area || h.climate.postcode}" not in the MCS degree-day table; using 2,200 K·day.` });
   if (v.mech === 'mvhr' && q50 > 5) checks.push({ level: 'warn', text: `MVHR with q50 ${q50.toFixed(1)}: above 5 m³/h·m² most of the heat recovery is lost to leakage.` });
   if (hp.spare < 0) checks.push({ level: 'warn', text: `${SOURCE_LABEL[h.hp.source]} is ${Math.round(-hp.spare * 100)}% short of the design heat loss.` });
@@ -1235,7 +1327,7 @@ export function calcHouse(h: House): HouseResult {
   return {
     junctions, junctionPsi, Tout, ToutMcs, Tg, hdd, hddKnown, station: MCS_STATIONS[cl.station]?.[0] ?? '?', region: reg[0], climate: cl,
     rooms, loft: hasLoft ? { T: T.loft, area: loftA, V: loftV, U: roofU, slopes } : null,
-    q50, n50, envelope, heatedV, heatedA, peakW, paths, htc, htcYear, hlp: heatedA > EPS ? htc / heatedA : 0, annualKWh, months, hp, checks,
+    q50, n50, envelope, heatedV, heatedA, basis, peakW, roomSumW, tb, paths, htc, htcYear, hlp: heatedA > EPS ? htc / heatedA : 0, annualKWh, months, hp, checks,
     heat: { designFlow, rooms: emitRooms, gov: gov ? { id: gov.id, req: gov.req } : null },
   };
 }

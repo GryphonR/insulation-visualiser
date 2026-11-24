@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { fmt, Card } from './hform';
+import { mcsOf } from '../engine/house';
 import { useProject } from './project';
 import { href } from './route';
 
@@ -7,7 +8,7 @@ type Sort = 'loss' | 'cold' | 'plan';
 
 /** Board 4: design-day results, room by room. Every row drills into the room. */
 export function ResultsPage() {
-  const { house, res, results, ordered, active } = useProject();
+  const { house, res, best, results, ordered, active, basis, pick } = useProject();
   const [scope, setScope] = useState<number | 'all'>('all');
   const [sort, setSort] = useState<Sort>('loss');
   const [cmpId, setCmpId] = useState('');
@@ -23,7 +24,7 @@ export function ResultsPage() {
   const coldest = res.rooms.filter((r) => r.room.heated).sort((a, b) => a.T - b.T)[0];
   const d = (a: number, b: number | undefined, dp: number, unit = '') => (b == null || Math.abs(a - b) < 0.5 * 10 ** -dp ? '' : `${a > b ? '+' : '−'}${fmt(Math.abs(a - b), dp)}${unit} vs ${active.name}`);
   const kpis: Array<[string, string, string, string, string]> = [
-    ['Peak heat loss', fmt(res.peakW / 1000, 2), 'kW', `Heated rooms at ${res.Tout} °C`, cmp ? d(cmp.peakW / 1000, res.peakW / 1000, 2, ' kW') : ''],
+    [basis === 'mcs' ? 'Design heat loss (MCS)' : 'Peak heat loss (best estimate)', fmt(res.peakW / 1000, 2), 'kW', `At ${res.Tout} °C; ${basis === 'mcs' ? `best estimate ${fmt(best.peakW / 1000, 2)}` : `MCS design ${fmt(mcsOf(best).peakW / 1000, 2)}`} kW`, cmp ? d(pick(cmp).peakW / 1000, res.peakW / 1000, 2, ' kW') : ''],
     ['Space heating', fmt(Math.round(res.annualKWh / 10) * 10), 'kWh/yr', res.annualFrom === 'year' ? 'Simulated typical year' : 'Estimate while the year runs…', cmp ? d(cmp.annualKWh, res.annualKWh, 0, ' kWh') : ''],
     ['Heat loss parameter', fmt(res.hlp, 2), 'W/m²K', 'Per m² of floor area', cmp ? d(cmp.hlp, res.hlp, 2) : ''],
     ['Coldest heated room', coldest ? fmt(coldest.T, 1) : '—', '°C', coldest ? `${coldest.room.name}, setpoint ${coldest.room.setpoint}` : '', ''],

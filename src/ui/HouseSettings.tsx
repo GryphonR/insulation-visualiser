@@ -1,6 +1,6 @@
 import { COLOURS, MONTHS } from '../engine/data';
 import { MCS_MEAN_TEMPS, MCS_STATIONS, ROOM_TEMPS, postcodeArea } from '../engine/climate-mcs';
-import { FUEL_LABEL, SIDES, SOURCE_FLOW, SOURCE_LABEL, activeSheet, setSource, useTypicalFlow, bearingLabel, defaultTemp, deviceM3, isHeatPump, pointFactor, tariff, trueBearing } from '../engine/house';
+import { FUEL_LABEL, SIDES, SOURCE_FLOW, SOURCE_LABEL, activeSheet, setSource, useTypicalFlow, bearingLabel, defaultTemp, deviceM3, isHeatPump, pointFactor, tariff, tbDefault, trueBearing } from '../engine/house';
 import type { Fuel, HeatPumpSheet, HeatSource, RoomType } from '../engine/house';
 import { Chip } from './controls';
 import { Card, Num, SheetNum, Why, fmt, NumInput } from './hform';
@@ -50,6 +50,7 @@ export function SitePage() {
                 </select>
               </label>
               <Num label="Neighbour (party walls)" unit="°C" step={0.5} why="The temperature next door on the design day, for the heat loss and the coldest-day test; 10 °C is the usual allowance for a neighbour who may be away. The other tests treat next door as lived in like this house, so no net heat crosses a party wall." value={house.neighbourT} onChange={(v) => upd((h) => { h.neighbourT = v; })} />
+              <Num label="Thermal bridging ΔU" unit="W/m²K" step={0.01} min={0} why={`For the MCS figure (the headline heat loss, heat source sizing and the report): added to the U-value of every face between heated rooms and outside, the ground, the loft or an unheated room (BS EN 12831-1), in place of the floor-edge Ψ the model works out. The model's own figures keep that Ψ. The MCS calculator takes 0.15 before 2007 (age bands A–I), 0.11 for band J and 0.08 from band K (RdSAP 10 Table 21); this house's band gives ${tbDefault(house)}. `} value={house.tb ?? tbDefault(house)} onChange={(v) => upd((h) => { h.tb = v; })} />
             </div>
             <div className="hf-row">
               <label className="small"><input type="checkbox" checked={Number.isFinite(house.climate.designT)}
@@ -126,7 +127,7 @@ export function VentPage() {
               <Chip on={house.vent.method === 'model'} onClick={() => upd((h) => { h.vent.method = 'model'; })}>Whole-house model (airtightness)</Chip>
               <Chip on={house.vent.method === 'cibse'} onClick={() => upd((h) => { h.vent.method = 'cibse'; })}>Room-type rates (CIBSE, pre-2000)</Chip>
             </div>
-            <label className="small"><input type="checkbox" checked={house.vent.minAch} onChange={(e) => upd((h) => { h.vent.minAch = e.target.checked; })} /> Apply the MCS minimum of 0.5 ach in habitable rooms</label>
+            <label className="small"><input type="checkbox" checked={house.vent.minAch} onChange={(e) => upd((h) => { h.vent.minAch = e.target.checked; })} /> Apply the minimum of 0.5 ach (CIBSE DHDG 2026 Table 2-18, as MCS) in every room with outside envelope</label>
             {house.vent.method === 'model' && <>
               <div className="chips">
                 <Chip on={house.vent.source === 'est'} onClick={() => upd((h) => { h.vent.source = 'est'; })}>Estimate q50</Chip>

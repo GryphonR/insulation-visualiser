@@ -105,7 +105,7 @@ function baseHouse(): House {
     neighbourT: 10,
     roofs: [mainRoof()],
     loft: { ach: 4 },
-    climate: { station: 7, pct: '99', altitude: 60, region: 16, postcode: 'M14' },
+    climate: { station: 7, pct: '99.6', altitude: 60, region: 16, postcode: 'M14' },
     vent: {
       method: 'model', source: 'est', q50: 10.5, mech: 'none', mechFlow: 120, eta: 88, minAch: true,
       factors: [

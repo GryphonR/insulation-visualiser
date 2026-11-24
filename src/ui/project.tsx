@@ -1,10 +1,10 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { calcHouse } from '../engine/house';
+import { calcBoth, mcsOf } from '../engine/house';
 import { syncUfh } from '../engine/house-draw';
 import { yearRes } from '../engine/house-sim';
 import { useYearSims } from './useYearSim';
-import type { House, HouseResult } from '../engine/house';
+import type { Basis, House, HouseResult } from '../engine/house';
 import { chain, newProject } from '../engine/house-scenarios';
 import { deleteStored, hasSaved, listProjects, loadActive, newProjectId, openStored, projectKey, rawStored, readStored, saveProject, updateStored } from '../engine/projects';
 import { download } from '../lib/util';
@@ -21,9 +21,16 @@ interface Ctx {
   setHouse: (fn: (h: House) => House) => void;
   /** Same edit, written to a copy so a page can mutate freely. */
   upd: (fn: (h: House) => void) => void;
-  /** Design calc with the annual figures from the scenario's typical-year run (see annualFrom). */
+  /** The active scenario on the selected basis, with the annual figures from its typical-year run (see annualFrom). */
   res: HouseResult;
+  /** The active scenario's best estimate, whatever the basis: the MCS report reads its MCS result and its running costs. */
+  best: HouseResult;
+  /** Every scenario's best estimate (each carries its MCS result); pick() puts one on the selected basis. */
   results: Map<string, HouseResult>;
+  /** Which basis the pages show: MCS design (the rules an installer is held to) or the best estimate. */
+  basis: Basis;
+  setBasis: (b: Basis) => void;
+  pick: (r: HouseResult) => HouseResult;
   ordered: Scenario[];
   depth: (s: Scenario) => number;
   undo: () => void;
@@ -49,7 +56,24 @@ interface Ctx {
 
 // Houses are never mutated (edits go to a copy), so a scenario left untouched by an edit keeps its result, and so does undo.
 const calcs = new WeakMap<House, HouseResult>();
-const calcCached = (h: House) => { let r = calcs.get(h); if (!r) calcs.set(h, (r = calcHouse(h))); return r; };
+const calcCached = (h: House) => { let r = calcs.get(h); if (!r) calcs.set(h, (r = calcBoth(h))); return r; };
+
+/**
+ * A scenario on the MCS basis, for the pages: its design figures, with the running costs and annual heat of the best
+ * estimate, since MCS conventions are for sizing, not for predicting what the house will use.
+ */
+const onMcs = new WeakMap<HouseResult, HouseResult>();
+export const mcsView = (best: HouseResult) => {
+  let r = onMcs.get(best);
+  if (!r) {
+    const m = mcsOf(best);
+    onMcs.set(best, (r = { ...m, annualKWh: best.annualKWh, annualFrom: best.annualFrom, months: best.months, htcYear: best.htcYear, cool: best.cool,
+      hp: { ...best.hp, designEff: m.hp.designEff, spare: m.hp.spare } }));
+  }
+  return r;
+};
+const BASIS_KEY = 'insuliser.basis';
+const savedBasis = (): Basis => { try { return localStorage.getItem(BASIS_KEY) === 'best' ? 'best' : 'mcs'; } catch { return 'mcs'; } };
 
 const C = createContext<Ctx | null>(null);
 export const useProject = (): Ctx => {
@@ -145,10 +169,14 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
     return out;
   }, [project.scenarios]);
   const depth = (s: Scenario) => chain(project, s.id).length - 1;
+  const [basis, setBasisState] = useState<Basis>(savedBasis);
+  const setBasis = (b: Basis) => { setBasisState(b); try { localStorage.setItem(BASIS_KEY, b); } catch { /* a convenience only */ } };
+  const pick = (r: HouseResult) => (basis === 'mcs' ? mcsView(r) : r);
+  const best = results.get(active.id)!;
 
   const projects = useMemo(() => listProjects(), [project, projectId, hist, ver]);
   const value: Ctx = {
-    project, setProject, active, house: active.house, setHouse, upd, res: results.get(active.id)!, results, ordered, depth,
+    project, setProject, active, house: active.house, setHouse, upd, res: pick(best), best, results, basis, setBasis, pick, ordered, depth,
     undo, redo, canUndo: hist.past.length > 0, canRedo: hist.future.length > 0, customStackups, setCustomStackups,
     projects, projectId, openProject, createProject, canAddProject: projects.length < MAX_PROJECTS, deleteProject, editProject, saveOk,
   };

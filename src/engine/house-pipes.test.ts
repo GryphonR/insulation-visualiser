@@ -26,8 +26,8 @@ describe('pipe sizing', () => {
     const res = calcHouse(h), p = sizePipes(h, res);
     expect(p.unpiped).toEqual([]);
     const primary = p.rows.find((r) => r.pipe.id === 'P1')!;
-    expect(primary.loadW).toBeCloseTo(res.peakW, 0);
-    expect(primary.flowLpm).toBeCloseTo(lpm(res.peakW, h.heating.dT), 6);
+    expect(primary.loadW).toBeCloseTo(res.roomSumW, 0);
+    expect(primary.flowLpm).toBeCloseTo(lpm(res.roomSumW, h.heating.dT), 6);
     expect(p.indexPath[0]).toBe('P1');
     expect(p.rows.filter((r) => r.index).length).toBe(p.indexPath.length);
   });

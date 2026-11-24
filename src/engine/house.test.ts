@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MAT } from './data';
-import { buildupU, calcHouse, groundFloorU } from './house';
+import { buildupU, calcBoth, calcHouse, dhwDemand, groundFloorU } from './house';
 import { defaultHouse } from './house-default';
 import { MCS_MEAN_TEMPS, MCS_STATIONS, climateFromPostcode, designTemp, postcodeArea } from './climate-mcs';
 
@@ -39,14 +39,14 @@ describe('whole-house model', () => {
     expect(Math.abs(net)).toBeLessThan(1e-6);
   });
 
-  it('MVHR: the 0.5 ach minimum is fresh air supplied, so only the unrecovered share counts as loss', () => {
+  it('MVHR: the supply counts toward the 0.5 ach minimum and loses only what the heat recovery misses', () => {
     const hh = defaultHouse();
     hh.vent.source = 'meas'; hh.vent.q50 = 1; hh.vent.devices = [];
-    hh.vent.mech = 'mvhr'; hh.vent.mechFlow = 30; hh.vent.eta = 90;
-    const bed = calcHouse(hh).rooms.find((x) => x.room.id === 'bed1')!;
-    // Supplied air is topped up to 0.5 ach; loss = infiltration + 10% of the mechanical supply.
-    expect(bed.nInf + (0.5 - bed.nInf) * 0.1).toBeCloseTo(bed.n, 6);
-    expect(bed.n).toBeLessThan(0.15);
+    hh.vent.mech = 'mvhr'; hh.vent.mechFlow = 200; hh.vent.eta = 90;
+    const bed = () => calcHouse(hh).rooms.find((x) => x.room.id === 'bed1')!;
+    expect(bed().n).toBeLessThan(0.5);
+    hh.vent.eta = 0; // no recovery: the minimum is met by air at the outside temperature
+    expect(bed().n).toBeGreaterThanOrEqual(0.5 - 1e-9);
   });
 
   it('derives each face once per side: living room has two outside walls, kitchen above-floor neighbour', () => {
@@ -64,14 +64,71 @@ describe('whole-house model', () => {
     expect(res.loft!.T).toBeLessThan(res.Tout + 3);
   });
 
-  it('applies the MCS 0.5 ach minimum to habitable rooms only', () => {
+  it('applies the 0.5 ach minimum to every room with outside envelope, halved for the whole house (f_i-z)', () => {
     const hh = defaultHouse();
     hh.vent.source = 'meas';
     hh.vent.q50 = 1;
     hh.vent.devices = [];
-    const r = calcHouse(hh);
-    expect(r.rooms.find((x) => x.room.id === 'bed1')!.n).toBe(0.5);
-    expect(r.rooms.find((x) => x.room.id === 'kitchen')!.n).toBeLessThan(0.5);
+    const r = calcHouse(hh), k = r.rooms.find((x) => x.room.id === 'kitchen')!;
+    expect(r.rooms.find((x) => x.room.id === 'bed1')!.n).toBeCloseTo(0.5, 9);
+    expect(k.n).toBeCloseTo(0.5, 9);
+    expect(k.nZone).toBeCloseTo(0.25, 9);
+    expect(r.peakW).toBeLessThan(r.roomSumW);
+  });
+
+  it('EN 12831-1: rooms take the wind on their own side (f_dir 2), the house as a whole does not', () => {
+    const k = room('kitchen');
+    expect(k.n).toBeGreaterThan(k.nZone * 1.5);
+    expect(res.paths.find((p) => p.label === 'Ventilation')!.W).toBeCloseTo(res.rooms.reduce((t, x) => t + x.ventZoneW, 0), 6);
+  });
+
+  it('MCS basis: ΔU bridging on the heated envelope in place of the floor-edge Ψ; the best estimate keeps its own', () => {
+    const hh = defaultHouse(), best = calcHouse(hh), mcs = calcHouse(hh, 'mcs');
+    expect(best.basis).toBe('best');
+    expect(best.tb).toBe(0);
+    expect(mcs.tb).toBe(0.15);
+    expect(mcs.peakW).toBeGreaterThan(best.peakW);
+    for (const x of mcs.rooms.filter((y) => y.room.heated)) expect(x.rows.reduce((t, row) => t + row.W, 0)).toBeCloseTo(x.totalW, 6);
+    expect(mcs.paths.reduce((t, p) => t + p.W, 0)).toBeCloseTo(mcs.peakW, 6);
+    expect(calcBoth(hh).mcs!.peakW).toBeCloseTo(mcs.peakW, 9);
+  });
+
+  it('both bases agree when every MCS convention already holds', () => {
+    const hh = defaultHouse();
+    hh.tb = 0; hh.floorEdge = undefined; hh.neighbourT = 10; delete hh.climate.designT; hh.calib = undefined;
+    expect(calcHouse(hh, 'mcs').peakW).toBeCloseTo(calcHouse(hh).peakW, 6);
+  });
+
+  it('MCS basis ignores your own design temperature (it changes only the best estimate)', () => {
+    const hh = defaultHouse(), mcs0 = calcHouse(hh, 'mcs').peakW;
+    hh.climate.designT = 2;
+    expect(calcHouse(hh).Tout).toBe(2);
+    expect(calcHouse(hh, 'mcs').Tout).toBe(calcHouse(hh, 'mcs').ToutMcs);
+    expect(calcHouse(hh, 'mcs').peakW).toBeCloseTo(mcs0, 6);
+    expect(calcHouse(hh, 'mcs').checks.some((c) => c.text.includes('best estimate only'))).toBe(true);
+  });
+
+  it('MCS basis raises rooms below MIS 3005-D Table 1 to its minimum; the best estimate keeps your setpoint', () => {
+    const hh = defaultHouse(), r = hh.rooms.find((x) => x.heated && x.type === 'living')!;
+    r.setpoint = 17;
+    expect(calcHouse(hh).rooms.find((x) => x.room.id === r.id)!.T).toBe(17);
+    const m = calcHouse(hh, 'mcs');
+    expect(m.rooms.find((x) => x.room.id === r.id)!.T).toBe(21);
+    expect(m.checks.some((c) => c.text.includes(`${r.name} is set to 17 °C`))).toBe(true);
+  });
+
+  it('bills calibration and the neighbour setting change only the best estimate', () => {
+    const hh = defaultHouse(), mcs0 = calcHouse(hh, 'mcs').peakW;
+    hh.calib = { dt: 1, q: 0.5, hf: 0.8, note: 'test' }; hh.neighbourT = 18;
+    expect(calcHouse(hh, 'mcs').peakW).toBeCloseTo(mcs0, 6);
+    expect(calcHouse(hh).peakW).not.toBeCloseTo(calcHouse(defaultHouse()).peakW, 0);
+  });
+
+  it('suspended ground floor loses to the design outside temperature on the design day (MIS 3005-D 5.5.1 d)', () => {
+    const hh = defaultHouse(), gf = hh.buildups.find((b) => b.id === hh.defaults.groundFloor)!;
+    gf.floorType = 'suspended';
+    const r = calcHouse(hh), row = r.rooms.find((x) => x.room.id === 'living')!.rows.find((x) => x.label === 'Suspended floor')!;
+    expect(row.dT).toBeCloseTo(21 - r.Tout, 6);
   });
 
   it('path totals add up to the peak', () => {
@@ -105,9 +162,11 @@ describe('whole-house model', () => {
     expect(st('CV36 4AA')![0]).toBe('Birmingham');
     const hh = defaultHouse();
     hh.climate.postcode = 'PL4 8AA';
-    expect(calcHouse(hh).Tout).toBe(-0.2); // 99%, the MIS 3005-D default
+    expect(calcHouse(hh).Tout).toBe(-1.5); // 99.6%, MIS 3005-D column B (no intermittent heating uplift needed)
+    hh.climate.pct = '99';
+    expect(calcHouse(hh).Tout).toBe(-0.2);
+    expect(calcHouse(hh).checks.some((c) => c.text.includes('intermittent heating uplift'))).toBe(true);
     hh.climate.pct = '99.6';
-    expect(calcHouse(hh).Tout).toBe(-1.5);
     hh.climate.auto = false;
     expect(calcHouse(hh).Tout).toBe(-4.5);
   });
@@ -155,5 +214,21 @@ describe('glazed unit presets', () => {
       expect(u(`${t}, ${f}, triple, low-e argon`)).toBeLessThan(u(`${t}, ${f}, double, low-e argon`));
       if (f !== 'aluminium') expect(u(`${t}, ${f}, double, low-e argon`)).toBeLessThan(u(`${t}, aluminium, double, low-e argon`));
     }
+  });
+});
+
+describe('MIS 3005-D report figures', () => {
+  it('sizes daily hot water at 45 L × the greater of bedrooms + 1 and occupants', () => {
+    const h = defaultHouse(), beds = h.rooms.filter((r) => r.type === 'bedroom').length;
+    h.gains.people = 1;
+    expect(dhwDemand(h).litres).toBe(45 * (beds + 1));
+    h.gains.people = beds + 4;
+    expect(dhwDemand(h).litres).toBe(45 * (beds + 4));
+  });
+
+  it('warns when a heated room is set below Table 1', () => {
+    const h = defaultHouse(), r = h.rooms.find((x) => x.heated && x.type === 'living')!;
+    r.setpoint = 19;
+    expect(calcHouse(h).checks.some((c) => c.text.includes(`${r.name} is set to 19 °C`))).toBe(true);
   });
 });

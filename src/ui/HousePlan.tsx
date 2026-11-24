@@ -16,6 +16,20 @@ export function planBounds(h: House) {
   return { minX: Math.min(0, ...pts.map((p) => p[0])), minY: Math.min(0, ...pts.map((p) => p[1])), maxX: Math.max(1, ...pts.map((p) => p[0])), maxY: Math.max(1, ...pts.map((p) => p[1])) };
 }
 
+/** A room's windows and doors as stretches of its walls, plan metres (`poly`: an outline being dragged, in place of its own). */
+export function planOpenings(house: House, r: Room, poly?: Pt[]): Array<{ id: string; a: Pt; z: Pt; door: boolean }> {
+  const es = roomEdges({ ...r, poly: poly ?? r.poly });
+  const isPoly = !!r.poly;
+  return es.flatMap((e) => {
+    const ops = house.openings.filter((o) => o.room === r.id && (isPoly ? (o.edge ?? es.findIndex((x) => x.side === o.side)) === e.idx : o.side === e.side));
+    return ops.map((o, i) => {
+      const L = e.len, half = Math.min(L / ops.length - 0.15, o.w) / 2, c = o.t != null ? Math.max(half, Math.min(L - half, o.t)) : (L * (i + 0.5)) / ops.length;
+      const a: Pt = [e.a[0] + e.d[0] * (c - half), e.a[1] + e.d[1] * (c - half)], z: Pt = [e.a[0] + e.d[0] * (c + half), e.a[1] + e.d[1] * (c + half)];
+      return { id: o.id, a, z, door: house.buildups.find((x) => x.id === o.buildup)?.kind === 'door' };
+    });
+  });
+}
+
 /**
  * The plan of one storey: rooms of any shape, windows and doors on their walls, the selected room outlined,
  * and corner handles to reshape a polygon room (drag a corner, click + on a wall to add one).
@@ -66,19 +80,10 @@ export function HousePlan({ house, storey, sel, setSel, fill, label, editOutline
           </g>
         );
       })}
-      {onThis.filter((r) => r.storey === storey).flatMap((r) => {
-        const es = roomEdges({ ...r, poly: r.poly ? polyOf(r) : undefined });
-        const isPoly = !!r.poly;
-        return es.flatMap((e) => {
-          const ops = house.openings.filter((o) => o.room === r.id && (isPoly ? (o.edge ?? es.findIndex((x) => x.side === o.side)) === e.idx : o.side === e.side));
-          return ops.map((o, i) => {
-            const L = e.len, half = Math.min(L / ops.length - 0.15, o.w) / 2, c = o.t != null ? Math.max(half, Math.min(L - half, o.t)) : (L * (i + 0.5)) / ops.length;
-            const a = to([e.a[0] + e.d[0] * (c - half), e.a[1] + e.d[1] * (c - half)]), z = to([e.a[0] + e.d[0] * (c + half), e.a[1] + e.d[1] * (c + half)]);
-            const door = house.buildups.find((x) => x.id === o.buildup)?.kind === 'door';
-            return <line key={o.id} x1={a[0]} y1={a[1]} x2={z[0]} y2={z[1]} className={door ? 'plan-door' : 'plan-win'} />;
-          });
-        });
-      })}
+      {onThis.filter((r) => r.storey === storey).flatMap((r) => planOpenings(house, r, r.poly ? polyOf(r) : undefined).map((o) => {
+        const a = to(o.a), z = to(o.z);
+        return <line key={o.id} x1={a[0]} y1={a[1]} x2={z[0]} y2={z[1]} className={o.door ? 'plan-door' : 'plan-win'} />;
+      }))}
       {overlay?.(to, S, fromEvent)}
       {!readOnly && selRoom && <polygon points={pts(polyOf(selRoom))} fill="none" stroke="#c2410c" strokeWidth={3} pointerEvents="none" />}
       {!readOnly && selRoom && editOutline && selRoom.poly && (() => {

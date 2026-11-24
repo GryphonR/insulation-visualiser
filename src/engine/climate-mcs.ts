@@ -115,6 +115,9 @@ export function designTemp(station: number, altitude: number, pct: '99.6' | '99'
   return +(base - 0.6 * Math.max(0, Math.floor((altitude - s[4]) / 100))).toFixed(1);
 }
 
+/** MIS 3005-D Issue 3.0 Table 1: the lowest internal design temperature allowed for each room type it lists, °C. */
+export const MIS_TABLE1: Record<string, number> = { living: 21, dining: 21, bedroom: 18, hall: 18, landing: 18, kitchen: 18, bathroom: 22, wc: 18 };
+
 /** CIBSE DHDG 2026 Table 2-2 design room temperatures: [age band A-J, age band K onwards]. */
 export const ROOM_TEMPS: Record<string, [number, number]> = {
   living: [21, 21], dining: [21, 21], kitchen: [18, 21], bedroom: [18, 21], bathroom: [22, 22], wc: [18, 21],
