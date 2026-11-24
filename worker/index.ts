@@ -1,6 +1,7 @@
 // Cloudflare Worker: sign-in (Better Auth: email magic link + Google) and the sync API. The built app itself is served as static assets.
 import { betterAuth } from 'better-auth';
 import { magicLink } from 'better-auth/plugins/magic-link';
+import { admin, ownerList, roleOf } from './admin';
 import { api } from './api';
 import { signInEmail } from './email';
 
@@ -14,6 +15,8 @@ export interface Env {
   GOOGLE_CLIENT_SECRET?: string;
   RESEND_API_KEY?: string;
   MAIL_FROM?: string;
+  /** Owners of the admin page, comma-separated (a secret, so the addresses stay out of the repo). */
+  ADMIN_EMAILS?: string;
 }
 
 const isLocal = (env: Env) => /^http:\/\/localhost(:\d+)?$/.test(env.BETTER_AUTH_URL);
@@ -64,6 +67,13 @@ export default {
     if (req.method !== 'GET' && origin && origin !== new URL(env.BETTER_AUTH_URL).origin) return Response.json({ error: 'origin' }, { status: 403 });
     const s = await a.api.getSession({ headers: req.headers });
     if (!s) return Response.json({ error: 'signed out' }, { status: 401 });
+    if (url.pathname.startsWith('/api/admin/')) {
+      // 404, not 403, so the admin API doesn't show it exists. An unverified email is never an admin.
+      const owners = ownerList(env.ADMIN_EMAILS);
+      const role = s.user.emailVerified ? await roleOf(env.DB, owners, s.user.email) : null;
+      if (!role) return Response.json({ error: 'not found' }, { status: 404 });
+      return admin(req, env.DB, { id: s.user.id, email: s.user.email, role }, owners, url.pathname);
+    }
     return api(req, env.DB, s.user.id, url.pathname);
   },
 } satisfies ExportedHandler<Env>;

@@ -11,19 +11,45 @@ export interface Row { id: string; rev: number; updated: number; deleted: number
 
 const json = (v: unknown, status = 200) => Response.json(v, { status });
 
+/** Delete an account and everything stored for it. Used by the account's own Delete and by the admin page. */
+export async function deleteUser(db: D1Database, userId: string) {
+  // Sign-in links not yet used or expired still hold the email address.
+  const u = await db.prepare('SELECT email FROM user WHERE id = ?').bind(userId).first<{ email: string }>();
+  await db.batch([
+    ...(u ? [
+      db.prepare('DELETE FROM verification WHERE instr(value, ?) > 0').bind(`"email":${JSON.stringify(u.email)}`),
+      // Otherwise signing up again with the same address would bring admin rights back.
+      db.prepare('DELETE FROM admins WHERE email = ?').bind(u.email.toLowerCase()),
+    ] : []),
+    db.prepare('DELETE FROM items WHERE user_id = ?').bind(userId),
+    db.prepare('DELETE FROM consent WHERE user_id = ?').bind(userId),
+    db.prepare('DELETE FROM session WHERE userId = ?').bind(userId),
+    db.prepare('DELETE FROM account WHERE userId = ?').bind(userId),
+    db.prepare('DELETE FROM user WHERE id = ?').bind(userId),
+  ]);
+}
+
 export async function api(req: Request, db: D1Database, userId: string, path: string): Promise<Response> {
   if (path === '/api/account' && req.method === 'DELETE') {
-    // Sign-in links not yet used or expired still hold the email address.
-    const u = await db.prepare('SELECT email FROM user WHERE id = ?').bind(userId).first<{ email: string }>();
-    await db.batch([
-      ...(u ? [db.prepare('DELETE FROM verification WHERE instr(value, ?) > 0').bind(`"email":${JSON.stringify(u.email)}`)] : []),
-      db.prepare('DELETE FROM items WHERE user_id = ?').bind(userId),
-      db.prepare('DELETE FROM session WHERE userId = ?').bind(userId),
-      db.prepare('DELETE FROM account WHERE userId = ?').bind(userId),
-      db.prepare('DELETE FROM user WHERE id = ?').bind(userId),
-    ]);
+    await deleteUser(db, userId);
     return json({ ok: true });
   }
+  const consent = () => db.prepare('SELECT terms_at AS termsAt, updates FROM consent WHERE user_id = ?').bind(userId).first<{ termsAt: number; updates: number }>();
+  if (path === '/api/consent') {
+    if (req.method === 'GET') return json((await consent()) ?? {});
+    if (req.method !== 'PUT') return json({ error: 'method' }, 405);
+    const b = await req.json().catch(() => null) as { terms?: unknown; updates?: unknown } | null;
+    if (typeof b?.updates !== 'boolean') return json({ error: 'updates must be true or false' }, 400);
+    const now = Date.now(), had = await consent();
+    if (!had && b.terms !== true) return json({ error: 'terms' }, 403);
+    // terms_at keeps the first acceptance; updates_at records when the opt-in last changed.
+    await db.prepare('INSERT INTO consent (user_id, terms_at, updates, updates_at) VALUES (?, ?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET updates = excluded.updates, updates_at = excluded.updates_at')
+      .bind(userId, now, b.updates ? 1 : 0, now).run();
+    return json(await consent());
+  }
+  // Nothing is stored for an account until its holder has accepted the terms.
+  if (!(await consent())) return json({ error: 'terms' }, 403);
+
   const m = path.match(/^\/api\/(projects|data)(?:\/([\w-]{1,64}))?$/);
   if (!m) return json({ error: 'not found' }, 404);
   const [, kind, id] = m;

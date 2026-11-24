@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useState } from 'react';
 import { LIBRARY_KEY, loadCustomStackups, saveCustomStackups } from './engine/library';
 import type { Stackup } from './engine/library';
 import { newProject } from './engine/house-scenarios';
+import { AdminPage } from './ui/AdminPage';
 import { BuildupsPage } from './ui/BuildupsPage';
 import { ErrorScreen } from './ui/ErrorScreen';
 import { EnergyPage, SitePage, StoreysPage, VentPage } from './ui/HouseSettings';
@@ -115,6 +116,7 @@ function Routes() {
       break;
     case 'scenarios': case 'compare': page = <ScenariosPage key={route} initial={route === 'compare' ? 'compare' : 'changes'} />; break;
     case 'learn': page = <LearnPage section={arg} />; break;
+    case 'admin': page = <AdminPage />; break;
     default: page = <PlanPage />;
   }
   return <Shell route={route}>{page}</Shell>;

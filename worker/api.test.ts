@@ -8,7 +8,22 @@ const call = (user: string, method: string, path: string, body?: string, rev?: n
   api(new Request(`http://x${path}`, { method, body, headers: rev != null ? { 'If-Match': String(rev) } : {} }), db, user, path);
 
 describe('sync API', () => {
-  beforeEach(() => { db = testDb(); });
+  beforeEach(async () => {
+    db = testDb();
+    await db.prepare("INSERT INTO consent (user_id, terms_at) VALUES ('alice', 1), ('bob', 1)").run();
+  });
+
+  it('stores nothing until the terms are accepted, and keeps the updates opt-in changeable', async () => {
+    const put = (user: string, b: unknown) => api(new Request('http://x/api/consent', { method: 'PUT', body: JSON.stringify(b) }), db, user, '/api/consent');
+    expect((await call('carol', 'PUT', '/api/projects/p1', '{}', 0)).status).toBe(403);
+    expect(await (await call('carol', 'GET', '/api/consent')).json()).toEqual({});
+    expect((await put('carol', { updates: true })).status).toBe(403); // no terms, no account
+    expect((await put('carol', { terms: true })).status).toBe(400);
+    expect(await (await put('carol', { terms: true, updates: true })).json()).toMatchObject({ updates: 1 });
+    expect((await call('carol', 'PUT', '/api/projects/p1', '{}', 0)).status).toBe(200);
+    const first = (await (await call('carol', 'GET', '/api/consent')).json()).termsAt;
+    expect(await (await put('carol', { updates: false })).json()).toEqual({ termsAt: first, updates: 0 });
+  });
 
   it('keeps each user to their own projects', async () => {
     expect((await call('alice', 'PUT', '/api/projects/p1', '{"a":1}', 0)).status).toBe(200);
@@ -71,8 +86,7 @@ describe('sync API', () => {
     await call('alice', 'PUT', '/api/projects/p1', '{}', 0);
     await call('bob', 'PUT', '/api/projects/p1', '{}', 0);
     expect((await call('alice', 'DELETE', '/api/account')).status).toBe(200);
-    expect(await (await call('alice', 'GET', '/api/projects')).json()).toEqual([]);
-    expect(await (await call('bob', 'GET', '/api/projects')).json()).toHaveLength(1);
+    expect((await db.prepare("SELECT user_id FROM items UNION ALL SELECT user_id FROM consent").all()).results).toEqual([{ user_id: 'bob' }, { user_id: 'bob' }]);
     expect((await db.prepare('SELECT id FROM verification').all()).results).toEqual([{ id: 'v2' }]);
   });
 });

@@ -14,10 +14,13 @@ export const CLOUD = !!import.meta.env?.VITE_CLOUD;
 
 const DATA: Record<string, string> = { materials: CUSTOM_MATERIALS_KEY, library: LIBRARY_KEY, favorites: FAVORITES_KEY };
 const STATE_KEY = 'insulation-visualiser.sync.v1';
+/** Consent given on the Create account form, held until the sign-in link (or Google) comes back. */
+const SIGNUP_KEY = 'insulation-visualiser.signup';
 const PROJECT_PREFIX = projectKey('');
 
-export type SyncStatus = 'off' | 'signed-out' | 'syncing' | 'synced' | 'offline' | 'error';
-export interface SyncInfo { status: SyncStatus; email?: string; message?: string }
+export type SyncStatus = 'off' | 'signed-out' | 'terms' | 'syncing' | 'synced' | 'offline' | 'error';
+/** `updates`: opted in to product-update emails. Status 'terms': signed in, but the terms aren't accepted yet, so nothing syncs. */
+export interface SyncInfo { status: SyncStatus; email?: string; message?: string; updates?: boolean }
 
 /** `user`: who the local copies were last synced for. `revs`: server rev each item was last in step with. `dirty`: items changed here since. */
 interface State { user?: string; revs: Record<string, number>; dirty: string[] }
@@ -55,6 +58,7 @@ const announce = (key: string) => { try { window.dispatchEvent(new StorageEvent(
 const FULL = "This browser's storage is full, so a project from the cloud couldn't be saved here. Delete old projects or traced plan images.";
 class Offline extends Error {}
 class SignedOut extends Error {}
+class NeedsTerms extends Error {}
 
 async function call(method: string, path: string, body?: string, rev?: number): Promise<{ status: number; data: any }> {
   let r: Response;
@@ -67,7 +71,9 @@ async function call(method: string, path: string, body?: string, rev?: number): 
     throw new Offline();
   }
   if (r.status === 401) throw new SignedOut();
-  return { status: r.status, data: await r.json().catch(() => null) };
+  const data = await r.json().catch(() => null);
+  if (r.status === 403 && data?.error === 'terms') throw new NeedsTerms();
+  return { status: r.status, data };
 }
 
 // ---------- merging ----------
@@ -234,7 +240,7 @@ let running: Promise<void> | null = null, again = false;
 
 /** Pull, then push everything changed here. Safe to call often: overlapping calls are folded into one more pass. */
 export function syncNow(): Promise<void> {
-  if (!CLOUD || !info.email) return Promise.resolve();
+  if (!CLOUD || !info.email || info.status === 'terms') return Promise.resolve();
   if (running) { again = true; return running; }
   running = (async () => {
     setInfo({ status: 'syncing', message: undefined });
@@ -253,6 +259,7 @@ export function syncNow(): Promise<void> {
     } catch (e) {
       if (e instanceof Offline) setInfo({ status: 'offline' });
       else if (e instanceof SignedOut) setInfo({ status: 'signed-out', email: undefined });
+      else if (e instanceof NeedsTerms) setInfo({ status: 'terms' });
       else setInfo({ status: 'error', message: (e as Error).message });
     } finally {
       running = null;
@@ -289,7 +296,29 @@ async function signedIn(user: { id: string; email: string }) {
     if (!upload) { location.reload(); return; }
   } else if (!s.user) writeState({ ...s, user: user.id });
   setInfo({ status: 'syncing', email: user.email });
+  let c = await call('GET', '/api/consent').catch(() => null);
+  const signup = localStorage.getItem(SIGNUP_KEY);
+  if (c?.status === 200 && !c.data?.termsAt && signup) {
+    c = await call('PUT', '/api/consent', JSON.stringify({ terms: true, updates: signup === 'updates' })).catch(() => null);
+  }
+  if (c?.status === 200) localStorage.removeItem(SIGNUP_KEY); // kept when offline, to try again next start
+  if (c?.status === 200 && !c.data?.termsAt) { setInfo({ status: 'terms' }); return; }
+  if (c?.status === 200) setInfo({ updates: !!c.data.updates });
   await syncNow();
+}
+
+/** Accept the terms (and choose updates emails) for a signed-in account that hasn't yet, or later change the updates choice. */
+export async function setConsent(updates: boolean, terms = false): Promise<boolean> {
+  try {
+    const r = await call('PUT', '/api/consent', JSON.stringify({ terms, updates }));
+    if (r.status !== 200) return false;
+    const first = info.status === 'terms';
+    setInfo({ updates: !!r.data.updates, ...(first ? { status: 'syncing' } : {}) });
+    if (first) await syncNow();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 let started = false;
@@ -316,8 +345,18 @@ export async function startSync() {
 const post = (path: string, body: unknown) =>
   fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
+/**
+ * Before a sign-in: `signup` is the consent from the Create account form (terms accepted, and whether to get updates);
+ * null for plain sign-in, which clears any left over from an earlier form so it can't apply to someone else.
+ */
+const remember = (signup: { updates: boolean } | null) => {
+  if (signup) localStorage.setItem(SIGNUP_KEY, signup.updates ? 'updates' : 'terms');
+  else localStorage.removeItem(SIGNUP_KEY);
+};
+
 /** Email a sign-in link. Resolves to an error message, or null when sent. */
-export async function sendSignInLink(email: string): Promise<string | null> {
+export async function sendSignInLink(email: string, signup: { updates: boolean } | null = null): Promise<string | null> {
+  remember(signup);
   try {
     const r = await post('/api/auth/sign-in/magic-link', { email, callbackURL: location.pathname });
     return r.ok ? null : ((await r.json().catch(() => null))?.message ?? `Couldn't send the link (${r.status}).`);
@@ -326,7 +365,8 @@ export async function sendSignInLink(email: string): Promise<string | null> {
   }
 }
 
-export async function signInWithGoogle(): Promise<string | null> {
+export async function signInWithGoogle(signup: { updates: boolean } | null = null): Promise<string | null> {
+  remember(signup);
   try {
     const r = await post('/api/auth/sign-in/social', { provider: 'google', callbackURL: location.pathname });
     const d = await r.json().catch(() => null);

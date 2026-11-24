@@ -30,6 +30,11 @@ html { scroll-padding-top: var(--head-h, 0px); }
 .acct-pop p { margin: 0; }
 .acct-pop form, .acct-pop label { display: grid; gap: 6px; }
 .acct-pop input { min-height: 36px; padding: 0 8px; border: 1px solid var(--line-strong); font: inherit; }
+.acct-pop label.acct-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; }
+.acct-pop .acct-check input { min-height: 0; margin: 2px 0 0; flex: none; }
+.acct-tabs { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--line-strong); }
+.acct-tabs button { padding: 6px 0; background: none; border: 0; border-bottom: 3px solid transparent; font: inherit; color: var(--muted); cursor: pointer; }
+.acct-tabs button[aria-selected="true"] { border-bottom-color: var(--ink); color: var(--ink); font-weight: 600; }
 .acct-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .acct-dot.synced { background: #1d7a3a; }
 .acct-dot.error { background: #b3261e; }

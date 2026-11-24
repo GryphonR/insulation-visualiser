@@ -45,7 +45,10 @@ describe('cloud sync between two devices', () => {
     favorites = await import('../src/engine/favorites');
     await sync.startSync();
   });
-  beforeEach(() => { db = testDb(); A = storage(); B = storage(); offline = false; });
+  beforeEach(async () => {
+    db = testDb(); A = storage(); B = storage(); offline = false;
+    await db.prepare("INSERT INTO consent (user_id, terms_at) VALUES ('u1', 1)").run();
+  });
 
   it('uploads what a device had before signing in, and the other device pulls it', async () => {
     on(A); projects.saveProject('a', named('Alpha'));

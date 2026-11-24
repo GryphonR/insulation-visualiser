@@ -7,7 +7,7 @@ const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
 
 export function testDb(): D1Database {
   const db = new DatabaseSync(':memory:');
-  db.exec(readFileSync(new URL('./migrations/0001_init.sql', import.meta.url), 'utf8'));
+  for (const f of ['0001_init.sql', '0002_consent.sql', '0003_admins.sql']) db.exec(readFileSync(new URL(`./migrations/${f}`, import.meta.url), 'utf8'));
   const stmt = (sql: string, args: any[] = []): any => ({
     bind: (...a: any[]) => stmt(sql, a),
     first: async () => { const r = db.prepare(sql).get(...args); return r ? { ...r } : null; },
