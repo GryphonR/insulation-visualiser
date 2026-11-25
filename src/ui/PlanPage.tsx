@@ -12,7 +12,7 @@ import type { Imagery } from './HouseTrace';
 import { fmt, mix } from './hform';
 import { useProject } from './project';
 import { AddBuildupProvider } from './AddBuildupFlow';
-import { autoPipes, combineRuns, pipeRest, unpiped } from '../engine/house-pipes';
+import { autoPipes, combineRuns, pipeRest, runRoute, unpiped } from '../engine/house-pipes';
 
 /** The floor plan as a drawing canvas, layer by layer, with a summary of the selected room. Model draws the rooms; Heating lays out emitters, plant and pipes on the same canvas. */
 export function PlanPage({ selected, mode = 'model' }: { selected?: string; mode?: 'model' | 'heating' }) {
@@ -75,7 +75,9 @@ export function PlanPage({ selected, mode = 'model' }: { selected?: string; mode
   };
 
 
-  const hint = drawHint(roofOn ? 'roof' : band != null, tool, view);
+  // With a pipe run selected, the bar says where it comes from and goes to; else the tip for the tool.
+  const selRun = sel.item?.k === 'pipe' ? house.heating.pipes?.find((p) => p.id === sel.item!.id) : undefined;
+  const hint = selRun ? runRoute(house, selRun) : drawHint(roofOn ? 'roof' : band != null, tool, view);
   const inspectorTitle = roofSel ? 'Roof' : sel.zone ? (() => { const zz = house.zones?.find((x) => x.id === sel.zone); return zz?.ufh ? 'Underfloor heating zone' : zz?.buildup === 'open-stairwell' ? 'Stairwell' : 'Floor zone'; })() : (sel.group?.length ?? 0) > 1 ? 'Rooms' : sel.walls.length ? 'Walls' : sel.item?.k === 'op' ? 'Window or door' : sel.item?.k === 'plant' ? 'Heating plant' : sel.item?.k === 'pipe' ? 'Pipe run' : 'Heat emitter';
 
   return (
@@ -133,7 +135,7 @@ export function PlanPage({ selected, mode = 'model' }: { selected?: string; mode
       {hint && (
         <div className={`plan-hint${hintOpen ? ' open' : ''}`} onClick={() => setHintOpen(false)}>
           <button type="button" aria-expanded={hintOpen} aria-label={hintOpen ? 'Hide the full tip' : 'Show the full tip'} onClick={(e) => { e.stopPropagation(); setHintOpen(!hintOpen); }}>?</button>
-          <span>{hintOpen ? hint : hint.split(/(?<=\.)\s/)[0]}</span>
+          <span>{hintOpen || selRun ? hint : hint.split(/(?<=\.)\s/)[0]}</span>
         </div>
       )}
 

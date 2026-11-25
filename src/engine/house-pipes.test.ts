@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { calcHouse } from './house';
 import { defaultHouse } from './house-default';
 import { emitterOut, lpm, roomOut, shareIn } from './house-heating';
-import { PIPE_SIZES, PIPE_WALL, attachments, defaultLevel, dropAt, setRunLevel, drawRun, moveOpenEnd, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, fitSize, fittingsDp, joinRun, joints, kInsert, sizesOn, usable, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitCircuits, splitSegment, squareInto } from './house-pipes';
+import { PIPE_SIZES, PIPE_WALL, attachments, defaultLevel, dropAt, runRoute, setRunLevel, drawRun, moveOpenEnd, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, fitSize, fittingsDp, joinRun, joints, kInsert, sizesOn, usable, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitCircuits, splitSegment, squareInto } from './house-pipes';
 
 /** Place a heater so its pipes connect at `p` (its valve end, for a radiator). */
 const put = (h: ReturnType<typeof defaultHouse>, e: ReturnType<typeof defaultHouse>['heating']['emitters'][number], p: [number, number]) => {
@@ -750,6 +750,10 @@ describe('drops between levels', () => {
     expect(n2.heating.pipes!.find((p) => p.id === up.id)).toMatchObject({ parent: d.id, via: 'floor' });
     const s = sizePipes(n2, calcHouse(n2));
     expect(s.rows.find((x) => x.pipe.id === d.id)!.loadW).toBeCloseTo(s.emitterW.get(e.id)! + s.emitterW.get(e1.id)!, 0);
+    // Said in words: where each comes from and goes to, looking through the drop.
+    const first = n2.heating.pipes!.find((p) => p.id === d.parent)!;
+    expect(runRoute(n2, n2.heating.pipes!.find((p) => p.id === r.id)!)).toMatch(new RegExp(`^From ${first.name} by way of a drop to the .+ radiator\. Between the `));
+    expect(runRoute(n2, first)).toMatch(/^From the (heat pump|boiler) to a junction feeding .+ and .+\. Under the /);
     // The diagram leaves the drop out: the runs beyond it show off the run before it.
     const lay = layoutPipes(n2).nodes;
     expect(lay.some((x) => x.p.drop)).toBe(false);

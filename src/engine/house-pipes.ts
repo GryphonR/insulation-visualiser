@@ -745,6 +745,40 @@ export function mergeCircuits(h: House): number {
   return gone;
 }
 
+/** A riser climb or drop: it only takes pipes between levels. */
+const climbOnly = (p: Pipe) => !p.leg && (!!p.drop || p.rise != null);
+
+/**
+ * Where a run comes from and goes to, in words, then its level, length and size: "From the heat pump to a junction feeding Kitchen
+ * radiator and Hall radiator. Between the ground floor and first floor · 4.2 m · Cu 22 mm." Drops and riser climbs on
+ * the way are looked through to the run beyond them.
+ */
+export function runRoute(h: House, p: Pipe): string {
+  const pipes = h.heating.pipes ?? [], byId = (id: string | null | undefined) => (id ? pipes.find((x) => x.id === id) : undefined);
+  const heater = (id: string) => {
+    const e = h.heating.emitters.find((x) => x.id === id), room = e && h.rooms.find((r) => r.id === e.room)?.name;
+    return e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : 'radiator'}` : 'a heater';
+  };
+  const plant = (id: string) => id === 'source' ? (h.hp.source === 'ashp' || h.hp.source === 'gshp' ? 'the heat pump' : 'the boiler')
+    : id === 'cylinder' ? 'the hot water cylinder' : id.startsWith('m:') ? manifoldName(h, id.slice(2)) : id.startsWith('e:') ? `the ${heater(id.slice(2))}`
+    : (h.heating.risers ?? []).some((r) => r.id === id) ? `riser ${(h.heating.risers ?? []).findIndex((r) => r.id === id) + 1}` : id;
+  // What it comes off, past any drops between.
+  let up = byId(p.parent), drops = 0;
+  while (up && climbOnly(up)) { drops++; up = byId(up.parent); }
+  const via = drops ? ` by way of ${drops === 1 ? 'a drop' : `${drops} drops`}` : '';
+  const from = p.loose && !p.parent ? 'nothing yet (it is not joined to the heat source)' : up ? `${up.name}${via}` : p.ends?.[0] && !p.ends[0].startsWith('tee:') ? `${plant(p.ends[0])}${via}` : `the heat source${via}`;
+  // What it feeds: its heater or plant, else the runs off its far end (past drops).
+  const beyond = (id: string): Pipe[] => pipes.filter((x) => x.parent === id).flatMap((x) => (climbOnly(x) ? beyond(x.id) : [x]));
+  const kids = beyond(p.id), names = kids.map((k) => k.name);
+  const to = p.loop ? 'a junction it shares with another way round (it closes a loop)'
+    : p.ends?.[1] ? plant(p.ends[1])
+    : kids.length ? `a junction feeding ${names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(' and ')}`
+    : 'an open end';
+  // The space it is in names its level: under the ground floor, between two floors, or in a floor's rooms.
+  const where = p.leg ? voidName(h, voidOf(h, p)).replace(/^./, (c) => c.toUpperCase()) : p.drop ? 'Between levels' : 'Up or down between floors';
+  return `${p.drop || climbOnly(p) ? `${p.name}: from` : 'From'} ${from} to ${to}. ${where} · ${runLength(h, p).toFixed(1)} m · ${p.size}.`;
+}
+
 /** A shared run's name: what it feeds, each once ("Shared: Front room, Kitchen"). */
 const sharedName = (names: string[]) => `Shared: ${[...new Set(names.flatMap((n) => n.replace(/^Shared: /, '').split(', ')).map((n) => n.replace(/ e\d+$/, '')))].join(', ')}`;
 
