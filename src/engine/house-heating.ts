@@ -3,6 +3,7 @@ import type { House, Room } from './house';
 import type { Pt } from './geom';
 import { polyArea } from './geom';
 import type { Pipe } from './house-pipes';
+import type { PipeNode } from './house-net';
 import type { Controls } from './house-controls';
 import { loopLayout } from './house-ufh';
 import type { Corner, LoopPattern, LoopRect } from './house-ufh';
@@ -57,6 +58,8 @@ export interface Plant { at: Pt; storey: number }
 export const ZONE_COLOURS = ['#c2410c', '#1f6fb5', '#1f7a4d', '#7a45b8', '#b45309', '#be185d'];
 export interface Heating {
   emitters: Emitter[]; zones: Zone[];
+  /** The junctions the pipe runs meet at (house-net). */
+  nodes?: PipeNode[];
   control: 'fixed' | 'ideal' | 'curve';
   /** Manual curve: flow at the design temperature and at 15 °C outside. */
   curveDesign: number; curve15: number;

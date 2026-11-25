@@ -62,6 +62,10 @@ export interface Pipe {
   via?: 'floor' | 'ceiling';
   /** A short header a control plan put in so one valve shuts several runs; it goes when the plan is changed. */
   header?: boolean;
+  /** The junction nodes at its start and far end (see house-net): what it is joined to. Its parent, ends and direction are worked out from these. */
+  a?: string; b?: string;
+  /** Not joined to the heat source; or the run that closes a loop, which carries no flow. Set by `syncNet`. */
+  loose?: true; loop?: true;
 }
 
 export interface PipeRow {
@@ -196,7 +200,7 @@ export const ell = (h: House, s: number, a: Pt, b: Pt): Pt[] => {
 };
 const runOf = (a: Pt, b: Pt) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]);
 /** Height between two storeys' floors, m: room height plus floor zone of each storey crossed. */
-const rise = (h: House, a: number, b: number) => { let t = 0; for (let k = Math.min(a, b); k < Math.max(a, b); k++) t += (h.storeys[k]?.h ?? 2.5) + (h.storeys[k + 1]?.zone ?? 0.25); return t; };
+export const rise = (h: House, a: number, b: number) => { let t = 0; for (let k = Math.min(a, b); k < Math.max(a, b); k++) t += (h.storeys[k]?.h ?? 2.5) + (h.storeys[k + 1]?.zone ?? 0.25); return t; };
 
 /** Lay pipes on the plan from the placed heat source: on its own storey straight to each emitter; to other storeys up whichever riser makes the runs shortest (straight up from the source if there are none). */
 export function routePipes(h: House): PipeRoute | null {

@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import type { ReactNode } from 'react';
 import { calcBoth, mcsOf } from '../engine/house';
 import { syncUfh } from '../engine/house-draw';
+import { syncNet } from '../engine/house-net';
 import { yearRes } from '../engine/house-sim';
 import { useYearSims } from './useYearSim';
 import type { Basis, House, HouseResult } from '../engine/house';
@@ -82,13 +83,16 @@ export const useProject = (): Ctx => {
   return c;
 };
 
+/** Every scenario's pipe runs read from their net (see house-net), as a project is opened. */
+const netted = (p: Project): Project => { const s = p.scenarios.map((x) => ({ ...x, house: syncNet(x.house) })); return s.every((x, i) => x.house === p.scenarios[i].house) ? p : { ...p, scenarios: s }; };
+
 export function ProjectProvider({ customStackups, setCustomStackups, children }: {
   customStackups: Stackup[]; setCustomStackups: Ctx['setCustomStackups']; children: ReactNode;
 }) {
   // Undo / redo over the whole project (board 1f history). Edits typed in a field are grouped by the browser's own input events.
   const [first] = useState(loadActive);
   const [projectId, setProjectId] = useState(first.id);
-  const [hist, setHist] = useState<{ past: Project[]; now: Project; future: Project[] }>(() => ({ past: [], now: first.project, future: [] }));
+  const [hist, setHist] = useState<{ past: Project[]; now: Project; future: Project[] }>(() => ({ past: [], now: netted(first.project), future: [] }));
   const project = hist.now;
   // A first visit shows the start screen, so the demo house loaded behind it isn't saved until something changes; a project just opened needn't be saved again.
   const skipSave = useRef<Project | null>(hasSaved() ? null : project);
@@ -102,7 +106,7 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
   const redo = () => setHist((h) => (h.future.length ? { past: [...h.past, h.now], now: h.future[0], future: h.future.slice(1) } : h));
   const [saveOk, setSaveOk] = useState(true);
   useEffect(() => { if (project !== skipSave.current) setSaveOk(saveProject(projectId, project)); }, [project, projectId]);
-  const show = (id: string, p: Project) => { skipSave.current = p; setProjectId(id); setHist({ past: [], now: p, future: [] }); bump((n) => n + 1); };
+  const show = (id: string, p0: Project) => { const p = netted(p0); skipSave.current = p; setProjectId(id); setHist({ past: [], now: p, future: [] }); bump((n) => n + 1); };
   const openProject = (id: string) => {
     if (id === projectId) return;
     const p = openStored(id);
@@ -150,7 +154,7 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
 
   const active = project.scenarios.find((s) => s.id === project.active) ?? project.scenarios[0];
   const setHouse: Ctx['setHouse'] = (fn) =>
-    setProject((p) => ({ ...p, scenarios: p.scenarios.map((s) => (s.id === p.active ? { ...s, house: syncUfh(fn(s.house)) } : s)) }));
+    setProject((p) => ({ ...p, scenarios: p.scenarios.map((s) => (s.id === p.active ? { ...s, house: syncNet(syncUfh(fn(s.house))) } : s)) }));
   const upd: Ctx['upd'] = (fn) => setHouse((prev) => { const n = structuredClone(prev); fn(n); return n; });
   const houses = useMemo(() => project.scenarios.map((s) => s.house), [project.scenarios]);
   const sims = useYearSims(houses);
