@@ -415,6 +415,11 @@ describe('drawing runs by hand', () => {
     // From the ground floor plan, a run off it in the ceiling stays in the ceiling.
     const g = drawRun(h, 0, { run: a.id, at: [3, 1] }, [[4, 1]], null) as { id: string };
     expect(h.heating.pipes!.find((p) => p.id === g.id)!.via).toBe('ceiling');
+    // Drawn at a level (the plan's switch): from the source it goes there; off a run, it goes where that run is.
+    const rm = drawRun(h, 0, { id: 'source' }, [[0.5, 4]], null, true, 'room') as { id: string };
+    expect(h.heating.pipes!.find((p) => p.id === rm.id)!.via).toBe('room');
+    const off = drawRun(h, 0, { run: a.id, at: [3, 2.5] }, [[4.5, 2.5]], null, true, 'room') as { id: string };
+    expect(h.heating.pipes!.find((p) => p.id === off.id)!.via).toBe('ceiling');
   });
 
   it('a run finished on another run feeds it from there on, and never in a loop', () => {

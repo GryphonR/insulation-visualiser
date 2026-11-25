@@ -10,10 +10,10 @@ import { OPEN_DOORWAY, addBasement, addStoreyAbove, bandName, canAddBasement, ca
 import { polyArea } from '../engine/geom';
 import { Num, fmt, uid, NumInput } from './hform';
 import { NO_SEL, plantName, plantOf, removePlant } from './DrawCanvas';
-import { MAX_V, PIPE_SIZES, joints, maxFlow, pipeFamily, sizesOn, resetRun, runLength, setBranchRiser, sizePipes, valveTail, viaOf, voidName, voidOf } from '../engine/house-pipes';
-import type { Level } from '../engine/house-pipes';
+import { MAX_V, PIPE_SIZES, joints, maxFlow, pipeFamily, sizesOn, resetRun, runLength, setBranchRiser, sizePipes, valveTail, viaOf, voidName, voidOf, LEVELS } from '../engine/house-pipes';
 import type { Lens, OpPick, Sel, Tool } from './DrawCanvas';
 import { href } from './route';
+import { Chip } from './controls';
 import { RoofSectionFields, newRoof } from './HouseRoof';
 
 type ToolDef = [Tool, string, string];
@@ -483,12 +483,10 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
           <label className="hf"><span className="eyebrow">Pipe size</span>
             <select className="select" value={p.size} onChange={(e) => setRun({ size: e.target.value })}>{[...new Set([...sizesOn(house), p.size])].map((k) => <option key={k}>{k}</option>)}</select>
           </label>
-          {p.leg && <label className="hf"><span className="eyebrow">Runs</span>
-            <select className="select" name="via" value={viaOf(house, p)} onChange={(e) => setRun({ via: e.target.value as Level })}>
-              <option value="floor">Under the floor</option><option value="room">In the room</option><option value="ceiling">In the ceiling</option>
-            </select>
+          {p.leg && <div className="hf"><span className="eyebrow">Runs</span>
+            <div className="chips" role="group" aria-label="Where it runs">{LEVELS.map(([l, name]) => <Chip key={l} on={viaOf(house, p) === l} onClick={() => setRun({ via: l })}>{name}</Chip>)}</div>
             <span className="small muted">{voidName(house, voidOf(house, p)).replace(/^./, (c) => c.toUpperCase())}</span>
-          </label>}
+          </div>}
         </div>
         {served.length > 0 && (
           <table className="h-table">

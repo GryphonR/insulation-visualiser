@@ -9,9 +9,9 @@ import type { Pt } from '../engine/geom';
 import { OPEN_DOORWAY, addEmitter, addFloorZone, addStairwell, OPEN_STAIRWELL, ensureOpenDoorway, joinRooms, addRoomAt, cutPlan, deleteRoom, emitterPose, flushDelta, parallelSnap, innerDoorAt, innerWallThickness, insertCorner, isOutside, joinedCorners, mapCorners, turnToWall, mergeRooms, moveCorners, nearestWall, openingCentre, pieceAlign, pieceGap, pieceKeys, pieceSeg, pieceThickness, problems, removeCorner, roomAt, splitRoom, splitWall, stretchAtWall, wallGhosts, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
 import type { WallPiece } from '../engine/house-draw';
 import { planBounds } from './HousePlan';
-import { attachments, dragSegment, drawRun, ell, feedsFrom, joinRun, livePath, moveNode, moveOpenEnd, onPlan, manifoldName, manifolds, removeRun, routePipes, splitSegment, squareInto, unpiped, voidName, voidOf, wallSnap } from '../engine/house-pipes';
+import { LEVEL_AT, LEVELS, attachments, defaultLevel, dragSegment, drawRun, ell, feedsFrom, joinRun, levelDash, levelIn, livePath, moveNode, moveOpenEnd, onPlan, viaOf, manifoldName, manifolds, removeRun, routePipes, splitSegment, squareInto, unpiped, voidName, voidOf, wallSnap } from '../engine/house-pipes';
 import { placedManifold } from '../engine/house-controls';
-import type { Attach } from '../engine/house-pipes';
+import type { Attach, Level } from '../engine/house-pipes';
 import type { Emitter, Heating, Plant } from '../engine/house-heating';
 import { EMITTER_NAME, ZONE_COLOURS, emitterStorey } from '../engine/house-heating';
 import { uid } from './hform';
@@ -55,7 +55,7 @@ export const plantName = (h: House, id: string) => id.startsWith('m:') ? manifol
 type MenuFor = { k: 'wall'; wall: WallRef } | { k: 'room'; id: string } | { k: 'corner'; room: string; idx: number } | { k: 'op' | 'em'; id: string } | { k: 'pipe'; id: string; seg: number }
   | { k: 'plant'; id: string } | { k: 'zone'; id: string } | { k: 'zcorner'; id: string; idx: number };
 /** A field of the selection that the side panel can be opened on: its dropdown (build-up, glazing or radiator type), its first size, or a room's name. */
-export type EditField = 'type' | 'size' | 'name' | 'via';
+export type EditField = 'type' | 'size' | 'name';
 
 export const GRID = 0.05;
 const S = 48, MAGNET = 0.15, ALIGN = 0.15, FLUSH = 0.2;
@@ -216,6 +216,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   const [cut, setCut] = useState<Pt | null>(null);
   /** Where the pipe run being drawn starts; its corners so far are in `draft`. */
   const [pipeFrom, setPipeFrom] = useState<Attach | null>(null);
+  /** The level new runs are drawn in; a run started off another is drawn where that one is. */
+  const [level, setLevel] = useState<Level>(() => defaultLevel(house, Math.min(storey, house.storeys.length - 1)));
   const pointers = useRef(new Map<number, Pt>());
   /** Two fingers down: their spread and midpoint (screen px) and the view when they landed. */
   const pinch = useRef<{ d: number; m: Pt; v: View } | null>(null);
@@ -506,7 +508,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     if (port) return { a: { id: port.x.id }, at: port.x.at, label: port.x.label };
     let best: { a: Attach; at: Pt; label: string } | null = null, bd = r;
     for (const x of house.heating.pipes ?? []) {
-      const v = voidOf(house, x), q = onPlan(storey, v) ? livePath(house, x) : null;
+      // While drawing, only the runs on the level being drawn in can be joined.
+      const v = voidOf(house, x), q = onPlan(storey, v) && (tool !== 'pipe' || levelIn(storey, v) === level) ? livePath(house, x) : null;
       for (let i = 0; q && i + 1 < q.length; i++) {
         const a = q[i], b = q[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
         const at: Pt = [a[0] + dx * t, a[1] + dy * t], d = Math.hypot(at[0] - p[0], at[1] - p[1]);
@@ -541,9 +544,9 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   /** Finish the pipe being drawn on `to` (or, with null, leave its end open), if the engine takes it. */
   const finishPipe = (to: Attach | null) => {
     if (!pipeFrom) return;
-    const mid = draft.slice(1), sq = !loose.current, test = drawRun(structuredClone(house), storey, pipeFrom, mid, to, sq);
+    const mid = draft.slice(1), sq = !loose.current, test = drawRun(structuredClone(house), storey, pipeFrom, mid, to, sq, level);
     if ('error' in test) { setNote(test.error); return; }
-    upd((h) => { drawRun(h, storey, pipeFrom, mid, to, sq); });
+    upd((h) => { drawRun(h, storey, pipeFrom, mid, to, sq, level); });
     setSel({ ...NO_SEL, item: { k: 'pipe', id: test.id } });
     setDraft([]); setPipeFrom(null); setNote('');
     if (!sticky) setTool('select');
@@ -673,6 +676,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         const hit = pipeHit(p);
         if (!hit) { setNote('Start on the boiler or heat pump, a riser, a radiator, a UFH manifold, the cylinder or an existing run (the green rings).'); return; }
         setPipeFrom(hit.a); setDraft([hit.at]);
+        if ('run' in hit.a) { const r = house.heating.pipes?.find((x) => x.id === (hit.a as { run: string }).run); if (r) setLevel(levelIn(storey, voidOf(house, r))); }
         setNote(feedsFrom(hit.a) ? 'Click each corner; click a radiator, fan coil, manifold, the cylinder, a riser or another run to finish, or press Enter to leave the end open. Backspace undoes a corner, Esc cancels.'
           : 'Click each corner; click the boiler, a riser or a run to finish. Backspace undoes a corner, Esc cancels.');
         return;
@@ -1127,10 +1131,10 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       return (
         <g key={`run${x.id}`}>
           <title>{x.name} · {x.size} · in the void {voidName(house, v)}{other ? ` · serves the ${house.storeys[x.leg!.storey]?.name.toLowerCase()}` : ''}{x.loose ? ' · not joined to the heat source' : x.loop ? ' · closes a loop: no flow is counted along it' : ''}</title>
-          {/* In this floor's ceiling void: long dashes with dots; in its floor void: solid. Runs serving the other floor are fainter. */}
-          {/* Not joined to the heat source: grey and dashed; closing a loop: dotted. */}
-          <polyline points={pts.map((q) => to(q).join(',')).join(' ')} fill="none" stroke={onR ? '#c2410c' : x.loose ? '#8a9199' : '#c0392b'} strokeOpacity={onR ? 1 : other ? 0.45 : 0.8} strokeWidth={z(onR ? 3.5 : 2)} strokeLinejoin="round" pointerEvents="none"
-            strokeDasharray={x.loop ? `${z(2)} ${z(3)}` : x.loose ? `${z(6)} ${z(4)}` : v === storey + 1 ? `${z(9)} ${z(3)} ${z(2)} ${z(3)}` : undefined} />
+          {/* Its level by line: solid under the floor, dots in the room, long dashes in the ceiling (a loop: dash-dot). Not joined to the heat
+              source: grey. Runs serving the other floor are fainter; while drawing, runs on other levels fade right back. */}
+          <polyline points={pts.map((q) => to(q).join(',')).join(' ')} fill="none" stroke={onR ? '#c2410c' : x.loose ? '#8a9199' : '#c0392b'} strokeOpacity={onR ? 1 : tool === 'pipe' && levelIn(storey, v) !== level ? 0.2 : other ? 0.45 : 0.8} strokeWidth={z(onR ? 3.5 : 2)} strokeLinejoin="round" pointerEvents="none"
+            strokeDasharray={x.loop ? `${z(8)} ${z(3)} ${z(1)} ${z(3)}` : levelDash(levelIn(storey, v), z(1))} strokeLinecap={levelIn(storey, v) === 'room' && !x.loop ? 'round' : undefined} />
           {x.loose && !x.parent && (() => { const c = to(pts[0]), d = z(6); return <path d={`M${c[0] - d} ${c[1] - d} l${2 * d} ${2 * d} m0 ${-2 * d} l${-2 * d} ${2 * d}`} stroke="#b91c1c" strokeWidth={z(2.2)} pointerEvents="none"><title>{x.name} starts here, joined to nothing: draw a run to it, or drop an open end on it.</title></path>; })()}
           {/* Where a run from the void goes through to a heater on the other floor. */}
           {other && x.emitter && <circle cx={end[0]} cy={end[1]} r={z(3.5)} fill="#fff" stroke="#c0392b" strokeOpacity={0.6} strokeWidth={z(1.5)} pointerEvents="none" />}
@@ -1499,6 +1503,14 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       </svg>
       {/* Stop the buttons taking focus, so typed lengths and Enter still reach the canvas. */}
       <NorthDial north={house.north ?? 0} onSet={lens === 'pipes' ? undefined : (n) => upd((h) => { h.north = n; })} />
+      {/* The level new runs go in, and the key to the line styles. */}
+      {lens === 'pipes' && <div className="level-switch" role="group" aria-label="Level new runs are drawn in" onMouseDown={(e) => e.preventDefault()}>
+        {LEVELS.map(([l, name]) => (
+          <button key={l} type="button" className={level === l ? 'chip on' : 'chip'} aria-pressed={level === l} onClick={() => setLevel(l)} title={`New runs: ${voidName(house, storey + LEVEL_AT[l]).toLowerCase()}`}>
+            <svg width="24" height="8" aria-hidden="true"><line x1="2" y1="4" x2="22" y2="4" stroke="#c0392b" strokeWidth="2" strokeDasharray={levelDash(l, 1)} strokeLinecap={l === 'room' ? 'round' : undefined} /></svg>{name}
+          </button>
+        ))}
+      </div>}
       <div className="draw-zoom" role="group" aria-label="Zoom" onMouseDown={(e) => e.preventDefault()}>
         {zoomStart}
         <button type="button" className="btn-secondary" aria-label="Zoom in" title="Zoom in (+)" onClick={zoomIn}>+</button>
@@ -1577,7 +1589,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
             if (!p || !pts) return { title: '', tip: '', items: [] };
             return { title: 'Pipe run actions', tip: `${p.name} · ${p.size} · in the void ${voidName(house, voidOf(house, p))}`, items: [
               { label: 'Add a corner', glyph: '＋', run: () => addPipeCorner(p.id, pts, on.seg, at) },
-              edit('Where it runs', '⇅', 'via'),
+              choices('Where it runs', LEVELS.map(([id, name]) => ({ id, name })), viaOf(house, p), (id) => upd((h) => { const x = h.heating.pipes?.find((q) => q.id === p.id); if (x) x.via = id as Level; })),
               { label: 'Delete run', glyph: '✕', run: () => deleteRun(p.id) },
             ] };
           }

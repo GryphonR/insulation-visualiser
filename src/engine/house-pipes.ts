@@ -397,7 +397,11 @@ export function viaOf(h: House, p: Pipe): Level {
 /** The void a run lies in: void s is under storey s, so a storey's ceiling and the floor of the one above are the same void. -1 with no route. */
 export const voidOf = (h: House, p: Pipe): number => (p.leg ? p.leg.storey + LEVEL_AT[viaOf(h, p)] : -1);
 /** Where each level is, as a void number: void s is under storey s, so storey s's ceiling is void s + 1; its rooms are in between. */
-const LEVEL_AT: Record<Level, number> = { floor: 0, room: 0.5, ceiling: 1 };
+export const LEVEL_AT: Record<Level, number> = { floor: 0, room: 0.5, ceiling: 1 };
+/** The levels in order, named as the plan's switch and menus show them. */
+export const LEVELS: Array<[Level, string]> = [['floor', 'Under the floor'], ['room', 'In the room'], ['ceiling', 'In the ceiling']];
+/** A level's line on the plan, at `k` px per unit: solid under the floor, dots in the room (with round caps), long dashes in the ceiling. */
+export const levelDash = (l: Level, k: number) => (l === 'room' ? `${0.1 * k} ${4 * k}` : l === 'ceiling' ? `${10 * k} ${5 * k}` : undefined);
 /** The level on storey `s` that is void `v`. */
 export const levelIn = (s: number, v: number): Level => (v === s + 1 ? 'ceiling' : v === s + 0.5 ? 'room' : 'floor');
 /** True for a void storey `s`'s plan shows: under its floor, its rooms, its ceiling. */
@@ -812,9 +816,10 @@ export const feedsFrom = (a: Attach) => 'run' in a || !(a.id === 'cylinder' || a
  * Drawn from a heater back to its feed, it is turned round. On a floor away from the source it comes off that floor's branch
  * (up the riser, or straight up), made if there is none. A heater or cylinder that already had a run gets this one instead.
  * The corners are kept as drawn, slants and all; with `square`, the last stretch into the heater gets a corner rather than running on the slant.
+ * It is laid where the run it starts off is; else at `level` (the level being drawn in), where the run it finishes on is, or the storey's default.
  * Returns the new run's id, or why it cannot be drawn (edits h in place).
  */
-export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attach | null, square = true): { id: string } | { error: string } {
+export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attach | null, square = true, level?: Level): { id: string } | { error: string } {
   const src = h.heating.source;
   if (!src) return { error: 'Place the boiler or heat pump first.' };
   if (b && !feedsFrom(a) && feedsFrom(b)) { [a, b] = [b, a]; mid = [...mid].reverse(); }
@@ -878,7 +883,7 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
     const Y = all.find((p) => p.id === into.run), yv = Y ? voidOf(h, Y) : -1;
     if (!Y) return { error: 'That run is gone.' };
     if (!onPlan(storey, yv)) return { error: 'That run is not under this floor, in its rooms or in its ceiling.' };
-    via ??= levelIn(storey, yv);
+    via ??= level ?? levelIn(storey, yv);
     J = nodeOn(h, into.run, into.at);
     if (!J) return { error: 'That run is gone.' };
     T = J.at;
@@ -898,7 +903,7 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
   all.push({ id, parent, leg: { storey, pts }, ends: [start, B?.id ?? ''], length: m1(pathLen(pts)), ...(J ? { b: J.id } : {}),
     name: e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}` : B?.id.startsWith('m:') ? manifoldName(h, B.id.slice(2)) : toRiser ? `To riser ${(h.heating.risers ?? []).findIndex((r) => r.id === B!.id) + 1}` : B ? 'Hot water cylinder coil' : 'Main',
     size: usable(h, e ? (e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : storey === src.storey || storey === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)') : 'Cu 22 mm'),
-    ...(e ? { emitter: e.id } : {}), via: via ?? defaultLevel(h, storey) });
+    ...(e ? { emitter: e.id } : {}), via: via ?? level ?? defaultLevel(h, storey) });
   // Its floor or ceiling is fixed before it changes parent: following a run upstream stops at a change of floor.
   // The riser's branches to other floors now come off this run, up or down from its floor.
   // One with nothing on it yet goes: it is made again when a run is drawn off the riser on that floor.
@@ -933,7 +938,7 @@ export function moveOpenEnd(h: House, id: string, b: Attach | null, to: Pt, squa
   // Drawn again through its corners on a copy, so a refusal leaves the house as it was.
   const t = structuredClone(h), s0 = X.ends[0], a: Attach = s0.startsWith('tee:') ? { run: s0.slice(4), at: pts[0] } : { id: s0 };
   removeRun(t, id);
-  const r = drawRun(t, X.leg.storey, a, pts.slice(1), b, square);
+  const r = drawRun(t, X.leg.storey, a, pts.slice(1), b, square, X.via);
   if ('error' in r) return r;
   // Back to its own id, swapped with whichever new run took that id while it was out, and every reference with it.
   const sw = (v: string) => (v === r.id ? id : v === id ? r.id : v);
