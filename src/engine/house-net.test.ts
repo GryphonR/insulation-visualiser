@@ -5,7 +5,7 @@ import { applyPlan } from './house-controls';
 import { defaultHouse } from './house-default';
 import { DEMOS } from './house-demos';
 import { syncNet, treeOf } from './house-net';
-import { autoPipes, drawRun, moveOpenEnd, removeRun, sizePipes } from './house-pipes';
+import { autoPipes, combineRuns, drawRun, livePath, moveNode, moveOpenEnd, removeRun, sizePipes } from './house-pipes';
 
 // What the rest of the app reads from a run: its parent, its ends, which heater it feeds and its route.
 const shape = (h: House) => (h.heating.pipes ?? []).map((p) => ({ id: p.id, parent: p.parent, ends: p.ends, emitter: p.emitter, pts: p.leg?.pts, rise: p.rise }));
@@ -134,6 +134,11 @@ describe('editing the net', () => {
   it('a deleted trunk leaves the rest loose', () => {
     const { h, q, k1, k2 } = group();
     expect(h.heating.pipes!.filter((p) => p.loose).map((p) => p.id).sort()).toEqual([q, k1, k2].sort());
+    // They carry nothing, their radiators are not piped, and the checks say so.
+    const res = calcHouse(h), s = sizePipes(h, res);
+    for (const id of [q, k1, k2]) expect(s.rows.find((r) => r.pipe.id === id)!.loadW).toBe(0);
+    for (const id of [k1, k2]) expect(s.unpiped).toContain(pipe(h, id).emitter);
+    expect(res.checks.some((c) => c.text.startsWith('Pipe runs not joined to the') && c.text.includes(pipe(h, q).name))).toBe(true);
   });
 
   it('a run drawn to the far end of a loose run feeds the whole group from there, that run turned round', () => {
@@ -159,6 +164,23 @@ describe('editing the net', () => {
     expect(offR.length).toBe(2);
     expect(pipe(n, k1).parent).toBe(q);
     expect(offR.find((p) => p.id !== q)!.leg!.pts.slice(-1)[0]).toEqual([3, 0.5]);
+  });
+
+  it('moving a junction moves every run that meets there, each staying square', () => {
+    // Shared trunks make junctions where a trunk meets its branches.
+    const h0 = laidOut();
+    expect(combineRuns(h0)).toBeGreaterThan(0);
+    const h = syncNet(h0), J = h.heating.nodes!.find((n) => !n.on && n.at && h.heating.pipes!.filter((p) => p.a === n.id || p.b === n.id).length > 2)!;
+    const at = h.heating.pipes!.filter((p) => p.a === J.id || p.b === J.id);
+    const x = structuredClone(h);
+    moveNode(x, J.id, [J.at![0] + 0.4, J.at![1] + 0.3]);
+    const n = syncNet(x);
+    for (const p of at) {
+      const pts = livePath(n, pipe(n, p.id))!, end = p.a === J.id ? pts[0] : pts[pts.length - 1];
+      expect(end).toEqual([+(J.at![0] + 0.4).toFixed(3), +(J.at![1] + 0.3).toFixed(3)]);
+      for (let i = 1; i < pts.length; i++) expect(Math.abs(pts[i][0] - pts[i - 1][0]) < 1e-6 || Math.abs(pts[i][1] - pts[i - 1][1]) < 1e-6).toBe(true);
+    }
+    expect(shape(n).map((p) => [p.id, p.parent, p.ends])).toEqual(shape(h).map((p) => [p.id, p.parent, p.ends]));
   });
 
   it('an open end dragged onto a loose group joins it the same way', () => {

@@ -140,7 +140,8 @@ export function sizePipes(h: House, res: HouseResult): PipeResult {
   };
   // Per mode: the load through each open run, its flow and pressure drop, and the mode's index circuit.
   const modes = modesOf(h).filter((m) => m.water !== 'off').map((m) => {
-    const open = openRuns(h, m), chilled = m.water === 'chilled', dT = chilled ? cool?.dT ?? 3 : h.heating.dT;
+    // A run not joined to the source carries no water, whatever its valves.
+    const open = new Set([...openRuns(h, m)].filter((id) => !byPipe.get(id)?.loose)), chilled = m.water === 'chilled', dT = chilled ? cool?.dT ?? 3 : h.heating.dT;
     const memo = new Map<string, number>();
     const pipeLoad = (p: Pipe, seen = new Set<string>()): number => {
       if (memo.has(p.id)) return memo.get(p.id)!;
@@ -184,7 +185,7 @@ export function sizePipes(h: House, res: HouseResult): PipeResult {
   const byId = new Map(rows.map((r) => [r.pipe.id, r]));
   for (const id of indexPath) byId.get(id)!.index = true;
   const head = (h.heating.pumpHead ?? 40) * 1000;
-  const piped = new Set(pipes.flatMap((p) => runEmitters(h, p)));
+  const piped = new Set(pipes.filter((p) => !p.loose).flatMap((p) => runEmitters(h, p)));
   return { rows, indexDp, indexPath, head, headOk: indexDp <= head, unpiped: h.heating.emitters.filter((e) => !piped.has(e.id)).map((e) => e.id), emitterW: load, paMax, longest, paPump, paCap,
     modes: modes.map(({ id, name, flow, v, indexDp, indexPath }) => ({ id, name, flow, v, indexDp, indexPath })) };
 }
@@ -428,6 +429,27 @@ export function splitSegment(pts: Pt[], i: number, at: Pt): Pt[] {
 export function removeRun(h: House, id: string): void {
   const p = h.heating.pipes?.find((x) => x.id === id);
   if (p) h.heating.pipes = h.heating.pipes!.filter((x) => x !== p).map((x) => (x.parent === id && !p.leg ? { ...x, parent: p.parent, ...(x.a && x.a === p.b ? { a: p.a } : {}) } : x));
+}
+
+/** Move a free junction: every run meeting there now ends at `to`, the corner next to it following so each stays square (edits h in place). */
+export function moveNode(h: House, id: string, at: Pt): void {
+  ensureNet(h);
+  const to: Pt = [+at[0].toFixed(3), +at[1].toFixed(3)];
+  const n = h.heating.nodes!.find((x) => x.id === id);
+  if (!n || n.on) return;
+  n.at = to;
+  for (const p of h.heating.pipes!) {
+    const lp = p.leg && (p.a === id || p.b === id) ? livePath(h, p) : null;
+    if (!lp || !p.leg) continue;
+    let pts = lp.map((q) => [q[0], q[1]] as Pt);
+    if (pts.length <= 2) pts = p.a === id ? ell(h, p.leg.storey, to, pts[pts.length - 1]) : ell(h, p.leg.storey, pts[0], to);
+    else {
+      const follow = (end: number, nb: number) => { if (Math.abs(pts[nb][1] - pts[end][1]) < 1e-6) pts[nb][1] = to[1]; else if (Math.abs(pts[nb][0] - pts[end][0]) < 1e-6) pts[nb][0] = to[0]; pts[end] = to; };
+      if (p.a === id) follow(0, 1);
+      if (p.b === id) follow(pts.length - 1, pts.length - 2);
+    }
+    p.leg = { storey: p.leg.storey, pts: tidy(pts) }; p.length = m1(pathLen(p.leg.pts)); delete p.typed;
+  }
 }
 
 /**

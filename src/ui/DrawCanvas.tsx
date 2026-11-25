@@ -9,7 +9,7 @@ import type { Pt } from '../engine/geom';
 import { OPEN_DOORWAY, addEmitter, addFloorZone, addStairwell, OPEN_STAIRWELL, ensureOpenDoorway, joinRooms, addRoomAt, cutPlan, deleteRoom, emitterPose, flushDelta, parallelSnap, innerDoorAt, innerWallThickness, insertCorner, isOutside, joinedCorners, mapCorners, turnToWall, mergeRooms, moveCorners, nearestWall, openingCentre, pieceAlign, pieceGap, pieceKeys, pieceSeg, pieceThickness, problems, removeCorner, roomAt, splitRoom, splitWall, stretchAtWall, wallGhosts, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
 import type { WallPiece } from '../engine/house-draw';
 import { planBounds } from './HousePlan';
-import { attachments, dragSegment, drawRun, ell, feedsFrom, joinRun, livePath, moveOpenEnd, manifoldName, manifolds, removeRun, routePipes, splitSegment, squareInto, unpiped, voidName, voidOf, wallSnap } from '../engine/house-pipes';
+import { attachments, dragSegment, drawRun, ell, feedsFrom, joinRun, livePath, moveNode, moveOpenEnd, manifoldName, manifolds, removeRun, routePipes, splitSegment, squareInto, unpiped, voidName, voidOf, wallSnap } from '../engine/house-pipes';
 import { placedManifold } from '../engine/house-controls';
 import type { Attach } from '../engine/house-pipes';
 import type { Emitter, Heating, Plant } from '../engine/house-heating';
@@ -143,6 +143,8 @@ type Drag =
   | { k: 'pipe'; id: string; seg: number; base: Pt[]; start: Pt; cur: Pt; moved: boolean }
   /** The open end of a run, dragged to move it or drop it on what it should feed. */
   | { k: 'pend'; id: string; start: Pt; cur: Pt; moved: boolean }
+  /** A junction where runs meet, dragged to move every run end on it. */
+  | { k: 'node'; id: string; start: Pt; cur: Pt; moved: boolean }
   /** A floor or ceiling zone (all of it, or one corner `idx`). */
   | { k: 'zone'; id: string; idx?: number; start: Pt; cur: Pt; moved: boolean }
   | { k: 'box'; a: Pt; cur: Pt }
@@ -804,6 +806,10 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       if ('error' in test) { setNote(test.error); return; }
       upd((h) => { moveOpenEnd(h, d.id, b, at, sq); });
       setNote('');
+    } else if (d.k === 'node') {
+      if (!d.moved) return;
+      const at: Pt = loose.current ? d.cur : [snap(d.cur[0]), snap(d.cur[1])];
+      upd((h) => moveNode(h, d.id, at));
     } else if (d.k === 'plant') {
       const dl = loopShift(d);
       upd((h) => movePlant(h, d.id, dl));
@@ -1108,6 +1114,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     const pipeDrag = drag?.k === 'pipe' && drag.moved ? drag : null;
     // A storey shows the runs in its floor void and in its ceiling void, which is the floor void of the storey above, whichever floor they serve.
     const ends: Array<{ x: (typeof runs)[number]; end: Pt }> = [];
+    // Where each free junction on this plan is, from the runs that meet there.
+    const free = new Set((hs0.nodes ?? []).filter((n) => !n.on).map((n) => n.id)), junctions = new Map<string, Pt>();
     const runLines = runs.filter((x) => { const v = voidOf(house, x); return v === storey || v === storey + 1; }).map((x) => {
       const live = livePath(house, x) ?? x.leg!.pts, endDrag = drag?.k === 'pend' && drag.moved && drag.id === x.id ? drag : null;
       const pts = pipeDrag?.id === x.id ? dragSegment(pipeDrag.base, pipeDrag.seg, loopShift(pipeDrag))
@@ -1115,12 +1123,15 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       const onR = sel.item?.k === 'pipe' && sel.item.id === x.id, v = voidOf(house, x), other = x.leg!.storey !== storey;
       const end = to(pts[pts.length - 1]), open = x.ends?.[1] === '' && !(hs0.pipes ?? []).some((c) => c.parent === x.id);
       if (open) ends.push({ x, end });
+      if (x.leg!.storey === storey) { if (x.a && free.has(x.a)) junctions.set(x.a, pts[0]); if (x.b && free.has(x.b)) junctions.set(x.b, pts[pts.length - 1]); }
       return (
         <g key={`run${x.id}`}>
-          <title>{x.name} · {x.size} · in the void {voidName(house, v)}{other ? ` · serves the ${house.storeys[x.leg!.storey]?.name.toLowerCase()}` : ''}</title>
+          <title>{x.name} · {x.size} · in the void {voidName(house, v)}{other ? ` · serves the ${house.storeys[x.leg!.storey]?.name.toLowerCase()}` : ''}{x.loose ? ' · not joined to the heat source' : x.loop ? ' · closes a loop: no flow is counted along it' : ''}</title>
           {/* In this floor's ceiling void: long dashes with dots; in its floor void: solid. Runs serving the other floor are fainter. */}
-          <polyline points={pts.map((q) => to(q).join(',')).join(' ')} fill="none" stroke={onR ? '#c2410c' : '#c0392b'} strokeOpacity={onR ? 1 : other ? 0.45 : 0.8} strokeWidth={z(onR ? 3.5 : 2)} strokeLinejoin="round" pointerEvents="none"
-            strokeDasharray={v === storey + 1 ? `${z(9)} ${z(3)} ${z(2)} ${z(3)}` : undefined} />
+          {/* Not joined to the heat source: grey and dashed; closing a loop: dotted. */}
+          <polyline points={pts.map((q) => to(q).join(',')).join(' ')} fill="none" stroke={onR ? '#c2410c' : x.loose ? '#8a9199' : '#c0392b'} strokeOpacity={onR ? 1 : other ? 0.45 : 0.8} strokeWidth={z(onR ? 3.5 : 2)} strokeLinejoin="round" pointerEvents="none"
+            strokeDasharray={x.loop ? `${z(2)} ${z(3)}` : x.loose ? `${z(6)} ${z(4)}` : v === storey + 1 ? `${z(9)} ${z(3)} ${z(2)} ${z(3)}` : undefined} />
+          {x.loose && !x.parent && (() => { const c = to(pts[0]), d = z(6); return <path d={`M${c[0] - d} ${c[1] - d} l${2 * d} ${2 * d} m0 ${-2 * d} l${-2 * d} ${2 * d}`} stroke="#b91c1c" strokeWidth={z(2.2)} pointerEvents="none"><title>{x.name} starts here, joined to nothing: draw a run to it, or drop an open end on it.</title></path>; })()}
           {/* Where a run from the void goes through to a heater on the other floor. */}
           {other && x.emitter && <circle cx={end[0]} cy={end[1]} r={z(3.5)} fill="#fff" stroke="#c0392b" strokeOpacity={0.6} strokeWidth={z(1.5)} pointerEvents="none" />}
 
@@ -1156,6 +1167,12 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         {/* Routes are measured from the saved positions, so they are hidden while something is dragged. */}
         {!plantDrag && legs.map((l, i) => <polyline key={`pl${i}`} points={pts(l.pts)} fill="none" stroke="#c0392b" strokeOpacity={0.75} strokeWidth={z(2)} strokeDasharray={`${z(6)} ${z(3)}`} strokeLinejoin="round" pointerEvents="none" />)}
         {!plantDrag && runLines}
+        {/* A junction where two or more runs meet: drag it to move them all. */}
+        {!plantDrag && pipeSel && [...junctions].filter(([id]) => (hs0.pipes ?? []).filter((p) => p.a === id || p.b === id).length > 1).map(([id, at]) => {
+          const c = drag?.k === 'node' && drag.id === id && drag.moved ? to(drag.cur) : to(at);
+          return <circle key={`j${id}`} cx={c[0]} cy={c[1]} r={z(5)} fill="#fff" stroke="#14212b" strokeWidth={z(1.5)} style={{ cursor: 'move' }}
+            onPointerDown={(ev) => begin(ev, { k: 'node', id, start: raw(ev), cur: raw(ev), moved: false })}><title>Junction: drag to move every run that meets here</title></circle>;
+        })}
         {!plantDrag && ends.map(({ x, end }) => <g key={`end${x.id}`}><rect x={end[0] - z(6)} y={end[1] - z(6)} width={z(12)} height={z(12)} fill="#fff" stroke="#c0392b" strokeWidth={z(2)} pointerEvents={pipeSel ? undefined : 'none'} style={{ cursor: 'grab' }}
             onPointerDown={pipeSel ? (ev) => { setSel({ ...NO_SEL, item: { k: 'pipe', id: x.id } }); begin(ev, { k: 'pend', id: x.id, start: raw(ev), cur: raw(ev), moved: false }); } : undefined}>
             <title>Open end: {x.name} feeds nothing yet. Drag it onto a radiator, fan coil, manifold, the cylinder or another run to connect it, or anywhere to move it; or tee a run off it with Draw a pipe run.</title></rect></g>)}
@@ -1188,7 +1205,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         )}
       </g>
     );
-  }, [house, storey, tool, sel, plantDrag, drag?.k === 'pipe' || drag?.k === 'pend' ? drag : null, u, hs, lens]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [house, storey, tool, sel, plantDrag, drag?.k === 'pipe' || drag?.k === 'pend' || drag?.k === 'node' ? drag : null, u, hs, lens]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const opDrag = drag?.k === 'op' ? drag : null;
   const opLayer = useMemo(() => zoneMode ? null : onThis.flatMap((r) => {

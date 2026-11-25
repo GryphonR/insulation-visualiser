@@ -65,9 +65,10 @@ export function layoutPipes(h: House): { nodes: Node[]; rows: number; maxDepth: 
     for (const k of ks) { k.px = depth; k.py = n.y; }
     return n;
   };
-  const roots = kids(null).map((p) => place(p, 0, new Set())).filter((x): x is Node => !!x);
-  const srcY = roots.length ? (roots[0].y + roots[roots.length - 1].y) / 2 : 0;
-  for (const r of roots) { r.px = -1; r.py = srcY; }
+  // Groups not joined to the source go last, each starting on its own row rather than from the source.
+  const roots = kids(null).sort((a, b) => +!!a.loose - +!!b.loose).map((p) => place(p, 0, new Set())).filter((x): x is Node => !!x), fed = roots.filter((r) => !r.p.loose);
+  const srcY = fed.length ? (fed[0].y + fed[fed.length - 1].y) / 2 : 0;
+  for (const r of roots) { r.px = -1; r.py = r.p.loose ? r.y : srcY; }
   return { nodes, rows: row, maxDepth, srcY };
 }
 
@@ -129,10 +130,11 @@ export function HouseSchematic() {
   const hp = isHeatPump(h.hp.source), ctl = h.heating.controls, cool = h.heating.cooling;
   const xOf = (d: number) => X0 + (d + 1) * STEP, yOf = (r: number) => TOP + r * ROW;
   const xE = xOf(maxDepth) + 24; // every emitter in one column
-  const W = xE + 60 + LABEL_W, H = TOP + Math.max(1, rows) * ROW + 110;
+  const looseTops = nodes.filter((n) => n.p.loose && n.px < 0), loops = nodes.filter((n) => n.p.loop), notes = +!!looseTops.length + +!!loops.length;
+  const W = xE + 60 + LABEL_W, H = TOP + Math.max(1, rows) * ROW + 110 + notes * 18;
   const roomOf = (id: string) => h.rooms.find((r) => r.id === id);
   const flowT = res.heat.designFlow, dT = h.heating.dT;
-  const totalW = sized.rows.filter((r) => !r.pipe.parent).reduce((t, r) => t + r.loadW, 0);
+  const totalW = sized.rows.filter((r) => !r.pipe.parent && !r.pipe.loose).reduce((t, r) => t + r.loadW, 0);
   const name = `${active.name.replace(/[^\w-]+/g, '_')}-heating-schematic`;
   const checks = controlChecks(h);
   const edit = (fn: (x: House) => void) => upd((x) => { fn(x); markCustom(x); });
@@ -274,7 +276,8 @@ export function HouseSchematic() {
                 ? <g className={running ? 'sx-spin' : undefined}><circle cx={38} cy={yOf(srcY) - 22} r={8} fill="none" stroke={INK} strokeWidth={1} /><path d={`M38 ${yOf(srcY) - 22} l0 -7 M38 ${yOf(srcY) - 22} l6 4 M38 ${yOf(srcY) - 22} l-6 4`} stroke={INK} strokeWidth={1.5} /></g>
                 : <path className={running ? 'sx-pulse' : undefined} d={`M38 ${yOf(srcY) - 14} c-7 -4 -5 -10 0 -16 c1 5 6 6 6 11 c0 3 -3 5 -6 5 z`} fill={running ? '#ea580c' : IDLE} />}
               {nodes.map((n) => {
-                const r = byId.get(n.p.id), x0 = n.px < 0 ? X0 - 16 : xOf(n.px), y0 = yOf(n.py), y = yOf(n.y), u = use.get(n.p.id) ?? 'idle';
+                // A group not joined to the source starts at a red cross, not from the source, and carries nothing.
+                const loose = !!n.p.loose, r = byId.get(n.p.id), x0 = n.px < 0 ? (loose ? X0 + 6 : X0 - 16) : xOf(n.px), y0 = yOf(n.py), y = yOf(n.y), u = loose || n.p.loop ? 'idle' : use.get(n.p.id) ?? 'idle';
                 const leaf = !nodes.some((k) => k.p.parent === n.p.id), tip = endsOnHeater(n.p), x1 = leaf || tip ? xE : xOf(n.depth), w = r?.index ? 3 : 1.8;
                 const xs = n.px < 0 ? X0 : xOf(n.px), lx = xs + 10, bad = r && !r.ok;
                 const ret = `M${x0} ${y0 + O} H${x0 + (n.px < 0 ? 16 : 0) - O} V${y + O} H${x1}`, flo = `M${x0} ${y0 - O} H${x0 + (n.px < 0 ? 16 : 0) + O} V${y - O} H${x1}`;
@@ -286,7 +289,7 @@ export function HouseSchematic() {
                   onClick={pick ? () => upd((x) => moveValve(x, pick.v, pick.port, valvesOn(x, n.p.id).some((q) => q.v.id === pick.v && q.port === pick.port) ? n.p.id : null, valvesOn(x, n.p.id).some((q) => q.v.id === pick.v && q.port === pick.port) ? null : n.p.id)) : undefined}>
                   <path className="sx-hit" d={flo} stroke="transparent" strokeWidth={18} fill="none" />
                   <path className="sx-line" d={ret} stroke={COL[u][1]} strokeWidth={w} fill="none" />
-                  <path className="sx-line" d={flo} stroke={COL[u][0]} strokeWidth={w} fill="none" />
+                  <path className="sx-line" d={flo} stroke={COL[u][0]} strokeWidth={w} fill="none" strokeDasharray={n.p.loop ? '5 4' : undefined} />
                   {u !== 'idle' && <>
                     <path className="sx-dots" d={flo} stroke="#fff" strokeOpacity={0.9} strokeWidth={Math.max(1.4, w - 0.4)} fill="none" style={{ animationDuration: dur }} />
                     <path className="sx-dots back" d={ret} stroke="#fff" strokeOpacity={0.9} strokeWidth={Math.max(1.4, w - 0.4)} fill="none" style={{ animationDuration: dur }} />
@@ -294,7 +297,10 @@ export function HouseSchematic() {
                   <text x={lx} y={y - O - 5} fontFamily={FONT} fontSize={10} fill={bad ? BAD : INK}>{n.p.header ? `${n.p.name} · ` : ''}{short(n.p.size)} · {fmt(runLength(h, n.p), 1)} m</text>
                   {/* This mode's flow; the size (and a red label) follow the busiest mode, named when it is another one. */}
                   {r && <text x={lx} y={y + O + 13} fontFamily={FONT} fontSize={10} fill={bad ? BAD : MUTED}>{running && now ? (u === 'idle' ? 'No flow' : !now.flow.get(n.p.id) && u === 'dhw' && !h.heating.coilW ? 'Coil reheat not entered' : `${fmt(now.flow.get(n.p.id) ?? 0, 1)} l/min · ${fmt(v, 2)} m/s`) : `Design ${fmt(r.flowLpm, 1)} l/min · ${fmt(r.v, 2)} m/s`}{ctl && r.mode && (!running || r.mode !== m.name) ? ` · sized for ${r.mode}` : ''}</text>}
-                  {(tip || leaf) && <>{symbol(n, x1, y)}{label(n, xE + 52, y)}</>}
+                  {loose && n.px < 0 && <g><title>{n.p.name}: not joined to the {hp ? 'heat pump' : 'boiler'}</title><path d={`M${x0 - 6} ${y - 6} l12 12 m0 -12 l-12 12`} stroke={BAD} strokeWidth={2.2} /></g>}
+                  {n.p.loop
+                    ? <text x={xE + 52} y={y + 4} fontFamily={FONT} fontSize={10.5} fill={BAD}>{n.p.name}: closes a loop, so no flow is counted along it</text>
+                    : (tip || leaf) && <>{symbol(n, x1, y)}{label(n, xE + 52, y)}</>}
                   {!leaf && <circle cx={xOf(n.depth) + O} cy={y - O} r={2.5} fill={COL[u][0]} className="sx-fill" />}
                   {!leaf && <circle cx={xOf(n.depth) - O} cy={y + O} r={2.5} fill={COL[u][1]} className="sx-fill" />}
                   {vs.map(({ v: vv, port }, k) => valveMark(vv, port, n.p.id, xs + STEP - 22 - k * 26, y - O))}
@@ -308,6 +314,8 @@ export function HouseSchematic() {
                 <path d="M556 -6 L572 6 L572 -6 L556 6 Z" fill="#fff" stroke={INK} /><text x={578} y={4} fill={INK}>Valve open</text>
                 <path d="M650 -6 L666 6 L666 -6 L650 6 Z" fill={INK} stroke={INK} /><text x={672} y={4} fill={INK}>shut</text>
                 <text x={0} y={26} fill={sized.headOk ? MUTED : BAD}>Index circuit {fmt(sized.indexDp / 1000, 1)} kPa against {fmt(sized.head / 1000)} kPa pump head · {dT} K flow − return · Pa/m limit {fmt(sized.paMax)}{sized.modes.length > 1 ? ' · each run sized for its busiest mode' : ''} · red label: over the velocity or Pa/m limit</text>
+                {looseTops.length > 0 && <text x={0} y={44 + 18 * +(sized.unpiped.length > 0)} fill={BAD}>Not joined to the {hp ? 'heat pump' : 'boiler'} (red cross): {looseTops.map((n) => n.p.name).join('; ')}. Draw a run from one that is onto them, or drop an open end on them.</text>}
+                {loops.length > 0 && <text x={0} y={44 + 18 * (+(sized.unpiped.length > 0) + +!!looseTops.length)} fill={BAD}>Closes a loop (dashed): {loops.map((n) => n.p.name).join('; ')}. Water could go round it either way, so no flow is counted along it.</text>}
                 {sized.unpiped.length > 0 && <text x={0} y={44} fill={BAD}>Not piped: {sized.unpiped.map((id) => { const e = h.heating.emitters.find((x) => x.id === id); return e ? roomOf(e.room)?.name ?? id : id; }).join(', ')}</text>}
               </g>
             </svg>

@@ -1316,6 +1316,11 @@ export function calcHouse(given0: House, basis: Basis = 'best'): HouseResult {
     else if (e.cover < 0.995) checks.push({ level: 'warn', text: `${name}: emitters give ${Math.round(e.out)} W at ${designFlow.toFixed(0)} °C flow, ${Math.round(e.need)} W needed (${Math.round(e.cover * 100)}%).` });
   }
   offZones.forEach((names, zone) => checks.push({ level: 'warn', text: `Heating zone “${zone}” is switched off, so the hour-by-hour runs give no heat to ${names.join(', ')}.` }));
+  // Set on the runs by syncNet after every edit (house-net).
+  const runs = h.heating.pipes ?? [], plant = isHeatPump(h.hp.source) ? 'heat pump' : 'boiler';
+  const loose = runs.filter((p) => p.loose && !p.parent), loops = runs.filter((p) => p.loop);
+  if (loose.length) checks.push({ level: 'warn', text: `Pipe runs not joined to the ${plant}: ${loose.map((p) => p.name).join('; ')}. They and the heaters on them get no water until a run is drawn to them, or an open end dropped on them.` });
+  if (loops.length) checks.push({ level: 'warn', text: `Pipe runs closing a loop: ${loops.map((p) => p.name).join('; ')}. Water could go round either way, so no flow is counted along them.` });
 
   for (const e of h.heating.emitters) {
     if (e.kind === 'ufh' && !zonePart(h, e) && loopLength(e, h) > loopMax(e)) checks.push({ level: 'warn', text: `UFH loop ${e.fromZone ? `of ${h.zones?.find((z) => z.id === e.fromZone)?.name ?? 'a UFH zone'}` : `in ${h.rooms.find((r) => r.id === e.room)?.name ?? e.room}`} is ${Math.round(loopLength(e, h))} m; keep ${e.pipe ?? 16} mm loops under ${loopMax(e)} m (split it in two, or use wider pipe or spacing).` });
