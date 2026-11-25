@@ -5,7 +5,7 @@ import { applyPlan } from './house-controls';
 import { defaultHouse } from './house-default';
 import { DEMOS } from './house-demos';
 import { syncNet, treeOf } from './house-net';
-import { autoPipes, drawRun, removeRun, sizePipes } from './house-pipes';
+import { autoPipes, drawRun, moveOpenEnd, removeRun, sizePipes } from './house-pipes';
 
 // What the rest of the app reads from a run: its parent, its ends, which heater it feeds and its route.
 const shape = (h: House) => (h.heating.pipes ?? []).map((p) => ({ id: p.id, parent: p.parent, ends: p.ends, emitter: p.emitter, pts: p.leg?.pts, rise: p.rise }));
@@ -112,5 +112,64 @@ describe('the pipe net', () => {
     expect(up.length).toBeGreaterThan(0);
     for (const p of up) { expect(p.a).toBe(br.b); expect(p.ends![0]).toBe('rs1'); }
     expect(h.heating.nodes!.find((n) => n.id === br.b)).toMatchObject({ on: 'rs1', storey: 1 });
+  });
+});
+
+describe('editing the net', () => {
+  // A trunk to (3, 0.5), a run on from it to (3, 3), two radiators off that run's end; then the trunk is deleted, leaving the rest loose.
+  const group = () => {
+    const h = defaultHouse();
+    h.heating.source = { at: [0.5, 0.5], storey: 0 };
+    h.heating.pipes = [];
+    const [e1, e2] = h.heating.emitters.filter((x) => x.kind === 'radiator' && h.rooms.find((r) => r.id === x.room)?.storey === 0);
+    const t = drawRun(h, 0, { id: 'source' }, [[3, 0.5]], null) as { id: string };
+    const q = drawRun(h, 0, { run: t.id, at: [3, 0.5] }, [[3, 3]], null) as { id: string };
+    const k1 = drawRun(h, 0, { run: q.id, at: [3, 3] }, [], { id: `e:${e1.id}` }) as { id: string };
+    const k2 = drawRun(h, 0, { run: q.id, at: [3, 3] }, [], { id: `e:${e2.id}` }) as { id: string };
+    const n = syncNet(h);
+    removeRun(n, t.id);
+    return { h: syncNet(n), q: q.id, k1: k1.id, k2: k2.id };
+  };
+
+  it('a deleted trunk leaves the rest loose', () => {
+    const { h, q, k1, k2 } = group();
+    expect(h.heating.pipes!.filter((p) => p.loose).map((p) => p.id).sort()).toEqual([q, k1, k2].sort());
+  });
+
+  it('a run drawn to the far end of a loose run feeds the whole group from there, that run turned round', () => {
+    const { h, q, k1, k2 } = group(), before = pipe(h, q).leg!.pts;
+    const x = structuredClone(h);
+    const r = drawRun(x, 0, { id: 'source' }, [[0.5, 3]], { run: q, at: [3, 3] }) as { id: string };
+    const n = syncNet(x);
+    expect(n.heating.pipes!.some((p) => p.loose || p.loop)).toBe(false);
+    expect(pipe(n, k1).parent).toBe(r.id);
+    expect(pipe(n, k2).parent).toBe(r.id);
+    expect(pipe(n, q).parent).toBe(r.id);
+    expect(pipe(n, q).leg!.pts).toEqual([...before].reverse());
+    const s = sizePipes(n, calcHouse(n));
+    expect(s.rows.find((x) => x.pipe.id === r.id)!.loadW).toBeGreaterThan(s.rows.find((x) => x.pipe.id === k1)!.loadW);
+  });
+
+  it('part way along a loose run: a junction there, the stretch back to its loose start turned round and fed too', () => {
+    const { h, q, k1 } = group();
+    const x = structuredClone(h);
+    const r = drawRun(x, 0, { id: 'source' }, [[1.5, 2]], { run: q, at: [3, 2] }) as { id: string };
+    const n = syncNet(x), offR = n.heating.pipes!.filter((p) => p.parent === r.id);
+    expect(n.heating.pipes!.some((p) => p.loose || p.loop)).toBe(false);
+    expect(offR.length).toBe(2);
+    expect(pipe(n, k1).parent).toBe(q);
+    expect(offR.find((p) => p.id !== q)!.leg!.pts.slice(-1)[0]).toEqual([3, 0.5]);
+  });
+
+  it('an open end dragged onto a loose group joins it the same way', () => {
+    const { h, q, k1 } = group();
+    const x = structuredClone(h);
+    const o = drawRun(x, 0, { id: 'source' }, [[0.5, 3], [2, 3]], null) as { id: string };
+    const name = pipe(x, o.id).name;
+    expect(moveOpenEnd(x, o.id, { run: q, at: [3, 3] }, [3, 3])).toEqual({ id: o.id });
+    const n = syncNet(x);
+    expect(pipe(n, o.id).name).toBe(name);
+    expect(n.heating.pipes!.some((p) => p.loose || p.loop)).toBe(false);
+    expect(pipe(n, k1).parent).toBe(o.id);
   });
 });

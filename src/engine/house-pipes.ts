@@ -6,6 +6,7 @@ import type { Pt } from './geom';
 import { calcHouse, onStorey, roomEdges, roomPoly } from './house';
 import { emitterPose } from './house-draw';
 import { canCool, emitterCool, emitterOut, emitterStorey, lpm, shareIn, zonePart } from './house-heating';
+import { addNode, ensureNet } from './house-net';
 import { isCylRun, modesOf, openRuns, placedManifold, runEmitters } from './house-controls';
 import type { Emitter } from './house-heating';
 
@@ -66,6 +67,8 @@ export interface Pipe {
   a?: string; b?: string;
   /** Not joined to the heat source; or the run that closes a loop, which carries no flow. Set by `syncNet`. */
   loose?: true; loop?: true;
+  /** Its id, parent and ends as `syncNet` last worked them out: an edit that changes them has its nodes read from them again. */
+  was?: string;
 }
 
 export interface PipeRow {
@@ -418,10 +421,36 @@ export function splitSegment(pts: Pt[], i: number, at: Pt): Pt[] {
   return [...pts.slice(0, i + 1), q, [q[0], q[1]], ...pts.slice(i + 1)];
 }
 
-/** Take a run out; the runs coming off it then come off the run it came off (edits h in place). */
+/**
+ * Take a run out. The runs off a drawn one stay at their junction, joined to nothing until a run is drawn to them; a run with no
+ * route only passes the water on, so the runs off it come off the run it came off (edits h in place).
+ */
 export function removeRun(h: House, id: string): void {
   const p = h.heating.pipes?.find((x) => x.id === id);
-  if (p) h.heating.pipes = h.heating.pipes!.filter((x) => x !== p).map((x) => (x.parent === id ? { ...x, parent: p.parent } : x));
+  if (p) h.heating.pipes = h.heating.pipes!.filter((x) => x !== p).map((x) => (x.parent === id && !p.leg ? { ...x, parent: p.parent, ...(x.a && x.a === p.b ? { a: p.a } : {}) } : x));
+}
+
+/**
+ * The junction at `at` on run `id`: its start or far end within 15 cm of either, else a new junction there, which splits the run in
+ * two (the stretch before it a run of its own). Null if the run is gone (edits h in place).
+ */
+export function nodeOn(h: House, id: string, at: Pt): { id: string; at: Pt } | null {
+  ensureNet(h);
+  const pipes = h.heating.pipes!, Y = pipes.find((p) => p.id === id), yp = Y && livePath(h, Y);
+  if (!Y?.leg || !yp || yp.length < 2 || !Y.a || !Y.b) return null;
+  let best = { d: Infinity, j: 0, T: yp[0] };
+  for (let j = 0; j + 1 < yp.length; j++) {
+    const a = yp[j], b = yp[j + 1], dx = b[0] - a[0], dy = b[1] - a[1], t = Math.max(0, Math.min(1, ((at[0] - a[0]) * dx + (at[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+    const T: Pt = [+(a[0] + dx * t).toFixed(3), +(a[1] + dy * t).toFixed(3)], d = Math.hypot(T[0] - at[0], T[1] - at[1]);
+    if (d < best.d) best = { d, j, T };
+  }
+  const { j, T } = best, up = tidy([...yp.slice(0, j + 1), T]), down = tidy([T, ...yp.slice(j + 1)]);
+  if (pathLen(up) < 0.15) return { id: Y.a, at: yp[0] };
+  if (pathLen(down) < 0.15) return { id: Y.b, at: yp[yp.length - 1] };
+  const J = addNode(h, { storey: Y.leg.storey, at: T });
+  pipes.push({ id: nextId(pipes), name: sharedName([Y.name]), parent: Y.parent, size: Y.size, length: m1(pathLen(up)), leg: { storey: Y.leg.storey, pts: up }, ends: [Y.ends?.[0] ?? '', ''], a: Y.a, b: J, ...(Y.via ? { via: Y.via } : {}) });
+  Y.a = J; Y.leg = { storey: Y.leg.storey, pts: down }; Y.length = m1(pathLen(down)); delete Y.typed;
+  return { id: J, at: T };
 }
 
 /** Put a run back to a plain square route between its two ends (edits h in place). */
@@ -492,7 +521,9 @@ export function splitCircuits(h: House, of: CircuitOf): boolean {
       for (const c of cs.slice(1)) {
         let n = pipes.length + 1;
         while (pipes.some((p) => p.id === `P${n}`)) n++;
+        // A pipe of its own along the same route: its own nodes, from its parent and ends.
         const Y: Pipe = { ...structuredClone(X), id: `P${n}`, name: `${X.name}, ${c}` };
+        delete Y.a; delete Y.b; delete Y.was;
         pipes.push(Y);
         for (const k of kids) if (below.get(k.id) === c) { k.parent = Y.id; if (k.ends?.[0] === `tee:${X.id}`) k.ends = [`tee:${Y.id}`, k.ends[1]]; }
       }
@@ -798,20 +829,16 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
     }
     start = a.id; parent = br.id; P0 = at;
   }
-  // Finishing on a run: tee into it there, and it carries on from this run instead.
-  let D: Pipe | undefined, T: Pt | undefined;
+  // Finishing on a run: it ends at a junction on it (one of its ends, or a new one part way along), which joins them. Which way the
+  // water then flows through that run and what it feeds is worked out from the net; a loop this closes is marked, not refused.
+  let J: { id: string; at: Pt } | null = null, T: Pt | undefined;
   if (into) {
     const Y = all.find((p) => p.id === into.run), yv = Y ? voidOf(h, Y) : -1;
     if (!Y) return { error: 'That run is gone.' };
     if (yv !== storey && yv !== storey + 1) return { error: 'That run is not under this floor or in its ceiling.' };
-    const t = teeAt(h, into.run, into.at);
-    if (!t) return { error: 'That run is gone.' };
-    if (t.parent === Y.id) return { error: 'Finish part way along a run, not at its far end.' };
-    D = Y; T = t.T;
-    // Never feed a run from one that comes off it: that would loop.
-    const below = new Set([D.id]);
-    for (let grew = true; grew; ) { grew = false; for (const p of all) if (p.parent && below.has(p.parent) && !below.has(p.id)) { below.add(p.id); grew = true; } }
-    if (parent && below.has(parent)) return { error: 'That run is fed through this one: finishing on it would make a loop.' };
+    J = nodeOn(h, into.run, into.at);
+    if (!J) return { error: 'That run is gone.' };
+    T = J.at;
   }
   // A riser's feed can't come off the riser's own branches: it would feed itself.
   if (toRiser) {
@@ -825,12 +852,11 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
   if (pts.length < 2) return { error: 'Draw at least one stretch.' };
   const e = B?.id.startsWith('e:') ? h.heating.emitters.find((x) => x.id === B.id.slice(2)) : undefined, room = e && h.rooms.find((r) => r.id === e.room)?.name;
   const id = nextId(all), M = B?.id.startsWith('m:');
-  all.push({ id, parent, leg: { storey, pts }, ends: [start, B?.id ?? ''], length: m1(pathLen(pts)),
+  all.push({ id, parent, leg: { storey, pts }, ends: [start, B?.id ?? ''], length: m1(pathLen(pts)), ...(J ? { b: J.id } : {}),
     name: e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}` : B?.id.startsWith('m:') ? manifoldName(h, B.id.slice(2)) : toRiser ? `To riser ${(h.heating.risers ?? []).findIndex((r) => r.id === B!.id) + 1}` : B ? 'Hot water cylinder coil' : 'Main',
     size: usable(h, e ? (e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : storey === src.storey || storey === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)') : 'Cu 22 mm'),
     ...(e ? { emitter: e.id } : {}), ...(via ? { via } : {}) });
   // Its floor or ceiling is fixed before it changes parent: following a run upstream stops at a change of floor.
-  if (D) { D.via = viaOf(h, D); D.parent = id; D.ends = [`tee:${id}`, D.ends![1]]; delete D.typed; }
   // The riser's branches to other floors now come off this run, up or down from its floor.
   // One with nothing on it yet goes: it is made again when a run is drawn off the riser on that floor.
   if (toRiser) {
@@ -876,7 +902,9 @@ export function moveOpenEnd(h: House, id: string, b: Attach | null, to: Pt, squa
   // Off the source or a riser, it keeps its own start and parent.
   const R = t.heating.pipes!.find((p) => p.id === id)!;
   if (!s0.startsWith('tee:')) { R.parent = X.parent; R.ends = [s0, R.ends![1]]; }
-  h.heating.pipes = t.heating.pipes;
+  // Finished on another run, it is the same pipe carried on: it keeps its name (a heater's run is named for the heater).
+  if (!b || 'run' in b) R.name = X.name;
+  h.heating.pipes = t.heating.pipes; h.heating.nodes = t.heating.nodes;
   return { id };
 }
 

@@ -1,4 +1,5 @@
 import { layoutPipes } from '../ui/HouseSchematic';
+import { syncNet } from './house-net';
 import { describe, expect, it } from 'vitest';
 import { calcHouse } from './house';
 import { defaultHouse } from './house-default';
@@ -75,12 +76,18 @@ describe('editing pipe routes', () => {
     return h;
   };
 
-  it('removing a run hands the runs off it to the run it came off', () => {
-    const h = laid(), mid = h.heating.pipes!.find((p) => p.parent && h.heating.pipes!.some((c) => c.parent === p.id))!;
-    const kids = h.heating.pipes!.filter((c) => c.parent === mid.id).map((c) => c.id);
-    removeRun(h, mid.id);
-    expect(h.heating.pipes!.some((p) => p.id === mid.id)).toBe(false);
-    for (const id of kids) expect(h.heating.pipes!.find((p) => p.id === id)!.parent).toBe(mid.parent);
+  it('removing a run with no route hands the runs off it to the run it came off; a drawn one leaves them loose at their junction', () => {
+    for (const drawn of [false, true]) {
+      // Laid from the plan, the branch up the riser is drawn; with no heat source placed, the typical runs are lengths only.
+      const h = syncNet(drawn ? laid() : (() => { const x = defaultHouse(); x.heating.pipes = autoPipes(x); return x; })());
+      const mid = h.heating.pipes!.find((p) => p.parent && !!p.leg === drawn && h.heating.pipes!.some((c) => c.parent === p.id))!;
+      const kids = h.heating.pipes!.filter((c) => c.parent === mid.id).map((c) => c.id);
+      expect(kids.length).toBeGreaterThan(0);
+      removeRun(h, mid.id);
+      const n = syncNet(h);
+      expect(n.heating.pipes!.some((p) => p.id === mid.id)).toBe(false);
+      for (const id of kids) expect(n.heating.pipes!.find((p) => p.id === id)).toMatchObject(drawn ? { parent: null, loose: true } : { parent: mid.parent });
+    }
   });
 
   it('sliding a middle stretch moves its corners; an end stretch gains a bend and keeps its end', () => {
@@ -389,13 +396,15 @@ describe('drawing runs by hand', () => {
     const h = blank();
     const main = drawRun(h, 0, { id: 'source' }, [[4.5, 0.5]], null) as { id: string };
     const r = drawRun(h, 0, { id: 'source' }, [[0.5, 2], [2.5, 2]], { run: main.id, at: [2.5, 0.6] }) as { id: string };
-    const y = h.heating.pipes!.find((p) => p.id === main.id)!, x = h.heating.pipes!.find((p) => p.id === r.id)!;
-    expect(y.parent).toBe(r.id);
-    expect(y.ends![0]).toBe(`tee:${r.id}`);
+    const n = syncNet(h), y = n.heating.pipes!.find((p) => p.id === main.id)!, x = n.heating.pipes!.find((p) => p.id === r.id)!;
+    // They meet at a junction on main, which splits there; the rest of main carries on from that junction.
     expect(x.leg!.pts[x.leg!.pts.length - 1]).toEqual([2.5, 0.5]);
-    expect(livePath(h, y)![0]).toEqual([2.5, 0.5]);
-    // Feeding the new run from the run it now feeds would loop.
-    expect('error' in drawRun(h, 0, { run: main.id, at: [4, 0.5] }, [[4, 2]], { run: r.id, at: [1.5, 2] })).toBe(true);
+    expect(livePath(n, y)![0]).toEqual([2.5, 0.5]);
+    expect(y.a).toBe(x.b);
+    // Two pipes from the source to one junction make a loop: one of them is marked, and carries nothing.
+    expect(n.heating.pipes!.filter((p) => p.loop).length).toBe(1);
+    expect(n.heating.pipes!.filter((p) => p.loose).length).toBe(0);
+    expect('id' in drawRun(n, 0, { run: main.id, at: [4, 0.5] }, [[4, 2]], { run: r.id, at: [1.5, 2] })).toBe(true);
   });
 
   it('upstairs, a run off the source makes the branch through the floor', () => {
@@ -610,7 +619,10 @@ describe('open ends', () => {
     const o2 = drawRun(h, 0, { id: 'source' }, [[0.5, 1.5]], null) as { id: string };
     const r = moveOpenEnd(h, o2.id, { run: o.id, at: [2, 1] }, [2, 1]);
     expect(r).toEqual({ id: o2.id });
-    expect(h.heating.pipes!.find((p) => p.emitter === e.id)!.parent).toBe(o2.id);
+    // It ends at a junction on that run (split there), so both reach the radiator's run: a loop from the source, one of them marked.
+    const n = syncNet(h), fed = n.heating.pipes!.find((p) => p.emitter === e.id)!;
+    expect(n.heating.pipes!.find((p) => p.id === o2.id)!.b).toBe(fed.a);
+    expect(n.heating.pipes!.filter((p) => p.loop).length).toBe(1);
   });
 
   it('keeps every run id unique when the run it is dropped on is split to make the tee', () => {
@@ -626,10 +638,9 @@ describe('open ends', () => {
     expect(new Set(ids).size).toBe(ids.length);
     const parents = new Set(h.heating.pipes.map((p) => p.parent).filter(Boolean));
     for (const id of parents) expect(ids).toContain(id);
-    // The heater is now fed through the moved run.
-    let cur = h.heating.pipes.find((p) => p.emitter === e.id), up: string[] = [];
-    while (cur) { up.push(cur.id); cur = h.heating.pipes.find((p) => p.id === cur!.parent); }
-    expect(up).toContain(o.id);
+    // The moved run ends at a junction on that run: the two share it.
+    const n = syncNet(h), fed = n.heating.pipes!.find((p) => p.emitter === e.id)!;
+    expect(n.heating.pipes!.find((p) => p.id === o.id)!.b).toBe(fed.a);
   });
 });
 

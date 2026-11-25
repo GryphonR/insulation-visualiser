@@ -22,9 +22,12 @@ export interface PipeNode {
 const pinId = (on: string, storey: number) => `${on}@${storey}`;
 const PLANT = /^(e:|m:|cylinder$)/;
 
+/** What `syncNet` last worked out a run comes off and ends at: when an edit changes these, its nodes are read again from them. */
+const fingerprint = (p: Pipe) => JSON.stringify([p.id, p.parent, p.ends ?? null]);
+
 /**
- * The net the runs make: a node at each end of every run, shared where runs meet. Read from each run's parent and ends (the tree
- * as edited), keeping the nodes runs already had, so a run whose start no longer meets anything stays at its own junction.
+ * The net the runs make: a node at each end of every run, shared where runs meet. A run keeps the nodes it has, unless an edit has
+ * changed what it comes off or ends at (or it is new without nodes): those are read from its parent and ends, the tree as edited.
  */
 export function netOf(h: House): { pipes: Pipe[]; nodes: PipeNode[] } {
   const old = new Map((h.heating.nodes ?? []).map((n) => [n.id, n]));
@@ -34,6 +37,11 @@ export function netOf(h: House): { pipes: Pipe[]; nodes: PipeNode[] } {
   const fresh = () => { let id: string; do id = `n${++k}`; while (old.has(id) || nodes.has(id)); return id; };
   const pin = (on: string, storey: number) => { const id = pinId(on, storey); if (!nodes.has(id)) nodes.set(id, { id, on, storey }); return id; };
   const storeyOf = (id: string) => nodes.get(id)?.storey ?? src;
+  const kept = (p: Pipe, id: string | undefined) => {
+    if (!id || !old.has(id) || (p.was && p.was !== fingerprint(p))) return undefined;
+    if (!nodes.has(id)) nodes.set(id, { ...old.get(id)! });
+    return id;
+  };
   // Where a pinned end is: a heater, manifold or the cylinder on its own floor; a riser or the source column at the end of its climb.
   const pinStorey = (on: string, near: number, climb?: number) => {
     if (on.startsWith('e:')) { const e = h.heating.emitters.find((x) => x.id === on.slice(2)); return (e && emitterStorey(h, e)) ?? near; }
@@ -48,7 +56,9 @@ export function netOf(h: House): { pipes: Pipe[]; nodes: PipeNode[] } {
     if (got) return got;
     const par = p.parent ? byId.get(p.parent) : undefined, s0 = p.ends?.[0], tee = s0?.startsWith('tee:') ? byId.get(s0.slice(4)) : undefined;
     let id: string;
-    if (depth > 60) id = fresh();
+    const own = kept(p, p.a);
+    if (own) id = own;
+    else if (depth > 60) id = fresh();
     // Off a run with no route (a header, the run from the heat pump): at its far end, when its own start agrees (the source, or a
     // run still there); one whose start has gone is not quietly hung on it.
     else if (par && !par.leg && (!s0 || s0 === 'source' || !!tee)) id = endOf(par, depth + 1);
@@ -69,6 +79,8 @@ export function netOf(h: House): { pipes: Pipe[]; nodes: PipeNode[] } {
     if (got) return got;
     const e1 = p.ends?.[1] ?? '';
     let id: string;
+    const own = kept(p, p.b);
+    if (own) { ends.set(p.id, own); return own; }
     if (depth > 60) id = fresh();
     else if (e1) {
       // A riser or the source column at the top (or foot) of a climb; else on the run's own floor.
@@ -89,7 +101,8 @@ export function netOf(h: House): { pipes: Pipe[]; nodes: PipeNode[] } {
     return id;
   };
   for (const p of pipes) { p.a = startOf(p); p.b = endOf(p); }
-  return { pipes, nodes: [...nodes.values()] };
+  // In id order, so a pass that changes nothing gives the same list.
+  return { pipes, nodes: [...nodes.values()].sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0)) };
 }
 
 /**
@@ -137,10 +150,28 @@ export function treeOf(pipes: Pipe[], nodes: PipeNode[], srcStorey = 0): Pipe[] 
       const start = A?.on && A.on !== 'hp' ? A.on : par?.leg ? `tee:${par.id}` : !flipped ? p0.ends[0] : par ? `tee:${par.id}` : '';
       q.ends = [start, B?.on && B.on !== 'hp' ? B.on : ''];
     }
+    q.was = fingerprint(q);
     // A run closing a loop does not feed the heater at its far end: that is fed the other way round.
     if (B?.on?.startsWith('e:') && !q.loop) q.emitter = B.on.slice(2); else if (p0.ends || !B?.on || q.loop) delete q.emitter;
     return q;
   });
+}
+
+/** Gives every run its nodes in place, as `syncNet` would, for an edit to a net not yet read (edits h in place). */
+export function ensureNet(h: House): void {
+  if ((h.heating.pipes ?? []).every((p) => p.a && p.b)) return;
+  const n = netOf(h);
+  h.heating.pipes!.forEach((p, i) => { p.a = n.pipes[i].a; p.b = n.pipes[i].b; });
+  h.heating.nodes = n.nodes;
+}
+
+/** A new free junction or open end; returns its id (edits h in place). */
+export function addNode(h: House, n: Omit<PipeNode, 'id'>): string {
+  const nodes = (h.heating.nodes ??= []);
+  let k = nodes.length + 1;
+  while (nodes.some((x) => x.id === `n${k}`)) k++;
+  nodes.push({ id: `n${k}`, ...n });
+  return `n${k}`;
 }
 
 /** The runs re-read from their net after an edit (see `treeOf`). Returns `h` itself when nothing changes, else a changed copy. */
