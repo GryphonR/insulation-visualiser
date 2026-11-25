@@ -222,7 +222,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                     </select>
                   </label>
                 )}
-                <label className="small"><input type="checkbox" checked={hrs === null} onChange={(e) => setZ(z.id, { hours: e.target.checked ? null : [...house.gains.living] })} /> Follow the <a href={href('gains')}>occupancy schedule</a></label>
+                <label className="small"><input type="checkbox" checked={hrs === null} onChange={(e) => setZ(z.id, { hours: e.target.checked ? null : [...house.gains.living] })} /> Use the <a href={href('gains')}>house heating times</a> ({house.heating.followOccupancy ? 'occupancy rows' : 'all day'})</label>
                 {hrs && (
                   <div className="sched-cells">
                     {hrs.map((on, h) => <button key={h} type="button" className={on ? 'sc on' : 'sc'} style={on ? { background: z.color } : undefined} aria-pressed={!!on} aria-label={`${z.name} ${h}:00`}

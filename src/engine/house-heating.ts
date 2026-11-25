@@ -46,7 +46,7 @@ export interface Emitter {
 }
 export interface Zone {
   id: string; name: string; kind: 'rad' | 'ufh'; color: string; on: boolean;
-  /** Hours on (1) per hour of day, or null to follow the occupancy schedule (living areas / bedrooms). */
+  /** Hours on (1) per hour of day, or null to use the house heating times (all day, or the occupancy rows). */
   hours: number[] | null;
   /** UFH blending valve temperature, °C; 0 means connected direct to the system flow. */
   blend: number;
@@ -84,6 +84,8 @@ export interface Heating {
   coilW?: number;
   /** Cooling from a reversible heat pump. */
   cooling?: Cooling;
+  /** Rooms with no zone, or in a zone without its own hours, heat on the occupancy rows (living / bedrooms) when true, all day when false. Saves from before this setting load as true. */
+  followOccupancy: boolean;
 }
 
 /** A reversible heat pump's cooling: on, output at A35/W18 (kW), EER there, room setpoint, chilled flow and its rise, °C / K. */
@@ -199,20 +201,21 @@ export function systemFlow(h: House, needs: RoomNeed[], Tdesign: number, Te: num
   return clamp(f);
 }
 
-/** What sets a room's heating hours: no emitter (never heated), its zone switched off, the zone's own hours, or an occupancy row. */
-export function scheduleSource(h: House, room: Room): { kind: 'none' | 'off' | 'zone' | 'living' | 'bedrooms'; zone?: House['heating']['zones'][number] } {
+/** What sets a room's heating hours: no emitter (never heated), its zone switched off, the zone's own hours, all day, or an occupancy row. */
+export function scheduleSource(h: House, room: Room): { kind: 'none' | 'off' | 'zone' | 'all' | 'living' | 'bedrooms'; zone?: House['heating']['zones'][number] } {
   const e = h.heating.emitters.find((x) => shareIn(h, x, room.id) > 0);
   if (!e) return { kind: 'none' };
   const zone = h.heating.zones.find((x) => x.id === e.zone);
   if (zone && !zone.on) return { kind: 'off', zone };
   if (zone?.hours) return { kind: 'zone', zone };
+  if (!h.heating.followOccupancy) return { kind: 'all', zone };
   return { kind: room.type === 'bedroom' || room.type === 'bathroom' ? 'bedrooms' : 'living', zone };
 }
 
-/** Hours a room's heating is scheduled on: its zone's own hours, or the occupancy schedule for its type. */
+/** Hours a room's heating is scheduled on: its zone's own hours, all day, or the occupancy row for its type. */
 export function roomSchedule(h: House, room: Room): number[] | null {
   const s = scheduleSource(h, room);
-  return s.kind === 'none' ? null : s.kind === 'off' ? Array(24).fill(0) : s.kind === 'zone' ? s.zone!.hours! : h.gains[s.kind];
+  return s.kind === 'none' ? null : s.kind === 'off' ? Array(24).fill(0) : s.kind === 'all' ? Array(24).fill(1) : s.kind === 'zone' ? s.zone!.hours! : h.gains[s.kind];
 }
 
 /** One K2 radiator per heated room, the shortest 600-high length (in 200 mm steps) that meets the need at the max flow. */

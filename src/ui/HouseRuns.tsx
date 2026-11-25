@@ -27,7 +27,7 @@ function UseSummary({ house }: { house: House }) {
   return (
     <section className="card panel">
       <h2>How the house is used</h2>
-      <p className="small">{g.people} {g.people === 1 ? 'person' : 'people'}, {PATTERN[g.pattern].toLowerCase()}. Heating off: rooms held at {g.setback} °C. Heat stored by the walls and floors: about {fmt(mass)} kJ/m²K of floor<Why label="How is this worked out?">{WHY.mass}</Why>. Windows let in {Math.round(g.g * 100)}% of the sun.</p>
+      <p className="small">{g.people} {g.people === 1 ? 'person' : 'people'}, {PATTERN[g.pattern].toLowerCase()}. Heating {house.heating.followOccupancy ? 'on the occupancy times' : 'on all day'} (unless a zone has its own hours). Heating off: rooms held at {g.setback} °C. Heat stored by the walls and floors: about {fmt(mass)} kJ/m²K of floor<Why label="How is this worked out?">{WHY.mass}</Why>. Windows let in {Math.round(g.g * 100)}% of the sun.</p>
       {unheated.length > 0 && <p className="small bad">Not heated in these runs: {unheated.map((r) => r.name).join(', ')}.</p>}
       <a className="btn-secondary as-btn" href={href('gains')}>Occupancy, heating times and gains ›</a>
     </section>
@@ -238,6 +238,7 @@ export function GainsCard({ house, upd }: { house: House; upd: (fn: (h: House) =
   const why = ({ s }: (typeof rooms)[number]) => s.kind === 'none' ? <a className="bad" href={href('emitters')}>No emitter: never heated</a>
     : s.kind === 'off' ? <a className="bad" href={href('zones')}>Zone “{s.zone!.name}” is switched off</a>
     : s.kind === 'zone' ? <a href={href('zones')}>Own hours of zone “{s.zone!.name}”</a>
+    : s.kind === 'all' ? <span className="muted">All day</span>
     : <span className="muted">{s.kind === 'living' ? 'Living areas row' : 'Bedrooms & bath row'}</span>;
   return (
   <section className="card panel">
@@ -250,6 +251,12 @@ export function GainsCard({ house, upd }: { house: House; upd: (fn: (h: House) =
         <div className="chips">
           {(Object.entries(PATTERN) as Array<[House['gains']['pattern'], string]>).map(([k, l]) => <Chip key={k} on={g.pattern === k} onClick={() => upd((h) => { h.gains.pattern = k; })}>{l}</Chip>)}
         </div>
+      </div>
+    </div>
+    <div className="hf"><span className="eyebrow">Heating times</span>
+      <div className="chips">
+        <Chip on={!house.heating.followOccupancy} onClick={() => upd((h) => { h.heating.followOccupancy = false; })}>All day</Chip>
+        <Chip on={house.heating.followOccupancy} onClick={() => upd((h) => { h.heating.followOccupancy = true; })}>Follow the occupancy rows</Chip>
       </div>
     </div>
     <div className="hsched">
@@ -266,7 +273,7 @@ export function GainsCard({ house, upd }: { house: House; upd: (fn: (h: House) =
       ))}
       <div className="sched-row"><span /><div className="sched-cells sched-ax">{Array.from({ length: 24 }, (_, h) => <span key={h}>{h % 3 === 0 ? String(h).padStart(2, '0') : ''}</span>)}</div></div>
     </div>
-    <p className="small muted">Orange hours heat to each room's setpoint; the rest hold the heating-off temperature set below. Click an hour to switch it. A zone with its own hours (Heating › Zones) overrides these rows for its rooms.</p>
+    <p className="small muted">All day suits a heat pump, or a boiler on weather compensation: rooms are held at their setpoints round the clock. Following the rows, orange hours heat to each room's setpoint and the rest hold the heating-off temperature set below; click an hour to switch it. Either way, a zone with its own hours (Heating › Zones) keeps them.</p>
     <h3 className="eyebrow">What each heated room follows</h3>
     <div className="hsched">
       {rooms.map((x) => (

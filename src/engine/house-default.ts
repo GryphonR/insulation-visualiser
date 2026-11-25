@@ -138,7 +138,7 @@ function baseHouse(): House {
       bedrooms: hours([6, 7, 21, 22]),
     },
     heating: {
-      control: 'ideal', curveDesign: 45, curve15: 30, dT: 5, minFlow: 7,
+      control: 'ideal', followOccupancy: false, curveDesign: 45, curve15: 30, dT: 5, minFlow: 7,
       zones: [
         { id: 'z1', name: 'Living areas', kind: 'rad', color: '#c2410c', on: true, hours: null, blend: 0 },
         { id: 'z2', name: 'Bedrooms', kind: 'rad', color: '#1f6fb5', on: true, hours: null, blend: 0 },
@@ -164,7 +164,7 @@ export function upgradeHouse(p: House): House {
   const d = defaultHouse();
   const h: House = {
     ...d, ...p, vent: { ...d.vent, ...p.vent }, loft: { ...d.loft, ...p.loft }, climate: { ...d.climate, ...p.climate }, hp: { ...d.hp, ...p.hp, co2: { ...d.hp.co2, ...p.hp?.co2 } },
-    gains: { ...d.gains, ...p.gains }, suspended: { ...d.suspended, ...p.suspended }, defaults: { ...d.defaults, ...p.defaults }, heating: p.heating, zones: p.zones ?? [],
+    gains: { ...d.gains, ...p.gains }, suspended: { ...d.suspended, ...p.suspended }, defaults: { ...d.defaults, ...p.defaults }, heating: p.heating && { ...p.heating, followOccupancy: p.heating.followOccupancy ?? true }, zones: p.zones ?? [],
   };
   h.buildups = h.buildups.map((b) => ({ ...b, layers: (b.layers ?? []).filter(([m, t]) => !!MAT[m] && Number.isFinite(t) && t > 0).map(([m, t]) => [canonId(m), t] as [string, number]) }));
   for (const id of Object.values(h.defaults)) {

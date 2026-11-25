@@ -69,6 +69,7 @@ describe('hour-by-hour runs', () => {
 
   it('design day, demo house: the undersized kitchen radiator leaves the kitchen short even with heating on all day', () => {
     const hh = structuredClone(h);
+    hh.heating.followOccupancy = true; // bedrooms on their occupancy row, living areas all day
     hh.gains.living = Array(24).fill(1);
     const r = simulate(hh, 'design');
     const k = r.rooms.findIndex((x) => x.id === 'kitchen'), l = r.rooms.findIndex((x) => x.id === 'living');
@@ -77,7 +78,7 @@ describe('hour-by-hour runs', () => {
   });
 
   it('design day with a setback: rooms are short after the reheat starts', () => {
-    const r = simulate(h, 'design');
+    const r = simulate({ ...h, heating: { ...h.heating, followOccupancy: true } }, 'design');
     const i = r.rooms.findIndex((x) => x.id === 'living');
     expect(r.comfort[i].cold).toBeGreaterThan(0);
   });
