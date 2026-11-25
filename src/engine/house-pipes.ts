@@ -520,7 +520,7 @@ export function setRunLevel(h: House, id: string, l: Level): void {
  * or with none, at the point it started from; a drop there joins it to a new junction at the same place on level `to`. Returns that
  * junction, to carry on drawing from (edits h in place).
  */
-export function dropAt(h: House, storey: number, from: Attach, mid: Pt[], at0: Level, to: Level): { node: string; at: Pt } | { error: string } {
+export function dropAt(h: House, storey: number, from: Attach, mid: Pt[], at0: Level, to: Level): { from: Attach; at: Pt } | { error: string } {
   let K: string, at: Pt, l0 = at0, size = usable(h, 'Cu 22 mm');
   if (mid.length) {
     const r = drawRun(h, storey, from, mid, null, true, at0);
@@ -535,6 +535,14 @@ export function dropAt(h: House, storey: number, from: Attach, mid: Pt[], at0: L
   } else if ('node' in from) {
     const N = h.heating.nodes?.find((x) => x.id === from.node);
     if (!N?.at) return { error: 'That drop is gone.' };
+    // Straight back to the level of the drop just made: that drop goes, and drawing carries on from where it started.
+    const D = h.heating.pipes!.filter((p) => p.a === N.id || p.b === N.id);
+    const O = D.length === 1 && D[0].drop ? h.heating.nodes?.find((x) => x.id === (D[0].a === N.id ? D[0].b : D[0].a)) : undefined;
+    if (O && (O.v != null ? levelIn(storey, O.v) === to : false)) {
+      h.heating.pipes = h.heating.pipes!.filter((p) => p !== D[0]);
+      h.heating.nodes = h.heating.nodes!.filter((x) => x !== N);
+      return { from: O.on ? { id: O.on } : { node: O.id }, at: N.at };
+    }
     K = N.id; at = N.at;
     if (N.v != null) l0 = levelIn(storey, N.v);
   } else {
@@ -548,7 +556,10 @@ export function dropAt(h: House, storey: number, from: Attach, mid: Pt[], at0: L
   if (l0 === to) return { error: 'That is the level it is on already.' };
   const N1 = addNode(h, { storey, at, v: storey + LEVEL_AT[to] });
   addDrop(h, K, N1, storey, at, storey + LEVEL_AT[l0], storey + LEVEL_AT[to], size);
-  return { node: N1, at };
+  // A junction made where it started (on a run, or at the source) knows its level, so going straight back can undo it.
+  const k = h.heating.nodes?.find((x) => x.id === K);
+  if (k && !k.on) { k.v ??= storey + LEVEL_AT[l0]; k.at ??= at; }
+  return { from: { node: N1 }, at };
 }
 
 /**
@@ -565,9 +576,15 @@ export function nodeOn(h: House, id: string, at: Pt): { id: string; at: Pt } | n
     const T: Pt = [+(a[0] + dx * t).toFixed(3), +(a[1] + dy * t).toFixed(3)], d = Math.hypot(T[0] - at[0], T[1] - at[1]);
     if (d < best.d) best = { d, j, T };
   }
-  const { j, T } = best, up = tidy([...yp.slice(0, j + 1), T]), down = tidy([T, ...yp.slice(j + 1)]);
+  let { j, T } = best, up = tidy([...yp.slice(0, j + 1), T]), down = tidy([T, ...yp.slice(j + 1)]);
   if (pathLen(up) < 0.15) return { id: Y.a, at: yp[0] };
-  if (pathLen(down) < 0.15) return { id: Y.b, at: yp[yp.length - 1] };
+  if (pathLen(down) < 0.15) {
+    // Nothing joins at a heater, manifold or the cylinder (water can't go on through one): 15 cm short of it instead.
+    const k = yp.length - 2, a = yp[k], b = yp[k + 1], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (!endsOnHeater(Y) || L < 0.3) return { id: Y.b, at: yp[yp.length - 1] };
+    j = k; T = [+(b[0] - ((b[0] - a[0]) * 0.15) / L).toFixed(3), +(b[1] - ((b[1] - a[1]) * 0.15) / L).toFixed(3)];
+    up = tidy([...yp.slice(0, j + 1), T]); down = tidy([T, b]);
+  }
   const J = addNode(h, { storey: Y.leg.storey, at: T });
   pipes.push({ id: nextId(pipes), name: sharedName([Y.name]), parent: Y.parent, size: Y.size, length: m1(pathLen(up)), leg: { storey: Y.leg.storey, pts: up }, ends: [Y.ends?.[0] ?? '', ''], a: Y.a, b: J, ...(Y.via ? { via: Y.via } : {}) });
   Y.a = J; Y.leg = { storey: Y.leg.storey, pts: down }; Y.length = m1(pathLen(down)); delete Y.typed;

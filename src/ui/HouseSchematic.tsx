@@ -50,7 +50,10 @@ export function layoutPipes(h: House): { nodes: Node[]; rows: number; maxDepth: 
   const pipes = h.heating.pipes ?? [], ids = new Set(pipes.map((p) => p.id));
   const storeyOf = (p: Pipe) => p.leg?.storey ?? h.rooms.find((r) => r.id === h.heating.emitters.find((e) => e.id === p.emitter)?.room)?.storey ?? 0;
   // Upper floors above, so the diagram reads like the house.
-  const kids = (id: string | null) => pipes.filter((c) => (id === null ? !c.parent || !ids.has(c.parent) : c.parent === id)).sort((a, b) => storeyOf(b) - storeyOf(a));
+  // A riser climb or a drop only shows pipes changing level: left out, what comes off it shows off the run before (unless a valve is on it).
+  const hidden = (p: Pipe) => !p.leg && (!!p.drop || p.rise != null) && !valvesOn(h, p.id).length;
+  const kids = (id: string | null): Pipe[] => pipes.filter((c) => (id === null ? !c.parent || !ids.has(c.parent) : c.parent === id))
+    .flatMap((c) => (hidden(c) ? kids(c.id) : [c])).sort((a, b) => storeyOf(b) - storeyOf(a));
   const nodes: Node[] = [];
   let row = 0, maxDepth = 0;
   const place = (p: Pipe, depth: number, seen: Set<string>): Node | null => {
@@ -160,6 +163,11 @@ export function HouseSchematic() {
     if (!e && p.ends?.[1] === 'cylinder') return <g>
       <rect x={x} y={y - 24} width={30} height={48} rx={10} {...stroke} />
       <path d={`M${x} ${y - O} h8 l14 5 l-14 5 l14 5 M${x} ${y + O} h8`} stroke={INK} fill="none" />
+    </g>;
+    // A UFH manifold: a bar with its loops' ports.
+    if (!e && p.ends?.[1]?.startsWith('m:')) return <g>
+      <rect x={x} y={y - 7} width={36} height={14} rx={2} {...stroke} />
+      <path d={[8, 16, 24, 32].map((d) => `M${x + d - 2} ${y + 7} v6`).join(' ')} stroke={INK} strokeWidth={1.5} />
     </g>;
     if (!e) return <circle cx={x + 4} cy={y} r={4} fill={INK} />;
     if (e.kind === 'ufh') return <g>

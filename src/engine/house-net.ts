@@ -5,7 +5,7 @@
 import type { Pt } from './geom';
 import type { House } from './house';
 import { emitterStorey } from './house-heating';
-import { livePath, rise, viaOf } from './house-pipes';
+import { levelZ, livePath, rise, viaOf } from './house-pipes';
 import type { Pipe } from './house-pipes';
 
 export interface PipeNode {
@@ -74,6 +74,9 @@ export function netOf(h: House): { pipes: Pipe[]; nodes: PipeNode[] } {
     else if (par) id = endOf(par, depth + 1);
     else if (!p.ends && !p.leg) id = pin('hp', src);
     else { id = fresh(); nodes.set(id, { id, storey: p.leg?.storey, ...(p.leg ? { at: livePath(h, p)?.[0] } : {}) }); }
+    // Nothing comes off a heater, a manifold or the cylinder: water can't go on through one. A run left starting at one (its feed
+    // was redrawn) starts at a junction of its own there instead, loose until it is joined again.
+    if (PLANT.test(nodes.get(id)?.on ?? '')) { id = fresh(); nodes.set(id, { id, storey: p.leg?.storey, ...(p.leg ? { at: livePath(h, p)?.[0] } : {}) }); }
     starts.set(p.id, id);
     return id;
   };
@@ -177,12 +180,37 @@ export function addNode(h: House, n: Omit<PipeNode, 'id'>): string {
   return `n${k}`;
 }
 
+/**
+ * Climbs between levels tidied: a drop or a riser climb with nothing beyond one of its ends goes, and two drops stacked at one junction
+ * with nothing else there become one (or none, if they come back to the level they left). Returns the runs left.
+ */
+export function tidyClimbs(h: House, pipes: Pipe[], nodes: PipeNode[]): Pipe[] {
+  const at = (n?: string) => pipes.filter((p) => n && (p.a === n || p.b === n));
+  const climb = (p: Pipe) => !p.leg && (!!p.drop || p.rise != null);
+  for (let guard = 0; guard < 50; guard++) {
+    const dead = pipes.find((p) => climb(p) && (at(p.a).length < 2 || at(p.b).length < 2));
+    if (dead) { pipes = pipes.filter((p) => p !== dead); continue; }
+    const mid = nodes.find((n) => !n.on && at(n.id).length === 2 && at(n.id).every((p) => p.drop));
+    if (!mid) break;
+    const [d1, d2] = at(mid.id), o1 = d1.a === mid.id ? d1.b! : d1.a!, o2 = d2.a === mid.id ? d2.b! : d2.a!;
+    const v = (n: string) => nodes.find((x) => x.id === n)?.v ?? nodes.find((x) => x.id === n)?.storey;
+    const height = Math.abs(levelZ(h, v(o2) ?? 0) - levelZ(h, v(o1) ?? 0));
+    pipes = pipes.filter((p) => p !== d2);
+    if (height < 1e-6) {
+      // Back where it started: no drop, and what met the far end meets the near one.
+      pipes = pipes.filter((p) => p !== d1).map((p) => (p.a === o2 ? { ...p, a: o1 } : p.b === o2 ? { ...p, b: o1 } : p));
+    } else pipes = pipes.map((p) => (p === d1 ? { ...p, a: o1, b: o2, rise: +height.toFixed(3), length: Math.max(0.5, Math.round(height * 10) / 10), name: d2.name.replace(/^Drop: .* to /, `${d1.name.replace(/ to .*$/, '')} to `) } : p));
+  }
+  return pipes;
+}
+
 /** The runs re-read from their net after an edit (see `treeOf`). Returns `h` itself when nothing changes, else a changed copy. */
 export function syncNet(h0: House): House {
   if (!h0.heating.pipes?.length) return h0;
   // A run without a level of its own takes the one it has now, from the run it comes off, before the walk can change what that is.
   const h = h0.heating.pipes.some((p) => p.leg && !p.via) ? { ...h0, heating: { ...h0.heating, pipes: h0.heating.pipes.map((p) => (p.leg && !p.via ? { ...p, via: viaOf(h0, p) } : p)) } } : h0;
-  const { pipes, nodes } = netOf(h), tree = treeOf(pipes, nodes, h.heating.source?.storey ?? 0);
+  const net = netOf(h), nodes0 = net.nodes, pipes = tidyClimbs(h, net.pipes, nodes0);
+  const used = new Set(pipes.flatMap((p) => [p.a, p.b])), nodes = nodes0.filter((n) => used.has(n.id)), tree = treeOf(pipes, nodes, h.heating.source?.storey ?? 0);
   if (JSON.stringify(tree) === JSON.stringify(h0.heating.pipes) && JSON.stringify(nodes) === JSON.stringify(h0.heating.nodes ?? [])) return h0;
   return { ...h, heating: { ...h.heating, pipes: tree, nodes } };
 }

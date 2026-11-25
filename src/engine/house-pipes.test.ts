@@ -1,5 +1,6 @@
 import { layoutPipes } from '../ui/HouseSchematic';
 import { syncNet } from './house-net';
+import type { Attach } from './house-pipes';
 import { describe, expect, it } from 'vitest';
 import { calcHouse } from './house';
 import { defaultHouse } from './house-default';
@@ -733,9 +734,9 @@ describe('drops between levels', () => {
 
   it('switching level part way through a run ends it there, with a drop to carry on from at the new level', () => {
     const { h, rad } = house(), e = rad(0), e1 = rad(1);
-    const top = dropAt(h, 0, { id: 'source' }, [[3, 0.5]], 'floor', 'ceiling') as { node: string; at: [number, number] };
+    const top = dropAt(h, 0, { id: 'source' }, [[3, 0.5]], 'floor', 'ceiling') as { from: Attach; at: [number, number] };
     expect(top.at).toEqual([3, 0.5]);
-    const r = drawRun(h, 0, { node: top.node }, [[3, 3]], { id: `e:${e.id}` }) as { id: string };
+    const r = drawRun(h, 0, top.from, [[3, 3]], { id: `e:${e.id}` }) as { id: string };
     expect(h.heating.pipes!.find((p) => p.id === r.id)!.via).toBe('ceiling');
     const n = syncNet(h), d = n.heating.pipes!.find((p) => p.drop)!;
     expect(n.heating.pipes!.some((p) => p.loose || p.loop)).toBe(false);
@@ -744,11 +745,15 @@ describe('drops between levels', () => {
     expect(d.rise).toBeCloseTo(h.storeys[0].h + zone(h, 1) / 2 + zone(h, 0) / 2, 2);
     expect(Math.abs(runLength(n, d) - d.rise!)).toBeLessThanOrEqual(0.05 + 1e-9); // lengths are kept to 0.1 m
     // That ceiling is the first floor's floor void: a run upstairs can start from the top of the drop.
-    const up = drawRun(n, 1, { node: top.node }, [[3, 4]], { id: `e:${e1.id}` }) as { id: string };
+    const up = drawRun(n, 1, top.from, [[3, 4]], { id: `e:${e1.id}` }) as { id: string };
     const n2 = syncNet(n);
     expect(n2.heating.pipes!.find((p) => p.id === up.id)).toMatchObject({ parent: d.id, via: 'floor' });
     const s = sizePipes(n2, calcHouse(n2));
     expect(s.rows.find((x) => x.pipe.id === d.id)!.loadW).toBeCloseTo(s.emitterW.get(e.id)! + s.emitterW.get(e1.id)!, 0);
+    // The diagram leaves the drop out: the runs beyond it show off the run before it.
+    const lay = layoutPipes(n2).nodes;
+    expect(lay.some((x) => x.p.drop)).toBe(false);
+    expect(lay.find((x) => x.p.id === r.id)!.px).toBe(lay.find((x) => x.p.id === d.parent)!.depth);
   });
 
   it('teeing off a run at another level puts a drop in at the tee; the new run is at the level picked', () => {
@@ -773,9 +778,50 @@ describe('drops between levels', () => {
     setRunLevel(n, m.id, 'floor'); // both its ends meet other runs
     const x = syncNet(n), drops = x.heating.pipes!.filter((p) => p.drop);
     expect(x.heating.pipes!.find((p) => p.id === k.id)!.via).toBe('room');
-    expect(drops.length).toBe(3);
+    expect(drops.length).toBe(2); // the two at m's far end (under the floor to the ceiling, then to the room) merge into one
     expect(x.heating.pipes!.some((p) => p.loose || p.loop)).toBe(false);
     expect(sizePipes(x, calcHouse(x)).unpiped).not.toContain(e.id);
+  });
+
+  it('switching straight back to the level it left undoes that drop; drops stacked at one spot merge, and dead climbs go', () => {
+    const { h } = house();
+    const t1 = dropAt(h, 0, { id: 'source' }, [[3, 0.5]], 'floor', 'room') as { from: Attach; at: [number, number] };
+    expect(h.heating.pipes!.filter((p) => p.drop).length).toBe(1);
+    const back = dropAt(h, 0, t1.from, [], 'room', 'floor') as { from: Attach; at: [number, number] };
+    expect(h.heating.pipes!.filter((p) => p.drop).length).toBe(0);
+    expect(back.at).toEqual([3, 0.5]);
+    // Under the floor to the room, then on to the ceiling at the same spot: one drop the whole way.
+    const t2 = dropAt(h, 0, back.from, [], 'floor', 'room') as { from: Attach };
+    const t3 = dropAt(h, 0, t2.from, [], 'room', 'ceiling') as { from: Attach };
+    const e = h.heating.emitters.find((x) => x.kind === 'radiator' && h.rooms.find((r) => r.id === x.room)?.storey === 0)!;
+    drawRun(h, 0, t3.from, [[3, 3]], { id: `e:${e.id}` });
+    const n = syncNet(h), drops = n.heating.pipes!.filter((p) => p.drop);
+    expect(drops.length).toBe(1);
+    expect(drops[0].rise).toBeCloseTo(h.storeys[0].h + zone(h, 1) / 2 + zone(h, 0) / 2, 2);
+    expect(n.heating.pipes!.some((p) => p.loose || p.loop)).toBe(false);
+    // A drop with nothing beyond it (drawing given up after switching level) goes.
+    const x = structuredClone(n);
+    dropAt(x, 0, { id: 'source' }, [[1, 4]], 'floor', 'room');
+    expect(syncNet(x).heating.pipes!.filter((p) => p.drop).length).toBe(1);
+  });
+
+  it('nothing joins at a manifold: a tee at the end of its run is 15 cm short, and a run left starting at one is loose', () => {
+    const { h, rad } = house(), e1 = rad(1);
+    h.heating.zones.push({ id: 'zm', name: 'UFH manifold', kind: 'ufh', color: '#000', on: true, hours: null, blend: 35, manifold: { x: 3, y: 3, storey: 0 } });
+    const m = drawRun(h, 0, { id: 'source' }, [[3, 0.5]], { id: 'm:zm' }, true, 'ceiling') as { id: string };
+    // Teed off at the manifold end from another level (a node join): it comes off 15 cm short of the manifold.
+    const r = drawRun(h, 1, { run: m.id, at: [3, 3] }, [[4, 3]], { id: `e:${e1.id}` }, true, 'room') as { id: string };
+    const n = syncNet(h), R = n.heating.pipes!.find((p) => p.id === r.id)!, man = n.heating.pipes!.find((p) => p.ends?.[1] === 'm:zm')!;
+    expect(R.loose).toBeUndefined();
+    expect(n.heating.pipes!.some((p) => (p.a === man.b || p.b === man.b) && p !== man)).toBe(false);
+    // A run saved starting at the manifold itself (as older layouts can be) is read as loose there.
+    const x = structuredClone(n), y = x.heating.pipes!.find((p) => p.id === r.id)!;
+    const d = x.heating.pipes!.find((p) => p.drop && (p.a === y.a || p.b === y.a))!;
+    x.heating.pipes = x.heating.pipes!.filter((p) => p !== d);
+    y.a = man.b;
+    const z = syncNet(x);
+    expect(z.heating.pipes!.find((p) => p.id === r.id)!.loose).toBe(true);
+    expect(sizePipes(z, calcHouse(z)).unpiped).toContain(e1.id);
   });
 
   it('finishing on a run at another level ends at this level, with a drop into that run', () => {

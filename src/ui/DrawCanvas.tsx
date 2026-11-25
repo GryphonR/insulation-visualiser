@@ -569,7 +569,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       const mid = draft.slice(1), test = dropAt(structuredClone(house), storey, pipeFrom, mid, level, l);
       if ('error' in test) { setNote(test.error); return; }
       upd((h) => { dropAt(h, storey, pipeFrom, mid, level, l); });
-      setPipeFrom({ node: test.node }); setDraft([test.at]);
+      setPipeFrom(test.from); setDraft([test.at]);
       setNote(`A drop goes in here; carry on ${LEVELS.find(([x]) => x === l)![1].toLowerCase()}.`);
     }
     setLevel(l);
