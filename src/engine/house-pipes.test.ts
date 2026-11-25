@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { calcHouse } from './house';
 import { defaultHouse } from './house-default';
 import { emitterOut, lpm, roomOut, shareIn } from './house-heating';
-import { PIPE_SIZES, PIPE_WALL, attachments, defaultLevel, dropAt, drawRun, moveOpenEnd, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, fitSize, fittingsDp, joinRun, joints, kInsert, sizesOn, usable, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitCircuits, splitSegment, squareInto } from './house-pipes';
+import { PIPE_SIZES, PIPE_WALL, attachments, defaultLevel, dropAt, setRunLevel, drawRun, moveOpenEnd, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, fitSize, fittingsDp, joinRun, joints, kInsert, sizesOn, usable, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitCircuits, splitSegment, squareInto } from './house-pipes';
 
 /** Place a heater so its pipes connect at `p` (its valve end, for a radiator). */
 const put = (h: ReturnType<typeof defaultHouse>, e: ReturnType<typeof defaultHouse>['heating']['emitters'][number], p: [number, number]) => {
@@ -419,7 +419,7 @@ describe('drawing runs by hand', () => {
     const rm = drawRun(h, 0, { id: 'source' }, [[0.5, 4]], null, true, 'room') as { id: string };
     expect(h.heating.pipes!.find((p) => p.id === rm.id)!.via).toBe('room');
     const off = drawRun(h, 0, { run: a.id, at: [3, 2.5] }, [[4.5, 2.5]], null, true, 'room') as { id: string };
-    expect(h.heating.pipes!.find((p) => p.id === off.id)!.via).toBe('ceiling');
+    expect(h.heating.pipes!.find((p) => p.id === off.id)!.via).toBe('room'); // with a drop at the tee (see drops between levels)
   });
 
   it('a run finished on another run feeds it from there on, and never in a loop', () => {
@@ -749,6 +749,33 @@ describe('drops between levels', () => {
     expect(n2.heating.pipes!.find((p) => p.id === up.id)).toMatchObject({ parent: d.id, via: 'floor' });
     const s = sizePipes(n2, calcHouse(n2));
     expect(s.rows.find((x) => x.pipe.id === d.id)!.loadW).toBeCloseTo(s.emitterW.get(e.id)! + s.emitterW.get(e1.id)!, 0);
+  });
+
+  it('teeing off a run at another level puts a drop in at the tee; the new run is at the level picked', () => {
+    const { h, rad } = house(), e = rad(0);
+    const a = drawRun(h, 0, { id: 'source' }, [[3, 0.5], [3, 3]], null, true, 'ceiling') as { id: string };
+    const r = drawRun(h, 0, { run: a.id, at: [3, 2] }, [[1, 2]], { id: `e:${e.id}` }, true, 'floor') as { id: string };
+    const n = syncNet(h), R = n.heating.pipes!.find((p) => p.id === r.id)!, d = n.heating.pipes!.find((p) => p.drop)!;
+    expect(R.via).toBe('floor');
+    expect(R.parent).toBe(d.id);
+    expect(d.drop!.at).toEqual([3, 2]);
+    expect(n.heating.pipes!.some((p) => p.loose || p.loop)).toBe(false);
+    expect(sizePipes(n, calcHouse(n)).unpiped).not.toContain(e.id);
+  });
+
+  it("changing a run's level puts drops in where it meets other runs, and none at its heater", () => {
+    const { h, rad } = house(), e = rad(0);
+    const a = drawRun(h, 0, { id: 'source' }, [[3, 0.5]], null, true, 'ceiling') as { id: string };
+    const m = drawRun(h, 0, { run: a.id, at: [3, 0.5] }, [[3, 3]], null, true, 'ceiling') as { id: string };
+    const k = drawRun(h, 0, { run: m.id, at: [3, 3] }, [], { id: `e:${e.id}` }, true, 'ceiling') as { id: string };
+    const n = syncNet(h);
+    setRunLevel(n, k.id, 'room'); // its start meets m; its end is the radiator
+    setRunLevel(n, m.id, 'floor'); // both its ends meet other runs
+    const x = syncNet(n), drops = x.heating.pipes!.filter((p) => p.drop);
+    expect(x.heating.pipes!.find((p) => p.id === k.id)!.via).toBe('room');
+    expect(drops.length).toBe(3);
+    expect(x.heating.pipes!.some((p) => p.loose || p.loop)).toBe(false);
+    expect(sizePipes(x, calcHouse(x)).unpiped).not.toContain(e.id);
   });
 
   it('finishing on a run at another level ends at this level, with a drop into that run', () => {

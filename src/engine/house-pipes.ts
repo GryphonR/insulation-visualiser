@@ -495,6 +495,27 @@ function addDrop(h: House, a: string, b: string, storey: number, at: Pt, va: num
 }
 
 /**
+ * Move a drawn run to level `l` on its storey. Where it meets other runs at a junction, it now ends at a junction of its own at the
+ * new level, joined to that one by a drop; at a heater, the source or the cylinder it just connects at its new level (edits h in place).
+ */
+export function setRunLevel(h: House, id: string, l: Level): void {
+  ensureNet(h);
+  const pipes = h.heating.pipes!, X = pipes.find((p) => p.id === id), pts = X && livePath(h, X);
+  if (!X?.leg || !pts) return;
+  const storey = X.leg.storey, was = viaOf(h, X);
+  if (was === l) return;
+  X.via = l;
+  for (const end of ['a', 'b'] as const) {
+    const n = X[end], N = n ? h.heating.nodes?.find((x) => x.id === n) : undefined;
+    if (!n || N?.on || !pipes.some((p) => p !== X && (p.a === n || p.b === n))) continue;
+    const at = N?.at ?? (end === 'a' ? pts[0] : pts[pts.length - 1]);
+    const K = addNode(h, { storey, at, v: storey + LEVEL_AT[l] });
+    X[end] = K;
+    addDrop(h, n, K, storey, at, storey + LEVEL_AT[was], storey + LEVEL_AT[l], X.size);
+  }
+}
+
+/**
  * Drawing at one level and switching to another: the run drawn so far (through `mid`, if it has any corners) ends at its last corner,
  * or with none, at the point it started from; a drop there joins it to a new junction at the same place on level `to`. Returns that
  * junction, to carry on drawing from (edits h in place).
@@ -907,11 +928,19 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
     // A run in this floor's void or its ceiling void (the floor void of the storey above) can be teed into from this plan.
     const Y = all.find((p) => p.id === a.run), yv = Y ? voidOf(h, Y) : -1;
     if (Y && !onPlan(storey, yv)) return { error: 'That run is not under this floor, in its rooms or in its ceiling.' };
-    // Off a run, it is laid where that run is.
-    if (Y?.leg) via = levelIn(storey, yv);
-    const t = Y ? teeAt(h, a.run, a.at) : null;
-    if (!t) return { error: 'That run is gone.' };
-    ({ start, parent, T: P0 } = t);
+    if (Y?.leg && level && levelIn(storey, yv) !== level) {
+      // Teed off a run at another level: a drop at the tee brings it to the level being drawn in.
+      const J = nodeOn(h, a.run, a.at);
+      if (!J) return { error: 'That run is gone.' };
+      const K = addNode(h, { storey, at: J.at, v: storey + LEVEL_AT[level] }), D = addDrop(h, J.id, K, storey, J.at, yv, storey + LEVEL_AT[level], Y.size);
+      start = `tee:${D}`; parent = D; P0 = J.at; from = K; via = level;
+    } else {
+      // Off a run, it is laid where that run is.
+      if (Y?.leg) via = levelIn(storey, yv);
+      const t = Y ? teeAt(h, a.run, a.at) : null;
+      if (!t) return { error: 'That run is gone.' };
+      ({ start, parent, T: P0 } = t);
+    }
   } else if (riserFeed(h, a.id)) {
     // A riser fed by a drawn run: off that run's end on its floor, else off a branch from it up or down the riser.
     const F = riserFeed(h, a.id)!, fs = F.leg!.storey, at = endPoint(h, a.id)!;

@@ -10,7 +10,7 @@ import { OPEN_DOORWAY, addBasement, addStoreyAbove, bandName, canAddBasement, ca
 import { polyArea } from '../engine/geom';
 import { Num, fmt, uid, NumInput } from './hform';
 import { NO_SEL, plantName, plantOf, removePlant } from './DrawCanvas';
-import { MAX_V, PIPE_SIZES, joints, maxFlow, pipeFamily, sizesOn, resetRun, runLength, setBranchRiser, sizePipes, valveTail, viaOf, voidName, voidOf, LEVELS } from '../engine/house-pipes';
+import { MAX_V, PIPE_SIZES, joints, maxFlow, pipeFamily, sizesOn, resetRun, runLength, setBranchRiser, sizePipes, valveTail, viaOf, voidName, voidOf, LEVELS, setRunLevel } from '../engine/house-pipes';
 import type { Lens, OpPick, Sel, Tool } from './DrawCanvas';
 import { href } from './route';
 import { Chip } from './controls';
@@ -46,7 +46,7 @@ const HINT: Record<Tool, string> = {
   cylinder: 'Click where the hot water cylinder goes, if there is one. Clicking again moves it.',
   manifold: 'Click where a UFH manifold goes. Draw one pipe run to it, and it feeds every UFH loop on it: the underfloor zones on this floor are put on it, and you can move them between manifolds in its panel.',
   riser: 'Click where pipes pass up or down through the floors, such as a cupboard or boxing in a corner. Pipes to other floors go up whichever riser makes the runs shortest; with no riser they go straight up from the boiler.',
-  pipe: 'Click a green ring (the boiler or heat pump, a riser, a radiator, a UFH manifold or the cylinder) or an existing run to start, click the corners, then click what it feeds to finish: a heater, the cylinder, a riser (the runs on other floors up or down that riser then come off it), or another run, which it then feeds from that point on. Stretches run square to the grid or to a nearby wall, even one at an angle, and stop 10 cm short of a wall across their way, so the next one runs along it. Hold Shift (or turn snapping off) to draw at any angle. Enter leaves the end open, to tee off later; Backspace undoes a corner. A heater that already had a run gets the new one instead. To change level part way, pick Under the floor, In the room or In the ceiling at the top: a drop (↕) goes in at your last corner, and you carry on at the new level. Finishing on a run at another level adds a drop there.',
+  pipe: 'Click a green ring (the boiler or heat pump, a riser, a radiator, a UFH manifold or the cylinder) or an existing run to start, click the corners, then click what it feeds to finish: a heater, the cylinder, a riser (the runs on other floors up or down that riser then come off it), or another run, which it then feeds from that point on. Stretches run square to the grid or to a nearby wall, even one at an angle, and stop 10 cm short of a wall across their way, so the next one runs along it. Hold Shift (or turn snapping off) to draw at any angle. Enter leaves the end open, to tee off later; Backspace undoes a corner. A heater that already had a run gets the new one instead. Runs go in at the level picked at the top; starting or finishing on a run at another level puts a drop (↕) in there. To change level part way, pick Under the floor, In the room or In the ceiling at the top: a drop (↕) goes in at your last corner, and you carry on at the new level. Finishing on a run at another level adds a drop there.',
   ufh: "Drag out a rectangle, or click corners for any shape, to draw an underfloor heating zone. Every heated room it covers gets UFH for its part of the zone; set each room's covering and pipe spacing under Emitters. Drag the zone by its tag.",
 };
 
@@ -484,7 +484,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
             <select className="select" value={p.size} onChange={(e) => setRun({ size: e.target.value })}>{[...new Set([...sizesOn(house), p.size])].map((k) => <option key={k}>{k}</option>)}</select>
           </label>
           {p.leg && <div className="hf"><span className="eyebrow">Runs</span>
-            <div className="chips" role="group" aria-label="Where it runs">{LEVELS.map(([l, name]) => <Chip key={l} on={viaOf(house, p) === l} onClick={() => setRun({ via: l })}>{name}</Chip>)}</div>
+            <div className="chips" role="group" aria-label="Where it runs">{LEVELS.map(([l, name]) => <Chip key={l} on={viaOf(house, p) === l} onClick={() => upd((h) => setRunLevel(h, p.id, l))}>{name}</Chip>)}</div>
             <span className="small muted">{voidName(house, voidOf(house, p)).replace(/^./, (c) => c.toUpperCase())}</span>
           </div>}
         </div>
