@@ -10,7 +10,7 @@ import { Chip } from './controls';
 import { HousePlan } from './HousePlan';
 import { fmt } from './hform';
 
-type Drag = { kind: 'move' | 'size'; id: string; start: Pt; orig: { x: number; y: number; w: number; h: number } } | { kind: 'man'; id: string; start: Pt; orig: { x: number; y: number } };
+type Drag = { kind: 'move' | 'size'; id: string; start: Pt; orig: { x: number; y: number; w: number; h: number } } | { kind: 'man'; id: string; start: Pt; orig: { x: number; y: number; storey?: number } };
 
 /** A room's bounding box less 10 cm all round: where a new loop starts. */
 export function defaultLoopRect(h: House, roomId: string) {
@@ -38,7 +38,7 @@ export function HouseUfh({ house, upd }: { house: House; upd: (fn: (h: House) =>
     if (!drag) return;
     const c = (v: number) => Math.round(v * 100) / 100;
     const dx = p[0] - drag.start[0], dy = p[1] - drag.start[1], n = structuredClone(house);
-    if (drag.kind === 'man') { const z = n.heating.zones.find((x) => x.id === drag.id); if (z) z.manifold = { x: c(drag.orig.x + dx), y: c(drag.orig.y + dy) }; }
+    if (drag.kind === 'man') { const z = n.heating.zones.find((x) => x.id === drag.id); if (z) z.manifold = { ...drag.orig, x: c(drag.orig.x + dx), y: c(drag.orig.y + dy) }; } // keep its storey: dropping it unplaces it from the heating layout
     else {
       const e = n.heating.emitters.find((x) => x.id === drag.id);
       const o = drag.orig as { x: number; y: number; w: number; h: number };

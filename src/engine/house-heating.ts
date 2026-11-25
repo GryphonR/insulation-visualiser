@@ -1,6 +1,7 @@
 // Emitters, zones and flow temperature (boards 3, 3a, 1b). Types only from house.ts, so no import cycle.
 import type { House, Room } from './house';
 import type { Pt } from './geom';
+import { polyArea } from './geom';
 import type { Pipe } from './house-pipes';
 import type { Controls } from './house-controls';
 import { loopLayout } from './house-ufh';
@@ -37,6 +38,10 @@ export interface Emitter {
   at?: Pt; ang?: number;
   /** The underfloor heating zone this loop comes from: its area is the room's part of the zone, kept up to date by `syncUfh`. */
   fromZone?: string;
+  /** Fan coil, ducted: the rooms it heats and cools, its output shared by floor area. Unset or empty: the room it is in. */
+  feeds?: string[];
+  /** The level it is placed on when that is not its room's: one above the top storey is the roof space (over its room). */
+  storey?: number;
 }
 export interface Zone {
   id: string; name: string; kind: 'rad' | 'ufh'; color: string; on: boolean;
@@ -112,13 +117,35 @@ export function emitterCool(e: Emitter, flow: number, Troom: number, h: Pick<Hou
   const qMax = 7 * Math.max(0, Troom - Math.max(19, dewPoint(Troom) + 1));
   return Math.max(0, Math.min(q, qMax)) * loopArea(e);
 }
-export const roomCool = (h: Pick<House, 'heating'>, room: string, flow: number, Troom: number) =>
-  h.heating.emitters.filter((e) => e.room === room).reduce((t, e) => t + emitterCool(e, flow, Troom, h), 0);
+export const roomCool = (h: Pick<House, 'heating' | 'rooms'>, room: string, flow: number, Troom: number) =>
+  h.heating.emitters.reduce((t, e) => { const k = shareIn(h, e, room); return k ? t + k * emitterCool(e, flow, Troom, h) : t; }, 0);
+/** The rooms an emitter heats and cools, with each one's share of its output: a ducted fan coil's ticked rooms by floor area, else its own room. */
+export function servedBy(h: Pick<House, 'rooms'>, e: Emitter): Array<[string, number]> {
+  const rs = e.kind === 'fancoil' ? (e.feeds ?? []).flatMap((id) => h.rooms.filter((r) => r.id === id)) : [];
+  if (!rs.length) return [[e.room, 1]];
+  const a = rs.map((r) => (r.poly && r.poly.length >= 3 ? polyArea(r.poly) : r.w * r.d)), t = a.reduce((x, y) => x + y, 0);
+  return rs.map((r, i) => [r.id, t > 0 ? a[i] / t : 1 / rs.length]);
+}
+/** The level an emitter is on: its own, else its room's. */
+export const emitterStorey = (h: Pick<House, 'rooms'>, e: Emitter) => e.storey ?? h.rooms.find((r) => r.id === e.room)?.storey;
+/** The share of an emitter's output that goes to `room`: 0 if it does not serve it. */
+export const shareIn = (h: Pick<House, 'rooms'>, e: Emitter, room: string) => (e.kind === 'fancoil' && e.feeds?.length ? servedBy(h, e).find((x) => x[0] === room)?.[1] ?? 0 : e.room === room ? 1 : 0);
 
 export const radRated = (e: Pick<Emitter, 'type' | 'len' | 'height'>) => (RAD_PER_M[e.type] ?? 1700) * (e.len / 1000) * (e.height / 600) ** 0.9;
 export const ratedOf = (e: Emitter) => (e.kind === 'radiator' ? radRated(e) : e.kind === 'towel' || e.kind === 'fancoil' ? e.rated : 0);
-/** Loop length: from the drawn route and tails when the loop is on the plan, else area ÷ spacing plus tails. */
-export const loopLength = (e: Emitter, h?: Pick<House, 'heating'>) => (h && loopLayout(h, e)?.total) || (e.area * 1000) / (e.spacing || 150) + 2 * e.tail;
+/**
+ * Loop length: a UFH zone's whole loop (one loop across every room it crosses), as measured if entered; else from the drawn route
+ * and tails when the loop is on the plan, else area ÷ spacing plus tails.
+ */
+export const loopLength = (e: Emitter, h?: Pick<House, 'heating' | 'zones'>) => {
+  if (h && e.fromZone) {
+    const area = h.heating.emitters.filter((x) => x.fromZone === e.fromZone).reduce((a, x) => a + x.area, 0);
+    return h.zones?.find((z) => z.id === e.fromZone)?.length || (area * 1000) / (e.spacing || 150) + 2 * e.tail;
+  }
+  return (h && loopLayout(h, e)?.total) || (e.area * 1000) / (e.spacing || 150) + 2 * e.tail;
+};
+/** A room's part of a UFH zone other than the zone's first: it is on the first part's loop, so it has no loop or pipe run of its own. */
+export const zonePart = (h: Pick<House, 'heating'>, e: Emitter) => !!e.fromZone && h.heating.emitters.find((x) => x.fromZone === e.fromZone) !== e;
 /** Heated floor area of a loop: its drawn rectangle, or the area entered. */
 export const loopArea = (e: Emitter) => (e.rect ? e.rect.w * e.rect.h : e.area);
 export const lpm = (W: number, dT: number) => (W * 60) / (4186 * (dT || 5));
@@ -139,11 +166,11 @@ export function emitterOut(e: Emitter, flow: number, Troom: number, h: Pick<Hous
   return ratedOf(e) * Math.max(0, (mean - Troom) / 50) ** 1.3;
 }
 
-export const roomOut = (h: Pick<House, 'heating'>, room: string, flow: number, Troom: number) =>
-  h.heating.emitters.filter((e) => e.room === room).reduce((t, e) => t + emitterOut(e, flow, Troom, h), 0);
+export const roomOut = (h: Pick<House, 'heating' | 'rooms'>, room: string, flow: number, Troom: number) =>
+  h.heating.emitters.reduce((t, e) => { const k = shareIn(h, e, room); return k ? t + k * emitterOut(e, flow, Troom, h) : t; }, 0);
 
 /** Lowest flow temperature that delivers `need` W to the room at `Troom`, or Infinity if none up to 80 °C will. */
-export function flowNeeded(h: Pick<House, 'heating'>, room: string, need: number, Troom: number): number {
+export function flowNeeded(h: Pick<House, 'heating' | 'rooms'>, room: string, need: number, Troom: number): number {
   if (need <= 0) return 0;
   if (roomOut(h, room, 80, Troom) < need) return Infinity;
   let lo = Troom, hi = 80;
@@ -162,7 +189,7 @@ export function systemFlow(h: House, needs: RoomNeed[], Tdesign: number, Te: num
   // Ideal weather compensation: the lowest flow that keeps every heated room at its setpoint, loads scaled by ΔT.
   let f = 25;
   for (const { room, need } of needs) {
-    if (!room.heated || need <= 0 || !c.emitters.some((e) => e.room === room.id)) continue;
+    if (!room.heated || need <= 0 || !c.emitters.some((e) => shareIn(h, e, room.id) > 0)) continue;
     const r = Math.max(0, (room.setpoint - Te) / (room.setpoint - Tdesign || 1));
     f = Math.max(f, flowNeeded(h, room.id, need * r, room.setpoint));
   }
@@ -171,7 +198,7 @@ export function systemFlow(h: House, needs: RoomNeed[], Tdesign: number, Te: num
 
 /** What sets a room's heating hours: no emitter (never heated), its zone switched off, the zone's own hours, or an occupancy row. */
 export function scheduleSource(h: House, room: Room): { kind: 'none' | 'off' | 'zone' | 'living' | 'bedrooms'; zone?: House['heating']['zones'][number] } {
-  const e = h.heating.emitters.find((x) => x.room === room.id);
+  const e = h.heating.emitters.find((x) => shareIn(h, x, room.id) > 0);
   if (!e) return { kind: 'none' };
   const zone = h.heating.zones.find((x) => x.id === e.zone);
   if (zone && !zone.on) return { kind: 'off', zone };

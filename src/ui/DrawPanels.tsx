@@ -4,7 +4,7 @@ import { CIBSE_ACH, SHADING, buildupLabel, buildupU, SOURCE_LABEL, setSource, de
 import type { Buildup, BuildupKind, HeatSource, House, HouseResult, Room, RoomType } from '../engine/house';
 import { useProject } from './project';
 import { ADD_BUILDUP, ADD_BUILDUP_LABEL, useAddBuildup } from './AddBuildupFlow';
-import { EMITTER_NAME, RAD_LABEL, UFH_PIPES, UFH_SPACINGS, loopLength, loopMax } from '../engine/house-heating';
+import { EMITTER_NAME, RAD_LABEL, UFH_PIPES, UFH_SPACINGS, loopLength, loopMax, servedBy, zonePart } from '../engine/house-heating';
 import type { RadType } from '../engine/house-heating';
 import { OPEN_DOORWAY, addBasement, addStoreyAbove, bandName, canAddBasement, canRemoveBasement, canRemoveTop, copyRooms, deleteRoom, flipRooms, innerDoorAt, isOutside, narrowAtWall, openingCentre, partyKeys, pieceGap, pieceKeys, pieceThickness, removeBasement, removeTop, rotateRooms, setWallLength, splitStoreys, wallIndex, wallKeys } from '../engine/house-draw';
 import { polyArea } from '../engine/geom';
@@ -24,7 +24,7 @@ const GROUPS: Array<{ id: string; label: string; tools: ToolDef[]; list?: 'glazi
   { id: 'stairs', label: 'Stairs', tools: [['stairs', 'Stairwell', '☰']] },
   { id: 'window', label: 'Window', tools: [['window', 'Window', '▬']], list: 'glazing' },
   { id: 'door', label: 'Door', tools: [['door', 'Door', '▯']], list: 'door' },
-  { id: 'heat', label: 'Heating', tools: [['radiator', 'Radiator', '≣'], ['ufh', 'UFH zone', '▦'], ['manifold', 'UFH manifold', '▤']] },
+  { id: 'heat', label: 'Heating', tools: [['radiator', 'Radiator', '≣'], ['fancoil', 'Fan coil', '✣'], ['ufh', 'UFH zone', '▦'], ['manifold', 'UFH manifold', '▤']] },
   { id: 'source', label: 'Boiler / heat pump', tools: [['source', 'Boiler / heat pump', '♨']] },
   { id: 'cylinder', label: 'Hot water cylinder', tools: [['cylinder', 'Hot water cylinder', '◍']] },
   { id: 'riser', label: 'Pipe riser', tools: [['riser', 'Pipe riser', '↕']] },
@@ -41,11 +41,12 @@ const HINT: Record<Tool, string> = {
   window: 'Click an outside wall to place a window, then drag it along the wall or to another wall.',
   door: 'Click an outside wall to place a door, or a wall between two rooms for an inside door; an open doorway goes between two rooms only. Pick the type from the list beside the button. Drag it along or to another wall.',
   radiator: 'Click inside a heated room. A radiator snaps to the nearest wall; drag it to move it.',
+  fancoil: 'Click inside a room, or on the Roof tab over a room on the top floor. Fan coils can be ducted: tick the rooms one feeds in its panel and it shares its heating and cooling between them by floor area.',
   source: 'Click where the boiler or heat pump goes (on this floor). There is one: clicking again moves it. Pipes are laid from here to every radiator, along the walls.',
   cylinder: 'Click where the hot water cylinder goes, if there is one. Clicking again moves it.',
   manifold: 'Click where a UFH manifold goes. Draw one pipe run to it, and it feeds every UFH loop on it: the underfloor zones on this floor are put on it, and you can move them between manifolds in its panel.',
   riser: 'Click where pipes pass up or down through the floors, such as a cupboard or boxing in a corner. Pipes to other floors go up whichever riser makes the runs shortest; with no riser they go straight up from the boiler.',
-  pipe: 'Click a green ring (the boiler or heat pump, a riser, a radiator, a UFH manifold or the cylinder) or an existing run to start, click the corners, then click what it feeds to finish: a heater, the cylinder, or another run, which it then feeds from that point on. Stretches run square to the grid or to a nearby wall, even one at an angle, and stop 10 cm short of a wall across their way, so the next one runs along it. Hold Shift (or turn snapping off) to draw at any angle. Enter leaves the end open, to tee off later; Backspace undoes a corner. A heater that already had a run gets the new one instead.',
+  pipe: 'Click a green ring (the boiler or heat pump, a riser, a radiator, a UFH manifold or the cylinder) or an existing run to start, click the corners, then click what it feeds to finish: a heater, the cylinder, a riser (the runs on other floors up or down that riser then come off it), or another run, which it then feeds from that point on. Stretches run square to the grid or to a nearby wall, even one at an angle, and stop 10 cm short of a wall across their way, so the next one runs along it. Hold Shift (or turn snapping off) to draw at any angle. Enter leaves the end open, to tee off later; Backspace undoes a corner. A heater that already had a run gets the new one instead.',
   ufh: "Drag out a rectangle, or click corners for any shape, to draw an underfloor heating zone. Every heated room it covers gets UFH for its part of the zone; set each room's covering and pipe spacing under Emitters. Drag the zone by its tag.",
 };
 
@@ -67,7 +68,7 @@ const PIPE_SELECT_HINT = 'Click an emitter, an underfloor zone tag or a pipe run
 
 /** The drawing menu: a slim column of tool icons (names on hover) that floats over the canvas; groups open to the right. */
 /** The heating and cooling lens's tools; the rest are the floor plan's. UFH zones are also drawn in a floor layer, which is plan only. */
-const PIPE_TOOLS: Tool[] = ['select', 'radiator', 'ufh', 'source', 'cylinder', 'riser', 'manifold', 'pipe'];
+const PIPE_TOOLS: Tool[] = ['select', 'radiator', 'fancoil', 'ufh', 'source', 'cylinder', 'riser', 'manifold', 'pipe'];
 export function DrawMenu({ house, band, tool, setTool, sticky, setSticky, snapOn, setSnapOn, lens = 'plan', opPick, setOpPick }: {
   house: House;
   /** On a floor or ceiling layer: only zones and (on floors) heated-floor loops can be drawn. */
@@ -171,9 +172,11 @@ const ZONE_KINDS: BuildupKind[] = ['floor', 'roof'];
 const bandTab = (h: House, b: number) => (b > h.storeys.length - 1 ? (h.roofs?.length ? 'Top ceilings' : 'Flat roof') : b === 0 ? (h.storeys[0].below ? 'Basement floor' : 'Ground slab') : 'Floor');
 
 /** The layers of the house as tabs along the bottom of the canvas, ground up from left to right: each storey, the floor between storeys, the roof. */
-export function LayerTabs({ house, storey, band, roof, pickStorey, pickBand, pickRoof, upd, below, setBelow }: {
+export function LayerTabs({ house, storey, band, roof, pickStorey, pickBand, pickRoof, upd, below, setBelow, roofSpace }: {
   house: House; storey: number; band: number | null; roof: boolean; pickStorey: (s: number) => void; pickBand: (b: number) => void; pickRoof: () => void;
   upd: (fn: (h: House) => void) => void; below: boolean; setBelow: (v: boolean) => void;
+  /** Heating: the Roof tab opens the roof space over the top storey, for fan coils, rather than the roof sections. */
+  roofSpace?: boolean;
 }) {
   const last = house.storeys.length - 1;
   const bandTabEl = (b: number) => {
@@ -187,7 +190,10 @@ export function LayerTabs({ house, storey, band, roof, pickStorey, pickBand, pic
     tabs.push(<button key={`s${s}`} type="button" role="tab" className={`lt${on ? ' on' : ''}`} aria-selected={on} onClick={() => pickStorey(s)}><b>{house.storeys[s].name}</b><span>{n} room{n === 1 ? '' : 's'}</span></button>);
   }
   tabs.push(bandTabEl(last + 1));
-  tabs.push(<button key="roof" type="button" role="tab" className={`lt${roof ? ' on' : ''}`} aria-selected={roof} onClick={() => pickRoof()}><b>Roof</b><span>{house.roofs.length ? `${house.roofs.length} section${house.roofs.length === 1 ? '' : 's'}` : 'flat'}</span></button>);
+  // On Heating the roof is the roof space, where fan coils can go.
+  const fcs = house.heating.emitters.filter((e) => e.storey === last + 1).length, roofOn = roof || (!!roofSpace && band == null && storey === last + 1);
+  tabs.push(<button key="roof" type="button" role="tab" className={`lt${roofOn ? ' on' : ''}`} aria-selected={roofOn} onClick={() => (roofSpace ? pickStorey(last + 1) : pickRoof())}><b>Roof</b>
+    <span>{roofSpace ? `${fcs} fan coil${fcs === 1 ? '' : 's'}` : house.roofs.length ? `${house.roofs.length} section${house.roofs.length === 1 ? '' : 's'}` : 'flat'}</span></button>);
   return (
     <div className="layer-tabs">
       <button type="button" className="lt-add" disabled={!canAddBasement(house)} title={canAddBasement(house) ? 'Add a basement below' : 'There is a basement already'} onClick={() => { upd(addBasement); pickStorey(0); }}>＋ Basement</button>
@@ -330,10 +336,18 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
               </label>
             </div>
             <span className="eyebrow">Heats</span>
-            {loops.length ? loops.map((e) => {
-              const len = loopLength(e, house), over = len > loopMax(e);
-              return <p key={e.id} className={`small${over ? ' warn' : ''}`}><b>{house.rooms.find((r) => r.id === e.room)?.name ?? '?'}</b> · {fmt(e.area, 1)} m² · loop {fmt(len)} m{over ? ` (over ${loopMax(e)} m: split it, or use wider pipe or spacing)` : ''}</p>;
-            }) : <p className="small muted">No heated room yet.</p>}
+            {loops.length ? <>
+              {loops.map((e) => <p key={e.id} className="small"><b>{house.rooms.find((r) => r.id === e.room)?.name ?? '?'}</b> · {fmt(e.area, 1)} m²</p>)}
+              {(() => {
+                const len = loopLength(loops[0], house), over = len > loopMax(loops[0]), est = loopLength(loops[0], { heating: house.heating });
+                return <>
+                  <p className={`small${over ? ' warn' : ''}`}>One loop through {loops.length === 1 ? 'the room' : `all ${loops.length} rooms`}: {fmt(len)} m{z.length ? ' measured' : ' estimated'}{over ? ` (over ${loopMax(loops[0])} m: split the zone, or use wider pipe or spacing)` : ''}</p>
+                  <label className="small muted">Measured loop length <NumInput className="thk-input" step={1} min={0} value={z.length ?? ''} placeholder={fmt(est)} aria-label="Measured loop length"
+                    onChange={(e) => set({ length: Number(e.target.value) > 0 ? Number(e.target.value) : undefined })}
+                    onBlur={(e) => { if (!e.target.value.trim()) set({ length: undefined }); }} /> m</label>
+                </>;
+              })()}
+            </> : <p className="small muted">No heated room yet.</p>}
             <p className="small muted">Each room's floor covering is set under <a href={href('emitters')}>Emitters</a>.</p>
           </>;
         })()}
@@ -531,7 +545,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
         <>
           <div className="eyebrow">UFH manifold · {house.storeys[zn.manifold?.storey ?? 0]?.name}</div>
           <input className="h-text" value={zn.name} aria-label="Manifold name" onChange={(e) => upd((h) => { const z = h.heating.zones.find((x) => x.id === zid); if (z) z.name = e.target.value; })} />
-          <p className="small muted">One pipe run to it feeds every loop on it: {loops.length} loop{loops.length === 1 ? '' : 's'}, {fmt(loops.reduce((a, e) => a + e.area, 0), 1)} m². Its blend temperature and hours are under Zones &amp; UFH.</p>
+          <p className="small muted">One pipe run to it feeds every loop on it: {loops.filter((e) => !zonePart(house, e)).length} loop{loops.filter((e) => !zonePart(house, e)).length === 1 ? '' : 's'}, {fmt(loops.reduce((a, e) => a + e.area, 0), 1)} m². Its blend temperature and hours are under Zones &amp; UFH.</p>
           <div className="eyebrow">Feeds these underfloor zones</div>
             {ufhZones.length ? ufhZones.map((fz) => {
               const elsewhere = !onIt(fz) && house.heating.emitters.find((e) => e.fromZone === fz.id)?.zone, from = elsewhere && others.find((z) => z.id === elsewhere);
@@ -565,13 +579,25 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
     const set = (patch: Partial<typeof e>) => upd((h) => { const x = h.heating.emitters.find((q) => q.id === e.id); if (x) Object.assign(x, patch); });
     return (
       <>
-        <div className="eyebrow">{EMITTER_NAME[e.kind]} · {house.rooms.find((r) => r.id === e.room)?.name}</div>
+        <div className="eyebrow">{EMITTER_NAME[e.kind]} · {e.storey != null && e.storey > house.storeys.length - 1 ? 'roof space over ' : ''}{house.rooms.find((r) => r.id === e.room)?.name}</div>
         {e.kind !== 'ufh' && <label className="hf"><span className="eyebrow">Kind</span>
           <select className="select" value={e.kind} onChange={(ev) => { const k = ev.target.value as typeof e.kind; set(k === 'fancoil' && e.kind !== 'fancoil' ? { kind: k, rated: 2000 } : { kind: k }); }}>
             {(['radiator', 'towel', 'fancoil'] as const).map((k) => <option key={k} value={k}>{EMITTER_NAME[k]}</option>)}
           </select>
         </label>}
         {(e.kind === 'towel' || e.kind === 'fancoil') && <Num label="Rated output at ΔT50" unit="W" step={50} min={0} value={e.rated} onChange={(v) => set({ rated: Math.max(0, v) })} />}
+        {e.kind === 'fancoil' && (() => {
+          const feeds = e.feeds ?? [], share = new Map(servedBy(house, e)), own = house.rooms.find((r) => r.id === e.room)?.name ?? 'its room';
+          const rooms = house.rooms.filter((r) => r.heated || feeds.includes(r.id)).sort((a, b) => b.storey - a.storey);
+          return <>
+            <span className="eyebrow">Rooms it feeds (ducted)</span>
+            {rooms.map((r) => <label key={r.id} className="small" style={{ display: 'block' }}>
+              <input type="checkbox" checked={feeds.includes(r.id)} onChange={(ev) => set({ feeds: ev.target.checked ? [...feeds, r.id] : feeds.filter((x) => x !== r.id) })} /> {r.name}{' '}
+              <span className="muted">({house.storeys[r.storey]?.name}{feeds.length && share.has(r.id) ? `, ${fmt(share.get(r.id)! * 100)}%` : ''})</span>
+            </label>)}
+            <p className="small muted">{feeds.length ? 'Its heating and cooling are shared between these rooms by floor area.' : `None ticked: it heats and cools ${own}, the room it is in.`}</p>
+          </>;
+        })()}
         {e.kind === 'radiator' && <>
           <label className="hf"><span className="eyebrow">Type</span>
             <select className="select" value={e.type} onChange={(ev) => set({ type: ev.target.value as RadType })}>{(Object.keys(RAD_LABEL) as RadType[]).map((t) => <option key={t} value={t}>{RAD_LABEL[t]}</option>)}</select>

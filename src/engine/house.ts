@@ -18,7 +18,7 @@ export function climateOf(h: House): { station: number; region: number; lat: num
   const s = MCS_STATIONS[h.climate.station] ?? MCS_STATIONS[0];
   return { station: h.climate.station, region: h.climate.region, lat: s[2], lon: s[3], fromPostcode: false, km: 0 };
 }
-import { flowNeeded, given, loopLength, loopMax, roomOut, scheduleSource, systemFlow } from './house-heating';
+import { flowNeeded, given, loopLength, loopMax, roomOut, scheduleSource, systemFlow, shareIn, zonePart } from './house-heating';
 import type { Heating } from './house-heating';
 import type { Bills } from './house-calibrate';
 
@@ -220,6 +220,8 @@ export interface Opening {
 export interface FloorZone { id: string; band: number; name: string; poly: Pt[]; buildup: string;
   /** Underfloor heating: every heated room on the storey above this floor gets a loop for its part of the zone, with this pipe spacing and outside diameter (mm; 150 and 16 when unset). */
   ufh?: boolean; spacing?: number; pipe?: number;
+  /** The zone's loop length as fitted, m: overrides the estimate. The zone is one loop, however many rooms it crosses. */
+  length?: number;
   /** The UFH heating zone (manifold) its loops are on; '' for none. Unset: the loops keep the zone they were given. */
   manifold?: string;
 }
@@ -1244,7 +1246,7 @@ export function calcHouse(given0: House, basis: Basis = 'best'): HouseResult {
   const effAt = (Te: number, m: number) => sourceEff(h, flowAt(Te), Te, Tg, m);
   const designFlow = flowAt(Tout);
   const emitRooms = hr.map((x) => {
-    const has = h.heating.emitters.some((e) => e.room === x.room.id);
+    const has = h.heating.emitters.some((e) => shareIn(h, e, x.room.id) > 0);
     const out = roomOut(h, x.room.id, designFlow, x.room.setpoint);
     return { id: x.room.id, need: x.totalW, out, cover: x.totalW > 0 ? out / x.totalW : Infinity, req: flowNeeded(h, x.room.id, x.totalW, x.room.setpoint), has };
   });
@@ -1316,7 +1318,7 @@ export function calcHouse(given0: House, basis: Basis = 'best'): HouseResult {
   offZones.forEach((names, zone) => checks.push({ level: 'warn', text: `Heating zone “${zone}” is switched off, so the hour-by-hour runs give no heat to ${names.join(', ')}.` }));
 
   for (const e of h.heating.emitters) {
-    if (e.kind === 'ufh' && loopLength(e, h) > loopMax(e)) checks.push({ level: 'warn', text: `UFH loop in ${h.rooms.find((r) => r.id === e.room)?.name ?? e.room} is ${Math.round(loopLength(e, h))} m; keep ${e.pipe ?? 16} mm loops under ${loopMax(e)} m (split it in two, or use wider pipe or spacing).` });
+    if (e.kind === 'ufh' && !zonePart(h, e) && loopLength(e, h) > loopMax(e)) checks.push({ level: 'warn', text: `UFH loop ${e.fromZone ? `of ${h.zones?.find((z) => z.id === e.fromZone)?.name ?? 'a UFH zone'}` : `in ${h.rooms.find((r) => r.id === e.room)?.name ?? e.room}`} is ${Math.round(loopLength(e, h))} m; keep ${e.pipe ?? 16} mm loops under ${loopMax(e)} m (split it in two, or use wider pipe or spacing).` });
     if (e.kind === 'ufh' && e.rect) {
       const room = h.rooms.find((r) => r.id === e.room);
       const rp: Pt[] = [[e.rect.x, e.rect.y], [e.rect.x + e.rect.w, e.rect.y], [e.rect.x + e.rect.w, e.rect.y + e.rect.h], [e.rect.x, e.rect.y + e.rect.h]];

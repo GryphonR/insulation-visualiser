@@ -5,7 +5,7 @@ import { pointInPoly } from './geom';
 import type { Pt } from './geom';
 import { calcHouse, onStorey, roomEdges, roomPoly } from './house';
 import { emitterPose } from './house-draw';
-import { canCool, emitterCool, emitterOut, lpm } from './house-heating';
+import { canCool, emitterCool, emitterOut, emitterStorey, lpm, shareIn, zonePart } from './house-heating';
 import { isCylRun, modesOf, openRuns, placedManifold, runEmitters } from './house-controls';
 import type { Emitter } from './house-heating';
 
@@ -115,10 +115,11 @@ export function sizePipes(h: House, res: HouseResult): PipeResult {
   const flow = res.heat.designFlow, cool = h.heating.cooling;
   // Each emitter carries its share of its room's design loss (by output at the design flow).
   const load = new Map<string, number>(), outW = new Map<string, number>();
+  // A ducted fan coil takes its part of each room it feeds.
   for (const r of res.rooms) {
-    const ems = h.heating.emitters.filter((e) => e.room === r.room.id);
-    const outs = ems.map((e) => emitterOut(e, flow, r.room.setpoint, h)), tot = outs.reduce((a, b) => a + b, 0);
-    ems.forEach((e, i) => { load.set(e.id, tot > 0 ? (r.totalW * outs[i]) / tot : 0); outW.set(e.id, outs[i]); });
+    const ems = h.heating.emitters.map((e) => [e, shareIn(h, e, r.room.id)] as const).filter(([, k]) => k > 0);
+    const outs = ems.map(([e, k]) => k * emitterOut(e, flow, r.room.setpoint, h)), tot = outs.reduce((a, b) => a + b, 0);
+    ems.forEach(([e], i) => { load.set(e.id, (load.get(e.id) ?? 0) + (tot > 0 ? (r.totalW * outs[i]) / tot : 0)); outW.set(e.id, (outW.get(e.id) ?? 0) + outs[i]); });
   }
   // In cooling, each cooling emitter at its full output at the chilled flow and the cooling setpoint.
   const coolLoad = new Map(h.heating.emitters.filter(canCool).map((e) => [e.id, cool ? emitterCool(e, cool.flow, cool.setpoint, h) : 0]));
@@ -203,8 +204,8 @@ export function routePipes(h: House): PipeRoute | null {
   if (!src) return null;
   const risers = h.heating.risers ?? [];
   const ends: Array<{ emitter?: string; manifold?: string; storey: number; at: Pt }> = h.heating.emitters.flatMap((e) => {
-    const r = h.rooms.find((x) => x.id === e.room), at = fedByManifold(h, e) ? undefined : emitterPort(h, e) ?? undefined;
-    return r && at ? [{ emitter: e.id, storey: r.storey, at }] : [];
+    const s = emitterStorey(h, e), at = fedByManifold(h, e) || zonePart(h, e) ? undefined : emitterPort(h, e) ?? undefined;
+    return s != null && at ? [{ emitter: e.id, storey: s, at }] : [];
   });
   for (const z of manifolds(h)) ends.push({ manifold: z.id, storey: z.manifold!.storey!, at: [z.manifold!.x, z.manifold!.y] });
   const cyl = h.heating.cylinder;
@@ -254,7 +255,7 @@ export function autoPipes(h: House): Pipe[] {
   const out: Pipe[] = [{ id: 'P1', name: 'Heat pump → manifold / tee', parent: null, size: 'Cu 28 mm', length: 8 }];
   let n = 1;
   h.storeys.forEach((s, si) => {
-    const ems = h.heating.emitters.filter((e) => h.rooms.find((r) => r.id === e.room)?.storey === si);
+    const ems = h.heating.emitters.filter((e) => !zonePart(h, e) && emitterStorey(h, e) === si);
     if (!ems.length) return;
     const branch = `P${++n}`;
     out.push({ id: branch, name: `To ${s.name.toLowerCase()}`, parent: 'P1', size: 'Cu 22 mm', length: 6 + 3 * si });
@@ -636,7 +637,7 @@ export function attachments(h: House, storey: number): Array<{ id: string; at: P
   (hs.risers ?? []).forEach((r, i) => out.push({ id: r.id, at: r.at, label: `Riser ${i + 1}` }));
   for (const z of manifolds(h)) if (z.manifold!.storey === storey) out.push({ id: `m:${z.id}`, at: [z.manifold!.x, z.manifold!.y], label: manifoldName(h, z.id) });
   for (const e of hs.emitters) {
-    const r = h.rooms.find((x) => x.id === e.room), at = r?.storey === storey && !fedByManifold(h, e) ? emitterPort(h, e) ?? undefined : undefined;
+    const r = h.rooms.find((x) => x.id === e.room), at = emitterStorey(h, e) === storey && !fedByManifold(h, e) && !zonePart(h, e) ? emitterPort(h, e) ?? undefined : undefined;
     if (r && at) out.push({ id: `e:${e.id}`, at, label: `${r.name} ${e.kind === 'ufh' ? 'UFH manifold' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : 'radiator'}` });
   }
   return out;
@@ -689,6 +690,9 @@ export function squareInto(h: House, storey: number, prev: Pt | undefined, a: Pt
   return tidy([a, inside ? c1 : c2, b]);
 }
 
+/** True for a run that finishes on a heater, a UFH manifold or the cylinder, rather than an open end, a riser or a tee. */
+export const endsOnHeater = (p: Pipe) => !!p.emitter || /^(e:|m:|cylinder$)/.test(p.ends?.[1] ?? '');
+
 const nextId = (pipes: Pipe[]) => { let n = pipes.length + 1; while (pipes.some((p) => p.id === `P${n}`)) n++; return `P${n}`; };
 
 /** Tee into run `id` at the point nearest `at`: what a new run starts from and comes off. Splits the run when the tee is part way along (edits h in place). */
@@ -701,9 +705,15 @@ function teeAt(h: House, id: string, at: Pt): { start: string; parent: string | 
     const T: Pt = [+(a[0] + dx * t).toFixed(3), +(a[1] + dy * t).toFixed(3)], d = Math.hypot(T[0] - at[0], T[1] - at[1]);
     if (d < best.d) best = { d, j, T };
   }
-  const { j, T } = best, up = tidy([...yp.slice(0, j + 1), T]), down = tidy([T, ...yp.slice(j + 1)]);
+  let { j, T } = best, up = tidy([...yp.slice(0, j + 1), T]), down = tidy([T, ...yp.slice(j + 1)]);
   if (pathLen(up) < 0.15) return { start: Y.ends[0], parent: Y.parent, T: yp[0] };
-  if (pathLen(down) < 0.15) return { start: `tee:${Y.id}`, parent: Y.id, T: yp[yp.length - 1] };
+  if (pathLen(down) < 0.15) {
+    // A run ending on a heater, manifold or cylinder is teed just before it: a run off its far end would be fed through it.
+    const k = yp.length - 2, a = yp[k], b = yp[k + 1], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (!endsOnHeater(Y) || L < 0.3) return { start: `tee:${Y.id}`, parent: Y.id, T: yp[yp.length - 1] };
+    j = k; T = [+(b[0] - ((b[0] - a[0]) * 0.15) / L).toFixed(3), +(b[1] - ((b[1] - a[1]) * 0.15) / L).toFixed(3)];
+    up = tidy([...yp.slice(0, j + 1), T]); down = tidy([T, b]);
+  }
   Y.via = viaOf(h, Y);
   const S: Pipe = { id: nextId(pipes), name: sharedName([Y.name]), parent: Y.parent, size: Y.size, length: m1(pathLen(up)), leg: { storey: Y.leg.storey, pts: up }, ends: [Y.ends[0], ''], via: Y.via };
   pipes.push(S);
@@ -711,6 +721,11 @@ function teeAt(h: House, id: string, at: Pt): { start: string; parent: string | 
   h.heating.pipes = pipes;
   return { start: `tee:${S.id}`, parent: S.id, T };
 }
+
+/** True for a placed riser's id. */
+const isRiser = (h: House, id: string) => !!h.heating.risers?.some((r) => r.id === id);
+/** The run drawn to a riser that feeds it, if one is (its branches to other floors come off it). */
+export const riserFeed = (h: House, id: string) => h.heating.pipes?.find((p) => p.ends?.[1] === id && p.rise == null && !!p.leg && isRiser(h, id));
 
 /** True for what a run can come from: the source, a riser or another run (not a heater or the cylinder). */
 export const feedsFrom = (a: Attach) => 'run' in a || !(a.id === 'cylinder' || a.id.startsWith('e:') || a.id.startsWith('m:'));
@@ -729,16 +744,19 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
   if (b && !feedsFrom(a) && feedsFrom(b)) { [a, b] = [b, a]; mid = [...mid].reverse(); }
   if (!feedsFrom(a)) return { error: 'A run comes from the boiler or heat pump, a riser or another run: start or finish on one.' };
   const into = b && 'run' in b ? b : null;
-  if (b && feedsFrom(b) && !into) return { error: 'Finish on a radiator, UFH manifold, the cylinder or another run, or press Enter to leave the end open for teeing off later.' };
+  // Finished on a riser, a run becomes that riser's feed: the runs on other floors off the riser come off it.
+  const toRiser = !!b && !into && isRiser(h, (b as { id: string }).id);
+  if (b && feedsFrom(b) && !into && !toRiser) return { error: 'Finish on a radiator, fan coil, UFH manifold, the cylinder, a riser or another run, or press Enter to leave the end open for teeing off later.' };
   if (into && 'run' in a && a.run === into.run) return { error: 'Finish on a different run from the one it starts on.' };
+  if (toRiser && !('run' in a) && a.id === (b as { id: string }).id) return { error: 'Finish on a different riser from the one it starts on.' };
   if (!b && mid.length < 1) return { error: 'Draw at least one stretch.' };
-  if (!('run' in a) && a.id !== 'source' && storey === src.storey) return { error: 'On the floor with the heat source, start from the heat source itself.' };
-  const B = into ? null : (b as { id: string } | null);
   const pipes = (h.heating.pipes ??= []);
+  if (!('run' in a) && a.id !== 'source' && storey === src.storey && !riserFeed(h, a.id)) return { error: 'On the floor with the heat source, start from the heat source itself, or draw a run to this riser first.' };
+  const B = into ? null : (b as { id: string } | null);
   // The heater's old run goes, so it is not counted twice.
   // A manifold's run replaces its own old one and any to the loops it now feeds.
   const fed = B?.id.startsWith('m:') ? runEmitters(h, { id: '', name: '', parent: null, size: '', length: 0, ends: ['', B.id] }) : [];
-  if (B) for (const old of pipes.filter((p) => (B.id === 'cylinder' || B.id.startsWith('m:') ? p.ends?.[1] === B.id : p.emitter === B.id.slice(2)) || (!!p.emitter && fed.includes(p.emitter)))) removeRun(h, old.id);
+  if (B) for (const old of pipes.filter((p) => (toRiser ? p === riserFeed(h, B.id) : B.id === 'cylinder' || B.id.startsWith('m:') ? p.ends?.[1] === B.id : p.emitter === B.id.slice(2)) || (!!p.emitter && fed.includes(p.emitter)))) removeRun(h, old.id);
   const all = h.heating.pipes!, root = all.find((p) => p.parent === null && !p.leg)?.id ?? null;
   let start: string, parent: string | null, P0: Pt;
   let via: Pipe['via'];
@@ -750,6 +768,19 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
     const t = Y ? teeAt(h, a.run, a.at) : null;
     if (!t) return { error: 'That run is gone.' };
     ({ start, parent, T: P0 } = t);
+  } else if (riserFeed(h, a.id)) {
+    // A riser fed by a drawn run: off that run's end on its floor, else off a branch from it up or down the riser.
+    const F = riserFeed(h, a.id)!, fs = F.leg!.storey, at = endPoint(h, a.id)!;
+    if (fs === storey) { start = `tee:${F.id}`; parent = F.id; P0 = at; }
+    else {
+      const v = rise(h, fs, storey);
+      let br = all.find((p) => p.parent === F.id && p.ends?.[1] === a.id && Math.abs((p.rise ?? -1) - v) < 1e-6);
+      if (!br) {
+        br = { id: nextId(all), name: `To ${h.storeys[storey]?.name.toLowerCase() ?? 'the roof space'} (${storey > fs ? 'up' : 'down'} the riser)`, parent: F.id, size: usable(h, 'Cu 22 mm'), length: m1(v), ends: [`tee:${F.id}`, a.id], rise: v };
+        all.push(br);
+      }
+      start = a.id; parent = br.id; P0 = at;
+    }
   } else if (storey === src.storey) {
     start = 'source'; parent = root; P0 = src.at;
   } else {
@@ -778,6 +809,12 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
     for (let grew = true; grew; ) { grew = false; for (const p of all) if (p.parent && below.has(p.parent) && !below.has(p.id)) { below.add(p.id); grew = true; } }
     if (parent && below.has(parent)) return { error: 'That run is fed through this one: finishing on it would make a loop.' };
   }
+  // A riser's feed can't come off the riser's own branches: it would feed itself.
+  if (toRiser) {
+    const mine = new Set(all.filter((p) => p.ends?.[1] === B!.id && p.rise != null).map((p) => p.id));
+    for (let q = parent ? all.find((p) => p.id === parent) : undefined; q; q = q.parent ? all.find((p) => p.id === q!.parent) : undefined)
+      if (mine.has(q.id)) return { error: 'That would feed the riser from itself: start from the heat source, another riser or a run not fed up this one.' };
+  }
   const end = T ?? (B ? endPoint(h, B.id)! : mid[mid.length - 1]);
   const raw = tidy([P0, ...(b ? mid : mid.slice(0, -1)), end]);
   const n = raw.length, pts = square && b && n > 1 ? tidy([...raw.slice(0, -1), ...squareInto(h, storey, raw[n - 3], raw[n - 2], raw[n - 1]).slice(1)]) : raw;
@@ -785,20 +822,64 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
   const e = B?.id.startsWith('e:') ? h.heating.emitters.find((x) => x.id === B.id.slice(2)) : undefined, room = e && h.rooms.find((r) => r.id === e.room)?.name;
   const id = nextId(all), M = B?.id.startsWith('m:');
   all.push({ id, parent, leg: { storey, pts }, ends: [start, B?.id ?? ''], length: m1(pathLen(pts)),
-    name: e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}` : B?.id.startsWith('m:') ? manifoldName(h, B.id.slice(2)) : B ? 'Hot water cylinder coil' : 'Main',
+    name: e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}` : B?.id.startsWith('m:') ? manifoldName(h, B.id.slice(2)) : toRiser ? `To riser ${(h.heating.risers ?? []).findIndex((r) => r.id === B!.id) + 1}` : B ? 'Hot water cylinder coil' : 'Main',
     size: usable(h, e ? (e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : storey === src.storey || storey === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)') : 'Cu 22 mm'),
     ...(e ? { emitter: e.id } : {}), ...(via ? { via } : {}) });
   // Its floor or ceiling is fixed before it changes parent: following a run upstream stops at a change of floor.
   if (D) { D.via = viaOf(h, D); D.parent = id; D.ends = [`tee:${id}`, D.ends![1]]; delete D.typed; }
+  // The riser's branches to other floors now come off this run, up or down from its floor.
+  // One with nothing on it yet goes: it is made again when a run is drawn off the riser on that floor.
+  if (toRiser) {
+    const empty = new Set<string>();
+    for (const p of all) if (p.id !== id && p.ends?.[1] === B!.id && p.rise != null) {
+      const to = all.find((c) => c.parent === p.id && c.leg)?.leg!.storey;
+      if (to == null && !all.some((c) => c.parent === p.id)) { empty.add(p.id); continue; }
+      p.parent = id; p.ends = [`tee:${id}`, B!.id]; delete p.leg; delete p.typed;
+      if (to != null) { p.rise = rise(h, storey, to); p.length = m1(p.rise); }
+    }
+    if (empty.size) h.heating.pipes = all.filter((p) => !empty.has(p.id));
+  }
   // A manifold's run is sized for the loops on it.
   if (M) { const s = sizePipes(h, calcHouse(h)); all.find((p) => p.id === id)!.size = fitSize(s.rows.find((r) => r.pipe.id === id)?.flowLpm ?? 0, [], s.paMax, sizesOn(h)); }
+  return { id };
+}
+
+/**
+ * Finish a run left with an open end: onto `b` (a heater, UFH manifold, the cylinder or another run) as if it had been drawn there
+ * through its own corners, or with `b` null, just move its end to `to`. It keeps its id and where it starts. Returns why not (edits h in place).
+ */
+export function moveOpenEnd(h: House, id: string, b: Attach | null, to: Pt, square = true): { id: string } | { error: string } {
+  const X = h.heating.pipes?.find((p) => p.id === id), pts = X && livePath(h, X);
+  if (!X?.leg || !X.ends || !pts || X.ends[1] !== '' || h.heating.pipes!.some((p) => p.parent === id)) return { error: 'Only an open end, with nothing teed off it, can be moved.' };
+  if (!b) {
+    X.leg = { storey: X.leg.storey, pts: tidy([...pts.slice(0, -1), ...ell(h, X.leg.storey, pts[pts.length - 2] ?? pts[0], to).slice(1)]) };
+    X.length = m1(pathLen(X.leg.pts)); delete X.typed;
+    return { id };
+  }
+  if ('run' in b ? b.run === id : b.id === 'source') return { error: 'Drop it on a radiator, fan coil, UFH manifold, the cylinder, a riser or another run.' };
+  // Drawn again through its corners on a copy, so a refusal leaves the house as it was.
+  const t = structuredClone(h), s0 = X.ends[0], a: Attach = s0.startsWith('tee:') ? { run: s0.slice(4), at: pts[0] } : { id: s0 };
+  removeRun(t, id);
+  const r = drawRun(t, X.leg.storey, a, pts.slice(1), b, square);
+  if ('error' in r) return r;
+  // Back to its own id, swapped with whichever new run took that id while it was out, and every reference with it.
+  const sw = (v: string) => (v === r.id ? id : v === id ? r.id : v);
+  for (const p of t.heating.pipes!) {
+    p.id = sw(p.id);
+    if (p.parent) p.parent = sw(p.parent);
+    if (p.ends?.[0].startsWith('tee:')) p.ends = [`tee:${sw(p.ends[0].slice(4))}`, p.ends[1]];
+  }
+  // Off the source or a riser, it keeps its own start and parent.
+  const R = t.heating.pipes!.find((p) => p.id === id)!;
+  if (!s0.startsWith('tee:')) { R.parent = X.parent; R.ends = [s0, R.ends![1]]; }
+  h.heating.pipes = t.heating.pipes;
   return { id };
 }
 
 /** Heaters, and the cylinder, with no run to them. */
 export function unpiped(h: House): string[] {
   const ps = h.heating.pipes ?? [], has = new Set(ps.map((p) => p.emitter));
-  return [...h.heating.emitters.filter((e) => !has.has(e.id) && !fedByManifold(h, e)).map((e) => `e:${e.id}`),
+  return [...h.heating.emitters.filter((e) => !has.has(e.id) && !fedByManifold(h, e) && !zonePart(h, e)).map((e) => `e:${e.id}`),
     ...manifolds(h).filter((z) => !ps.some((p) => p.ends?.[1] === `m:${z.id}`)).map((z) => `m:${z.id}`),
     ...(h.heating.cylinder && !ps.some((p) => p.ends?.[1] === 'cylinder') ? ['cylinder'] : [])];
 }

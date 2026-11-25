@@ -6,6 +6,8 @@ import { defaultHouse } from './house-default';
 import { addFloorZone, addRoomAt, syncUfh, addStoreyAbove, copyRooms, cutPlan, flipRooms, innerDoorAt, moveCorners, narrowAtWall, pieceAlign, pieceKeys, pieceThickness, problems, rotateRooms, splitRoom, stretchAtWall, wallPieces } from './house-draw';
 import { newHouse } from './house-templates';
 import { loopLength, loopMax } from './house-heating';
+import { attachments, drawRun, unpiped } from './house-pipes';
+import { runEmitters } from './house-controls';
 
 const area = (h: ReturnType<typeof defaultHouse>) => h.rooms.reduce((t, r) => t + roomArea(r) * r.span, 0);
 const errors = (h: ReturnType<typeof defaultHouse>) => calcHouse(h).checks.filter((c) => c.level === 'error');
@@ -274,10 +276,35 @@ describe('underfloor heating zones', () => {
     // A loop of 110 m is too long for 16 mm pipe but fine for 20 mm.
     const long = mine(wide)[0];
     long.area = 16; long.spacing = 150; long.tail = 1.7;
-    expect(loopLength(long)).toBeCloseTo(110, 0);
+    for (const e of mine(wide)) if (e !== long) e.area = 0; // the zone's loop runs through all its rooms: leave only this one's floor
+    expect(loopLength(long, wide)).toBeCloseTo(110, 0);
     const warned = (pipe: number) => { long.pipe = pipe; return calcHouse(wide).checks.some((c) => c.text.includes('UFH loop') && c.text.includes(`${pipe} mm loops`)); };
     expect(warned(16)).toBe(true);
     expect(warned(20)).toBe(false);
+  });
+
+  it('is one loop across all its rooms: one length (measured once entered), one warning, one pipe run, each room heated by its own floor', () => {
+    const { s } = drawn(), parts = s.heating.emitters.filter((e) => e.fromZone), z = s.zones![s.zones!.length - 1];
+    expect(parts.length).toBeGreaterThan(2);
+    const est = (parts.reduce((a, e) => a + e.area, 0) * 1000) / 150 + 2 * parts[0].tail;
+    for (const e of parts) expect(loopLength(e, s)).toBeCloseTo(est, 6);
+    z.length = 42;
+    for (const e of parts) expect(loopLength(e, s)).toBe(42);
+    z.length = 500;
+    expect(calcHouse(s).checks.filter((c) => c.text.includes(`UFH loop of ${z.name}`)).length).toBe(1);
+    // Heat: each room gets its own part's output.
+    const res = calcHouse(s);
+    for (const e of parts) expect(res.heat.rooms.find((q) => q.id === e.room)?.has).toBe(true);
+    // Pipes: only the first part can be piped to, and its run feeds every part.
+    s.heating.source = { at: [0.5, 0.5], storey: 0 };
+    s.heating.pipes = [];
+    const ids = attachments(s, 0).map((a) => a.id);
+    expect(ids).toContain(`e:${parts[0].id}`);
+    for (const e of parts.slice(1)) expect(ids).not.toContain(`e:${e.id}`);
+    expect(unpiped(s)).toContain(`e:${parts[0].id}`);
+    const r = drawRun(s, 0, { id: 'source' }, [], { id: `e:${parts[0].id}` }) as { id: string };
+    expect(runEmitters(s, s.heating.pipes.find((p) => p.id === r.id)!).sort()).toEqual(parts.map((e) => e.id).sort());
+    expect(unpiped(s).filter((id) => parts.some((e) => id === `e:${e.id}`))).toEqual([]);
   });
 
   it('follows the zone: shrinking it shrinks the loops, deleting it or making a room unheated removes them', () => {

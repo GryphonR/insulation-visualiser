@@ -5,7 +5,7 @@ import type { House } from './house';
 import type { Pipe } from './house-pipes';
 import { splitCircuits } from './house-pipes';
 import type { Emitter } from './house-heating';
-import { canCool, coolingOn } from './house-heating';
+import { canCool, coolingOn, zonePart } from './house-heating';
 
 /** A 2-port valve is open or shut; a 3-port sends flow to port A, port B, or both (mid position, Y plan only). */
 export type Pos = 'open' | 'shut' | 'A' | 'B' | 'AB';
@@ -41,9 +41,13 @@ export const PLANS: Record<PlanKind, { name: string; note: string }> = {
 export const isCylRun = (p: Pipe) => p.ends?.[1] === 'cylinder';
 /** A UFH zone whose manifold is placed on the heating layout, so a run to it feeds all its loops. */
 export const placedManifold = (h: House, zone: string) => { const z = h.heating.zones.find((x) => x.id === zone && x.kind === 'ufh'); return z?.manifold?.storey != null ? z : undefined; };
-/** The emitters a run feeds: its own, or every UFH loop on the placed manifold at its end. */
+/** The emitters a run feeds: its own (every room's part, for a UFH zone's loop), or every UFH loop on the placed manifold at its end. */
 export function runEmitters(h: House, p: Pipe): string[] {
-  if (p.emitter) return [p.emitter];
+  if (p.emitter) {
+    const e = h.heating.emitters.find((x) => x.id === p.emitter);
+    // A later part of a zone is fed by the first part's run; a run of its own from before zones were one loop feeds nothing.
+    return !e?.fromZone ? [p.emitter] : zonePart(h, e) ? [] : h.heating.emitters.filter((x) => x.fromZone === e.fromZone).map((x) => x.id);
+  }
   const m = p.ends?.[1]?.startsWith('m:') ? p.ends[1].slice(2) : '';
   return m && placedManifold(h, m) ? h.heating.emitters.filter((e) => e.kind === 'ufh' && e.zone === m).map((e) => e.id) : [];
 }

@@ -157,9 +157,9 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                               ? <span title="Set on the UFH zone, in the floor plan's side panel">{e.spacing} mm spacing, {e.pipe ?? 16} mm pipe ·{' '}</span>
                               : <><select className="h-sel" aria-label="Pipe spacing" value={e.spacing} onChange={(ev) => setE(e.id, { spacing: Number(ev.target.value) })}>{UFH_SPACINGS.map((s) => <option key={s} value={s}>{s} mm</option>)}</select>{' '}</>}
                             <select className="h-sel" aria-label="Floor covering" value={e.cover} onChange={(ev) => setE(e.id, { cover: ev.target.value })}>{Object.keys(COVERS).map((s) => <option key={s}>{s}</option>)}</select>
-                            <br /><span className={`small ${loopLength(e, house) > loopMax(e) ? 'bad' : 'muted'}`}>loop {fmt(loopLength(e, house))} m{e.rect ? ', drawn' : ` incl. ${e.tail} m tails`}</span>
+                            <br /><span className={`small ${loopLength(e, house) > loopMax(e) ? 'bad' : 'muted'}`}>loop {fmt(loopLength(e, house))} m{e.fromZone ? `, the whole zone's${house.zones?.find((z) => z.id === e.fromZone)?.length ? ', measured' : ''}` : e.rect ? ', drawn' : ` incl. ${e.tail} m tails`}</span>
                           </>}
-                          {e.kind !== 'ufh' && <span className="small muted"> · {fmt(ratedOf(e))} W at ΔT50</span>}
+                          {e.kind !== 'ufh' && <span className="small muted"> · {fmt(ratedOf(e))} W at ΔT50{e.kind === 'fancoil' && e.feeds?.length ? ` · ducted to ${e.feeds.map((id) => house.rooms.find((r) => r.id === id)?.name).filter(Boolean).join(', ')}` : ''}</span>}
                           {canCool(e) && c.cooling && <><br /><span className="small muted">cools {fmt(emitterCool(e, c.cooling.flow, c.cooling.setpoint, house))} W at {c.cooling.flow} °C flow</span></>}
                         </td>
                         <td>

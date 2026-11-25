@@ -137,7 +137,7 @@ export function PlanPage({ selected, mode = 'model' }: { selected?: string; mode
         </div>
       )}
 
-      <LayerTabs house={house} storey={storey} band={band} roof={roofOn} pickStorey={goStorey} pickBand={goBand} pickRoof={() => goRoof()} upd={upd} below={showBelow} setBelow={setShowBelow} />
+      <LayerTabs house={house} storey={storey} band={band} roof={roofOn} pickStorey={goStorey} pickBand={goBand} pickRoof={() => goRoof()} upd={upd} below={showBelow} setBelow={setShowBelow} roofSpace={mode === 'heating'} />
 
       <button type="button" className="panel-toggle" aria-expanded={panelOpen} onClick={() => setPanelOpen(!panelOpen)} title={panelOpen ? 'Hide the layers panel' : 'Show the layers panel'}>{panelOpen ? '›' : '‹'}</button>
       {panelOpen && (
@@ -192,7 +192,7 @@ export function PlanPage({ selected, mode = 'model' }: { selected?: string; mode
               </section>
             )}
             <section className="fp-sec">
-              <h3>{roofOn ? 'Roof sections' : band != null ? bandName(house, band) : house.storeys[storey]?.name}</h3>
+              <h3>{roofOn ? 'Roof sections' : band != null ? bandName(house, band) : house.storeys[storey]?.name ?? 'Roof space'}</h3>
               <LayerSettings house={house} res={res} storey={storey} band={band} roof={roofOn} zone={sel.zone} pickZone={(id) => setSel({ ...NO_SEL, zone: id })} pickStorey={goStorey} pickRoof={goRoof} upd={upd} />
             </section>
             {mode === 'model' && <details className="fp-sec">

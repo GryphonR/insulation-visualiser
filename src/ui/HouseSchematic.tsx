@@ -7,7 +7,7 @@ import type { House } from '../engine/house';
 import { EMITTER_NAME, RAD_LABEL, coolingOn, emitterCool, given } from '../engine/house-heating';
 import { PLANS, applyPlan, controlChecks, markCustom, modeSummary, modesOf, passes, posOf, reach, runUse, teeOf } from '../engine/house-controls';
 import type { Mode, PlanKind, Pos, Use, Valve, Water } from '../engine/house-controls';
-import { runLength, sizePipes } from '../engine/house-pipes';
+import { endsOnHeater, runLength, sizePipes } from '../engine/house-pipes';
 import type { Pipe } from '../engine/house-pipes';
 import { download } from '../lib/util';
 import { Chip } from './controls';
@@ -59,7 +59,7 @@ export function layoutPipes(h: House): { nodes: Node[]; rows: number; maxDepth: 
     maxDepth = Math.max(maxDepth, depth);
     const n: Node = { p, depth, y: 0, px: 0, py: 0 };
     nodes.push(n);
-    const own = p.emitter || !kids(p.id).length ? row++ : -1;
+    const own = endsOnHeater(p) || !kids(p.id).length ? row++ : -1;
     const ks = kids(p.id).map((c) => place(c, depth + 1, seen)).filter((x): x is Node => !!x);
     n.y = own >= 0 ? own : (ks[0].y + ks[ks.length - 1].y) / 2;
     for (const k of ks) { k.px = depth; k.py = n.y; }
@@ -182,7 +182,9 @@ export function HouseSchematic() {
     const p = n.p, e = h.heating.emitters.find((x) => x.id === p.emitter), r = byId.get(p.id);
     const room = e ? roomOf(e.room) : undefined, storey = h.storeys[room?.storey ?? p.leg?.storey ?? -1]?.name;
     const zone = e && h.heating.zones.find((z) => z.id === e.zone);
-    const what = !e ? (p.ends?.[1] === 'cylinder' ? 'Hot water cylinder coil' : p.name) : e.kind === 'ufh' ? `UFH loop · ${fmt(e.area, 1)} m² · ${e.spacing} mm` : e.kind === 'radiator' ? `${RAD_LABEL[e.type]} · ${e.len}×${e.height}` : `${EMITTER_NAME[e.kind]} · ${fmt(e.rated)} W at ΔT50`;
+    // A UFH zone's loop runs through each of its rooms.
+    const parts = e?.fromZone ? h.heating.emitters.filter((x) => x.fromZone === e.fromZone) : [];
+    const what = !e ? (p.ends?.[1] === 'cylinder' ? 'Hot water cylinder coil' : p.name) : e.kind === 'ufh' ? `UFH loop · ${fmt(parts.length ? parts.reduce((a, x) => a + x.area, 0) : e.area, 1)} m² · ${e.spacing} mm${parts.length > 1 ? ` · ${parts.map((x) => roomOf(x.room)?.name ?? x.room).join(', ')}` : ''}` : e.kind === 'radiator' ? `${RAD_LABEL[e.type]} · ${e.len}×${e.height}` : `${EMITTER_NAME[e.kind]} · ${fmt(e.rated)} W at ΔT50`;
     const coolW = e && m.water === 'chilled' && got.emitters.has(e.id) && cool ? emitterCool(e, cool.flow, cool.setpoint, h) : 0;
     return <g fontFamily={FONT}>
       <text x={x} y={y - 6} fontSize={12} fontWeight={600} fill={INK}>{room?.name ?? (e ? e.room : what)}{storey ? <tspan fill={MUTED} fontWeight={400}> · {storey}</tspan> : null}</text>
@@ -273,7 +275,7 @@ export function HouseSchematic() {
                 : <path className={running ? 'sx-pulse' : undefined} d={`M38 ${yOf(srcY) - 14} c-7 -4 -5 -10 0 -16 c1 5 6 6 6 11 c0 3 -3 5 -6 5 z`} fill={running ? '#ea580c' : IDLE} />}
               {nodes.map((n) => {
                 const r = byId.get(n.p.id), x0 = n.px < 0 ? X0 - 16 : xOf(n.px), y0 = yOf(n.py), y = yOf(n.y), u = use.get(n.p.id) ?? 'idle';
-                const leaf = !nodes.some((k) => k.p.parent === n.p.id), x1 = leaf ? xE : xOf(n.depth), w = r?.index ? 3 : 1.8;
+                const leaf = !nodes.some((k) => k.p.parent === n.p.id), tip = endsOnHeater(n.p), x1 = leaf || tip ? xE : xOf(n.depth), w = r?.index ? 3 : 1.8;
                 const xs = n.px < 0 ? X0 : xOf(n.px), lx = xs + 10, bad = r && !r.ok;
                 const ret = `M${x0} ${y0 + O} H${x0 + (n.px < 0 ? 16 : 0) - O} V${y + O} H${x1}`, flo = `M${x0} ${y0 - O} H${x0 + (n.px < 0 ? 16 : 0) + O} V${y - O} H${x1}`;
                 const v = vNow?.get(n.p.id) ?? 0, dur = `${Math.min(6, Math.max(0.5, 0.6 / Math.max(v, 0.05))).toFixed(2)}s`;
@@ -292,9 +294,9 @@ export function HouseSchematic() {
                   <text x={lx} y={y - O - 5} fontFamily={FONT} fontSize={10} fill={bad ? BAD : INK}>{n.p.header ? `${n.p.name} · ` : ''}{short(n.p.size)} · {fmt(runLength(h, n.p), 1)} m</text>
                   {/* This mode's flow; the size (and a red label) follow the busiest mode, named when it is another one. */}
                   {r && <text x={lx} y={y + O + 13} fontFamily={FONT} fontSize={10} fill={bad ? BAD : MUTED}>{running && now ? (u === 'idle' ? 'No flow' : !now.flow.get(n.p.id) && u === 'dhw' && !h.heating.coilW ? 'Coil reheat not entered' : `${fmt(now.flow.get(n.p.id) ?? 0, 1)} l/min · ${fmt(v, 2)} m/s`) : `Design ${fmt(r.flowLpm, 1)} l/min · ${fmt(r.v, 2)} m/s`}{ctl && r.mode && (!running || r.mode !== m.name) ? ` · sized for ${r.mode}` : ''}</text>}
-                  {(n.p.emitter || leaf) && <>{symbol(n, x1, y)}{label(n, xE + 52, y)}</>}
-                  {!leaf && <circle cx={x1 + O} cy={y - O} r={2.5} fill={COL[u][0]} className="sx-fill" />}
-                  {!leaf && <circle cx={x1 - O} cy={y + O} r={2.5} fill={COL[u][1]} className="sx-fill" />}
+                  {(tip || leaf) && <>{symbol(n, x1, y)}{label(n, xE + 52, y)}</>}
+                  {!leaf && <circle cx={xOf(n.depth) + O} cy={y - O} r={2.5} fill={COL[u][0]} className="sx-fill" />}
+                  {!leaf && <circle cx={xOf(n.depth) - O} cy={y + O} r={2.5} fill={COL[u][1]} className="sx-fill" />}
                   {vs.map(({ v: vv, port }, k) => valveMark(vv, port, n.p.id, xs + STEP - 22 - k * 26, y - O))}
                 </g>;
               })}

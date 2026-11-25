@@ -1,8 +1,9 @@
+import { layoutPipes } from '../ui/HouseSchematic';
 import { describe, expect, it } from 'vitest';
 import { calcHouse } from './house';
 import { defaultHouse } from './house-default';
-import { emitterOut, lpm } from './house-heating';
-import { PIPE_SIZES, PIPE_WALL, attachments, drawRun, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, fitSize, fittingsDp, joinRun, joints, kInsert, sizesOn, usable, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitCircuits, splitSegment, squareInto } from './house-pipes';
+import { emitterOut, lpm, roomOut, shareIn } from './house-heating';
+import { PIPE_SIZES, PIPE_WALL, attachments, drawRun, moveOpenEnd, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, fitSize, fittingsDp, joinRun, joints, kInsert, sizesOn, usable, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitCircuits, splitSegment, squareInto } from './house-pipes';
 
 /** Place a heater so its pipes connect at `p` (its valve end, for a radiator). */
 const put = (h: ReturnType<typeof defaultHouse>, e: ReturnType<typeof defaultHouse>['heating']['emitters'][number], p: [number, number]) => {
@@ -459,6 +460,21 @@ describe('UFH manifolds', () => {
     expect(unpiped(h)).toContain(`e:${loops[0].id}`);
   });
 
+  it('a run teed at the far end of a manifold run comes off just before it, not through it', () => {
+    const h = defaultHouse();
+    h.heating.source = { at: [0.5, 0.5], storey: 0 };
+    h.heating.pipes = [];
+    h.heating.zones.push({ id: 'zm', name: 'UFH manifold', kind: 'ufh', color: '#000', on: true, hours: null, blend: 35, manifold: { x: 3, y: 2, storey: 0 } });
+    const m = drawRun(h, 0, { id: 'source' }, [], { id: 'm:zm' }) as { id: string };
+    const e = h.heating.emitters.find((x) => x.kind === 'radiator' && h.rooms.find((r) => r.id === x.room)?.storey === 0)!;
+    const r = drawRun(h, 0, { run: m.id, at: [3, 2] }, [], { id: `e:${e.id}` }) as { id: string };
+    const ps = h.heating.pipes, run = ps.find((p) => p.id === r.id)!, man = ps.find((p) => p.ends?.[1] === 'm:zm')!;
+    expect(run.parent).not.toBe(man.id);
+    expect(ps.some((p) => p.parent === man.id)).toBe(false);
+    expect(run.parent).toBe(man.parent); // both off the shared stretch before the manifold
+    expect(layoutPipes(h).nodes.some((n) => n.p.id === man.id)).toBe(true);
+  });
+
   it('pipes the rest routes one run to a manifold, not one per loop', () => {
     const h = defaultHouse();
     h.heating.source = { at: [0.5, 0.5], storey: 0 };
@@ -542,3 +558,124 @@ describe('fitting losses', () => {
     expect(fittingsDp(h, p, 0.7, 1000)).toBeCloseTo(300, 6); // a typed length keeps the 30% allowance
   });
 });
+
+describe('ducted fan coils', () => {
+  it('share their output between the rooms they feed by floor area, and their run carries every room they feed', () => {
+    const h = defaultHouse();
+    const top = h.storeys.length - 1, [a, b] = h.rooms.filter((r) => r.storey === top && r.heated);
+    h.heating.emitters = h.heating.emitters.filter((e) => e.room !== a.id && e.room !== b.id);
+    h.heating.emitters.push({ id: 'fc', room: a.id, kind: 'fancoil', zone: h.heating.zones[0].id, type: 'K2', len: 1000, height: 600, rated: 3000, area: 0, spacing: 150, cover: 'Tiles', tail: 0, feeds: [a.id, b.id], storey: top + 1, at: [a.x + 1, a.y + 1] });
+    const fc = h.heating.emitters.find((e) => e.id === 'fc')!, area = (r: typeof a) => r.w * r.d;
+    expect(shareIn(h, fc, a.id)).toBeCloseTo(area(a) / (area(a) + area(b)), 6);
+    expect(shareIn(h, fc, b.id) + shareIn(h, fc, a.id)).toBeCloseTo(1, 6);
+    const full = emitterOut(fc, 45, 21, h);
+    expect(roomOut(h, a.id, 45, 21) + roomOut(h, b.id, 45, 21)).toBeCloseTo(full, 6);
+    const res = calcHouse(h);
+    for (const r of [a, b]) expect(res.heat.rooms.find((q) => q.id === r.id)?.has).toBe(true);
+    // In the roof space, piped up the riser from below.
+    h.heating.source = { at: [0.5, 0.5], storey: 0 };
+    h.heating.pipes = [];
+    expect(attachments(h, top + 1).map((x) => x.id)).toContain('e:fc');
+    expect(attachments(h, top).map((x) => x.id)).not.toContain('e:fc');
+    pipeRest(h);
+    const s = sizePipes(h, calcHouse(h)), row = s.rows.find((x) => x.pipe.emitter === 'fc')!;
+    const need = (id: string) => calcHouse(h).rooms.find((r) => r.room.id === id)!.totalW;
+    expect(row.loadW).toBeCloseTo(need(a.id) + need(b.id), 0);
+  });
+});
+
+describe('open ends', () => {
+  it('an open end can be moved, or finished onto a heater or another run, keeping its route and id', () => {
+    const h = defaultHouse();
+    h.heating.source = { at: [0.5, 0.5], storey: 0 };
+    h.heating.pipes = [];
+    const e = h.heating.emitters.find((x) => x.kind === 'radiator' && h.rooms.find((r) => r.id === x.room)?.storey === 0)!;
+    const o = drawRun(h, 0, { id: 'source' }, [[2, 0.5]], null) as { id: string };
+    const open = () => h.heating.pipes!.find((p) => p.id === o.id)!;
+    expect(open().ends![1]).toBe('');
+    // Moved: the end goes where it is dropped.
+    expect(moveOpenEnd(h, o.id, null, [2, 1.5])).toEqual({ id: o.id });
+    expect(livePath(h, open())!.slice(-1)[0]).toEqual([2, 1.5]);
+    // Dropped on nothing it can feed from: refused, nothing changes.
+    const before = JSON.stringify(h.heating.pipes);
+    expect('error' in moveOpenEnd(h, o.id, { id: 'source' }, [0.5, 0.5])).toBe(true);
+    expect(JSON.stringify(h.heating.pipes)).toBe(before);
+    // Onto a radiator: it now feeds it, through its old corners.
+    expect(moveOpenEnd(h, o.id, { id: `e:${e.id}` }, emitterPort(h, e)!)).toEqual({ id: o.id });
+    expect(open().emitter).toBe(e.id);
+    expect(open().ends).toEqual(['source', `e:${e.id}`]);
+    expect(livePath(h, open())!.some((q) => q[0] === 2 && q[1] === 1.5)).toBe(true);
+    expect(unpiped(h)).not.toContain(`e:${e.id}`);
+    // Another open end finished onto that run tees into it and feeds it from there on.
+    const o2 = drawRun(h, 0, { id: 'source' }, [[0.5, 1.5]], null) as { id: string };
+    const r = moveOpenEnd(h, o2.id, { run: o.id, at: [2, 1] }, [2, 1]);
+    expect(r).toEqual({ id: o2.id });
+    expect(h.heating.pipes!.find((p) => p.emitter === e.id)!.parent).toBe(o2.id);
+  });
+
+  it('keeps every run id unique when the run it is dropped on is split to make the tee', () => {
+    const h = defaultHouse();
+    h.heating.source = { at: [0.5, 0.5], storey: 0 };
+    h.heating.pipes = [];
+    const e = h.heating.emitters.find((x) => x.kind === 'radiator' && h.rooms.find((r) => r.id === x.room)?.storey === 0)!;
+    const r = drawRun(h, 0, { id: 'source' }, [[3, 0.5], [3, 2]], { id: `e:${e.id}` }) as { id: string };
+    // The open end is the newest run: its id is the one a new run would be given once it is taken out.
+    const o = drawRun(h, 0, { id: 'source' }, [[0.5, 2]], null) as { id: string };
+    expect(moveOpenEnd(h, o.id, { run: r.id, at: [2, 0.5] }, [2, 0.5])).toEqual({ id: o.id });
+    const ids = h.heating.pipes.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    const parents = new Set(h.heating.pipes.map((p) => p.parent).filter(Boolean));
+    for (const id of parents) expect(ids).toContain(id);
+    // The heater is now fed through the moved run.
+    let cur = h.heating.pipes.find((p) => p.emitter === e.id), up: string[] = [];
+    while (cur) { up.push(cur.id); cur = h.heating.pipes.find((p) => p.id === cur!.parent); }
+    expect(up).toContain(o.id);
+  });
+});
+
+describe('runs between risers', () => {
+  const setup = () => {
+    const h = defaultHouse();
+    h.heating.source = { at: [0.5, 0.5], storey: 0 };
+    h.heating.risers = [{ id: 'rs1', at: [2, 0.5] }, { id: 'rs2', at: [6, 3] }];
+    h.heating.pipes = [];
+    const up = h.heating.emitters.find((x) => x.kind === 'radiator' && h.rooms.find((r) => r.id === x.room)?.storey === 1)!;
+    return { h, up };
+  };
+  const chain = (h: ReturnType<typeof defaultHouse>, id: string) => { const out: string[] = []; for (let p = h.heating.pipes!.find((x) => x.id === id); p; p = h.heating.pipes!.find((x) => x.id === p!.parent)) out.push(p.id); return out; };
+
+  it('a run on an upper floor from one riser to another feeds the second, and runs off it there come off it', () => {
+    const { h, up } = setup();
+    const f = drawRun(h, 1, { id: 'rs1' }, [[2, 3]], { id: 'rs2' }) as { id: string };
+    expect(f.id).toBeTruthy();
+    expect(h.heating.pipes!.find((p) => p.id === f.id)!.name).toBe('To riser 2');
+    const r = drawRun(h, 1, { id: 'rs2' }, [], { id: `e:${up.id}` }) as { id: string };
+    expect(h.heating.pipes!.find((p) => p.id === r.id)!.parent).toBe(f.id);
+    const s = sizePipes(h, calcHouse(h));
+    expect(s.rows.find((x) => x.pipe.id === f.id)!.loadW).toBeGreaterThan(0);
+  });
+
+  it('a run from the source to a riser on the ground floor feeds it: the branches up it move onto that run', () => {
+    const { h, up } = setup();
+    const before = drawRun(h, 1, { id: 'rs2' }, [], { id: `e:${up.id}` }) as { id: string }; // up rs2 straight from the source
+    const f = drawRun(h, 0, { id: 'source' }, [[6, 0.5]], { id: 'rs2' }) as { id: string };
+    expect(chain(h, before.id)).toContain(f.id);
+    const br = h.heating.pipes!.find((p) => p.ends?.[1] === 'rs2' && p.rise != null)!;
+    expect(br.parent).toBe(f.id);
+    expect(br.leg).toBeUndefined();
+    expect(sizePipes(h, calcHouse(h)).unpiped).not.toContain(up.id);
+    // On its own floor, a run started at the riser tees off the feed's end.
+    const e0 = h.heating.emitters.find((x) => x.kind === 'radiator' && h.rooms.find((r) => r.id === x.room)?.storey === 0)!;
+    const r0 = drawRun(h, 0, { id: 'rs2' }, [], { id: `e:${e0.id}` }) as { id: string };
+    expect(h.heating.pipes!.find((p) => p.id === r0.id)!.parent).toBe(f.id);
+  });
+
+  it('refuses a riser feed that would come off its own branch', () => {
+    const { h } = setup();
+    drawRun(h, 0, { id: 'source' }, [], { id: 'rs1' });
+    drawRun(h, 1, { id: 'rs1' }, [[2, 3]], { id: 'rs2' });
+    const r = drawRun(h, 0, { id: 'rs2' }, [[2, 3]], { id: 'rs1' });
+    expect('error' in r && r.error).toMatch(/from itself/);
+  });
+});
+

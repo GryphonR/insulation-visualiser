@@ -7,7 +7,7 @@ import { calcHouse, sourceEff, tariff, capacityW } from './house';
 import type { Face, House, HouseResult, RoomResult, RoomType } from './house';
 import { roomKappa } from './heat-capacity';
 import type { Orient } from './data';
-import { COOLING_DEFAULT, coolEer, given, coolingOn, roomCool, roomOut, roomSchedule, systemFlow } from './house-heating';
+import { COOLING_DEFAULT, coolEer, given, coolingOn, roomCool, roomOut, roomSchedule, shareIn, systemFlow } from './house-heating';
 import { served } from './house-controls';
 
 /** Where a face looks for the sun: its true bearing and tilt (vertical unless set). */
@@ -194,7 +194,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
   const ideal = load !== undefined && id === 'summer';
   const coolC = ideal ? { ...(h.heating.cooling ?? COOLING_DEFAULT), setpoint: load!, capacity: Infinity }
     : coolingOn(h) && (id === 'summer' || id === 'year') ? h.heating.cooling! : null;
-  const coolE = { heating: { ...h.heating, emitters: h.heating.emitters.filter((e) => cooled.has(e.id)) } };
+  const coolE = { rooms: h.rooms, heating: { ...h.heating, emitters: h.heating.emitters.filter((e) => cooled.has(e.id)) } };
   const needs = rooms.filter((r) => r.room.heated).map((r) => ({ room: r.room, need: r.totalW }));
   const flowCache = new Map<number, number>();
   const flowAt = (Te: number) => {
@@ -206,7 +206,7 @@ export function simulate(h: House, id: CaseId, base: HouseResult = calcHouse(h),
   const sched = rooms.map((r) => (r.room.heated ? roomSchedule(h, r.room) ?? off : off));
   // Cooling runs on the same hours as the room's heating, in rooms with a cooling emitter on chilled water.
   // The design load holds every heated room all day, whatever its emitters.
-  const cools = rooms.map((r) => (ideal ? r.room.heated : !!coolC && coolE.heating.emitters.some((e) => e.room === r.room.id)));
+  const cools = rooms.map((r) => (ideal ? r.room.heated : !!coolC && coolE.heating.emitters.some((e) => shareIn(h, e, r.room.id) > 0)));
   const csched = rooms.map((r, i) => (ideal && cools[i] ? Array(24).fill(1) : cools[i] ? roomSchedule(h, r.room) ?? off : off));
 
   // Gain shares: awake gains to living spaces, asleep to bedrooms, cooking to kitchens (by floor area).
@@ -365,7 +365,7 @@ export function coolingLoad(h: House, base: HouseResult = calcHouse(h)): CoolLoa
   let blockW = 0, blockHour = 0;
   for (let k = 0; k < r.hours; k++) if (r.cool[k] > blockW) { blockW = r.cool[k]; blockHour = k; }
   const { cooled } = served(h), on = coolingOn(h);
-  const coolE = { heating: { ...h.heating, emitters: h.heating.emitters.filter((e) => cooled.has(e.id)) } };
+  const coolE = { rooms: h.rooms, heating: { ...h.heating, emitters: h.heating.emitters.filter((e) => cooled.has(e.id)) } };
   const rooms = base.rooms.flatMap((rr, i) => {
     if (!rr.room.heated) return [];
     const x = r.coolRooms![i];

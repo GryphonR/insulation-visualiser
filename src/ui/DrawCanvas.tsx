@@ -9,11 +9,11 @@ import type { Pt } from '../engine/geom';
 import { OPEN_DOORWAY, addEmitter, addFloorZone, addStairwell, OPEN_STAIRWELL, ensureOpenDoorway, joinRooms, addRoomAt, cutPlan, deleteRoom, emitterPose, flushDelta, parallelSnap, innerDoorAt, innerWallThickness, insertCorner, isOutside, joinedCorners, mapCorners, turnToWall, mergeRooms, moveCorners, nearestWall, openingCentre, pieceAlign, pieceGap, pieceKeys, pieceSeg, pieceThickness, problems, removeCorner, roomAt, splitRoom, splitWall, stretchAtWall, wallGhosts, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
 import type { WallPiece } from '../engine/house-draw';
 import { planBounds } from './HousePlan';
-import { attachments, dragSegment, drawRun, feedsFrom, joinRun, livePath, manifoldName, manifolds, removeRun, routePipes, splitSegment, squareInto, unpiped, voidName, voidOf, wallSnap } from '../engine/house-pipes';
+import { attachments, dragSegment, drawRun, ell, feedsFrom, joinRun, livePath, moveOpenEnd, manifoldName, manifolds, removeRun, routePipes, splitSegment, squareInto, unpiped, voidName, voidOf, wallSnap } from '../engine/house-pipes';
 import { placedManifold } from '../engine/house-controls';
 import type { Attach } from '../engine/house-pipes';
 import type { Emitter, Heating, Plant } from '../engine/house-heating';
-import { EMITTER_NAME, ZONE_COLOURS } from '../engine/house-heating';
+import { EMITTER_NAME, ZONE_COLOURS, emitterStorey } from '../engine/house-heating';
 import { uid } from './hform';
 import { href } from './route';
 import { ADD_BUILDUP, ADD_BUILDUP_LABEL, useAddBuildup } from './AddBuildupFlow';
@@ -27,7 +27,7 @@ export const storeyWalls = (house: House, storey: number, outsideOnly: boolean, 
 export type Lens = 'plan' | 'pipes';
 /** The window and door build-ups the tools place (unset: the first of each). */
 export interface OpPick { glazing?: string; door?: string }
-export type Tool = 'select' | 'box' | 'room' | 'split' | 'join' | 'corner' | 'stairs' | 'window' | 'door' | 'radiator' | 'ufh' | 'source' | 'cylinder' | 'riser' | 'manifold' | 'pipe';
+export type Tool = 'select' | 'box' | 'room' | 'split' | 'join' | 'corner' | 'stairs' | 'window' | 'door' | 'radiator' | 'fancoil' | 'ufh' | 'source' | 'cylinder' | 'riser' | 'manifold' | 'pipe';
 /** A wall of a room; with `span`, just the piece of it between two metre marks along the wall (`other` is the room it is shared with, if any). */
 export interface WallRef { room: string; edge: number; span?: [number, number]; other?: string; /** Gap to the other room's line, metres (inside walls). */ gap?: number }
 export interface Sel { room: string; walls: WallRef[]; item: { k: 'op' | 'em' | 'plant' | 'pipe'; id: string } | null; /** A floor or ceiling zone. */ zone?: string; /** Several rooms picked with the selection box or Shift-click. */ group?: string[]; /** Arrows on the selected inside wall pick which side of the plan stretches to fit its build-up. */ stretch?: boolean }
@@ -141,6 +141,8 @@ type Drag =
   | { k: 'plant'; id: string; start: Pt; cur: Pt; moved: boolean }
   /** One segment of a pipe run's route, slid sideways; `base` is the route when the drag began. */
   | { k: 'pipe'; id: string; seg: number; base: Pt[]; start: Pt; cur: Pt; moved: boolean }
+  /** The open end of a run, dragged to move it or drop it on what it should feed. */
+  | { k: 'pend'; id: string; start: Pt; cur: Pt; moved: boolean }
   /** A floor or ceiling zone (all of it, or one corner `idx`). */
   | { k: 'zone'; id: string; idx?: number; start: Pt; cur: Pt; moved: boolean }
   | { k: 'box'; a: Pt; cur: Pt }
@@ -454,10 +456,12 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   const together = (room: string, idx: number[], alt: boolean, wall?: number) => (alt ? idx.map((i): [string, number] => [room, i]) : joinedCorners(house, storey, room, idx, wall));
 
   /** Where an emitter goes for a pointer position: its room, and a radiator snaps to the wall beside it. */
+  // The roof space (one above the top storey) holds fan coils over the rooms below.
+  const roofSpace = storey > house.storeys.length - 1;
   const emitterAt = (p: Pt, kind: Emitter['kind'], keep?: string) => {
-    const room = roomAt(house, storey, p) ?? (keep ? house.rooms.find((r) => r.id === keep) : undefined);
+    const room = roomAt(house, Math.min(storey, house.storeys.length - 1), p) ?? (keep ? house.rooms.find((r) => r.id === keep) : undefined);
     if (!room) return null;
-    const hit = kind === 'ufh' ? null : nearestWall(house, storey, p, 0.6, { room: room.id });
+    const hit = kind === 'ufh' || roofSpace ? null : nearestWall(house, storey, p, 0.6, { room: room.id });
     if (hit) { const e = roomEdges(room)[hit.edge]; return { room, at: [hit.at[0] - e.n[0] * 0.2, hit.at[1] - e.n[1] * 0.2] as Pt, ang: (Math.atan2(e.d[1], e.d[0]) * 180) / Math.PI }; }
     return { room, at: [snap(p[0]), snap(p[1])] as Pt, ang: 0 };
   };
@@ -521,6 +525,8 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     const x = pipeHit(p);
     if (!x || !pipeFrom) return null;
     if (feedsFrom(x.a) !== feedsFrom(pipeFrom)) return x;
+    // A run from the source, a riser or a run can finish on (another) riser, and feeds it.
+    if (!('run' in x.a) && x.a.id !== 'source' && feedsFrom(pipeFrom) && !(!('run' in pipeFrom) && pipeFrom.id === x.a.id)) return x;
     return 'run' in x.a && !('run' in pipeFrom && pipeFrom.run === x.a.run) ? { ...x, label: x.label.replace('Tee off', 'Feed') } : null;
   };
   /** The next corner of the pipe being drawn: square to the last one, stopping just short of a wall across its way (Shift: free). */
@@ -665,7 +671,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         const hit = pipeHit(p);
         if (!hit) { setNote('Start on the boiler or heat pump, a riser, a radiator, a UFH manifold, the cylinder or an existing run (the green rings).'); return; }
         setPipeFrom(hit.a); setDraft([hit.at]);
-        setNote(feedsFrom(hit.a) ? 'Click each corner; click a radiator, manifold, the cylinder or another run to finish, or press Enter to leave the end open. Backspace undoes a corner, Esc cancels.'
+        setNote(feedsFrom(hit.a) ? 'Click each corner; click a radiator, fan coil, manifold, the cylinder, a riser or another run to finish, or press Enter to leave the end open. Backspace undoes a corner, Esc cancels.'
           : 'Click each corner; click the boiler, a riser or a run to finish. Backspace undoes a corner, Esc cancels.');
         return;
       }
@@ -697,14 +703,22 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       if (!sticky) setTool('select');
       return;
     }
-    placeEmitter(p);
+    placeEmitter(p, tool === 'fancoil' ? 'fancoil' : 'radiator');
   };
-  /** A radiator in the heated room at a pointer position, on the nearest wall if one is close. */
-  const placeEmitter = (p: Pt) => {
-    const at = emitterAt(p, 'radiator'), id = uid('e');
-    if (!at) { setNote('Click inside a room to place it.'); return; }
-    if (!at.room.heated) { setNote(`${at.room.name} is unheated; switch it to heated first.`); return; }
-    upd((h) => { addEmitter(h, at.room.id, 'radiator', id); const e = h.heating.emitters[h.heating.emitters.length - 1]; e.at = at.at; e.ang = at.ang; });
+  /** A radiator in the heated room at a pointer position, on the nearest wall if one is close; or a fan coil, which can also go in the roof space. */
+  const placeEmitter = (p: Pt, kind: 'radiator' | 'fancoil') => {
+    if (roofSpace && kind !== 'fancoil') { setNote('Only fan coils go in the roof space.'); return; }
+    const at = emitterAt(p, kind), id = uid('e');
+    if (!at) { setNote(roofSpace ? 'Click over a room on the floor below.' : 'Click inside a room to place it.'); return; }
+    // A fan coil can sit in an unheated room (a cupboard) and be ducted to the rooms it feeds.
+    if (!at.room.heated && kind === 'radiator') { setNote(`${at.room.name} is unheated; switch it to heated first.`); return; }
+    upd((h) => {
+      addEmitter(h, at.room.id, kind, id);
+      const e = h.heating.emitters[h.heating.emitters.length - 1];
+      e.at = at.at; e.ang = at.ang;
+      if (kind === 'fancoil') e.rated = 2000;
+      if (roofSpace) e.storey = storey;
+    });
     setSel({ room: at.room.id, walls: [], item: null });
   };
 
@@ -781,6 +795,15 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       const pts = dragSegment(d.base, d.seg, loopShift(d));
       // Dropping a run along another joins them into one shared pipe, in the same undo step.
       upd((h) => { const x = h.heating.pipes?.find((q) => q.id === d.id); if (x?.leg) { x.leg = { storey: x.leg.storey, pts }; delete x.typed; joinRun(h, d.id); } });
+    } else if (d.k === 'pend') {
+      if (!d.moved) return;
+      // On something it can feed (not itself): finished onto it; else the end just moves there.
+      const hit = pipeHit(d.cur), b = hit && !('run' in hit.a && hit.a.run === d.id) ? hit.a : null;
+      const at: Pt = b ? hit!.at : loose.current ? d.cur : [snap(d.cur[0]), snap(d.cur[1])], sq = !loose.current;
+      const test = moveOpenEnd(structuredClone(house), d.id, b, at, sq);
+      if ('error' in test) { setNote(test.error); return; }
+      upd((h) => { moveOpenEnd(h, d.id, b, at, sq); });
+      setNote('');
     } else if (d.k === 'plant') {
       const dl = loopShift(d);
       upd((h) => movePlant(h, d.id, dl));
@@ -938,7 +961,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   const cutLine = tool === 'split' && cut && hv ? magnet(hv, undefined, [cut]) : null;
   const cutHit = cut && cutLine ? onThis.map((r) => cutPlan(roomPoly(r), cut, cutLine)).find((x) => x) : null;
   const pose = (tool === 'window' || tool === 'door') && hv ? openingAt(hv, tool === 'door' ? 0.9 : 1.2, tool === 'door') : null;
-  const eg = tool === 'radiator' && hv ? emitterAt(hv, 'radiator') : null;
+  const eg = (tool === 'radiator' && !roofSpace) || tool === 'fancoil' ? (hv ? emitterAt(hv, tool) : null) : null;
   const cornerAt = tool === 'corner' && hv ? nearestWall(house, storey, hv, 0.4) : null;
   const cursor = drag?.k === 'pan' && drag.moved ? 'grabbing' : tool === 'select' ? 'default' : 'crosshair';
   const dragPoly = drag?.k === 'move' ? onThis.filter((r) => drag.verts.some(([id]) => id === r.id)) : [];
@@ -1084,10 +1107,14 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     const legs = runs.length || !route ? [] : [...[...route.feeds.values()].flatMap((f) => f.legs), ...route.tails.map((t) => t.leg)].filter((l) => l.storey === storey);
     const pipeDrag = drag?.k === 'pipe' && drag.moved ? drag : null;
     // A storey shows the runs in its floor void and in its ceiling void, which is the floor void of the storey above, whichever floor they serve.
+    const ends: Array<{ x: (typeof runs)[number]; end: Pt }> = [];
     const runLines = runs.filter((x) => { const v = voidOf(house, x); return v === storey || v === storey + 1; }).map((x) => {
-      const pts = pipeDrag?.id === x.id ? dragSegment(pipeDrag.base, pipeDrag.seg, loopShift(pipeDrag)) : livePath(house, x) ?? x.leg!.pts;
+      const live = livePath(house, x) ?? x.leg!.pts, endDrag = drag?.k === 'pend' && drag.moved && drag.id === x.id ? drag : null;
+      const pts = pipeDrag?.id === x.id ? dragSegment(pipeDrag.base, pipeDrag.seg, loopShift(pipeDrag))
+        : endDrag ? [...live.slice(0, -1), ...ell(house, storey, live[live.length - 2] ?? live[0], endDrag.cur).slice(1)] : live;
       const onR = sel.item?.k === 'pipe' && sel.item.id === x.id, v = voidOf(house, x), other = x.leg!.storey !== storey;
       const end = to(pts[pts.length - 1]), open = x.ends?.[1] === '' && !(hs0.pipes ?? []).some((c) => c.parent === x.id);
+      if (open) ends.push({ x, end });
       return (
         <g key={`run${x.id}`}>
           <title>{x.name} · {x.size} · in the void {voidName(house, v)}{other ? ` · serves the ${house.storeys[x.leg!.storey]?.name.toLowerCase()}` : ''}</title>
@@ -1096,8 +1123,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
             strokeDasharray={v === storey + 1 ? `${z(9)} ${z(3)} ${z(2)} ${z(3)}` : undefined} />
           {/* Where a run from the void goes through to a heater on the other floor. */}
           {other && x.emitter && <circle cx={end[0]} cy={end[1]} r={z(3.5)} fill="#fff" stroke="#c0392b" strokeOpacity={0.6} strokeWidth={z(1.5)} pointerEvents="none" />}
-          {/* An open end that feeds nothing yet. */}
-          {open && <rect x={end[0] - z(5)} y={end[1] - z(5)} width={z(10)} height={z(10)} fill="#fff" stroke="#c0392b" strokeWidth={z(2)} pointerEvents="none"><title>Open end: {x.name} feeds nothing yet. Tee a run off it with Draw a pipe run, or delete it.</title></rect>}
+
           {onR && pts.slice(1, -1).map((q, i) => <circle key={i} cx={to(q)[0]} cy={to(q)[1]} r={z(3.5)} fill="#fff" stroke="#c2410c" strokeWidth={z(1.5)} pointerEvents="none" />)}
           {pipeSel && pts.slice(1).map((q, i) => (
             <line key={`h${i}`} x1={to(pts[i])[0]} y1={to(pts[i])[1]} x2={to(q)[0]} y2={to(q)[1]} stroke="transparent" strokeWidth={z(10 * hs)}
@@ -1130,6 +1156,9 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         {/* Routes are measured from the saved positions, so they are hidden while something is dragged. */}
         {!plantDrag && legs.map((l, i) => <polyline key={`pl${i}`} points={pts(l.pts)} fill="none" stroke="#c0392b" strokeOpacity={0.75} strokeWidth={z(2)} strokeDasharray={`${z(6)} ${z(3)}`} strokeLinejoin="round" pointerEvents="none" />)}
         {!plantDrag && runLines}
+        {!plantDrag && ends.map(({ x, end }) => <g key={`end${x.id}`}><rect x={end[0] - z(6)} y={end[1] - z(6)} width={z(12)} height={z(12)} fill="#fff" stroke="#c0392b" strokeWidth={z(2)} pointerEvents={pipeSel ? undefined : 'none'} style={{ cursor: 'grab' }}
+            onPointerDown={pipeSel ? (ev) => { setSel({ ...NO_SEL, item: { k: 'pipe', id: x.id } }); begin(ev, { k: 'pend', id: x.id, start: raw(ev), cur: raw(ev), moved: false }); } : undefined}>
+            <title>Open end: {x.name} feeds nothing yet. Drag it onto a radiator, fan coil, manifold, the cylinder or another run to connect it, or anywhere to move it; or tee a run off it with Draw a pipe run.</title></rect></g>)}
         {(hs0.risers ?? []).map((r) => {
           const c = to(shift(r.id, r.at));
           return (
@@ -1159,7 +1188,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         )}
       </g>
     );
-  }, [house, storey, tool, sel, plantDrag, drag?.k === 'pipe' ? drag : null, u, hs, lens]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [house, storey, tool, sel, plantDrag, drag?.k === 'pipe' || drag?.k === 'pend' ? drag : null, u, hs, lens]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const opDrag = drag?.k === 'op' ? drag : null;
   const opLayer = useMemo(() => zoneMode ? null : onThis.flatMap((r) => {
@@ -1191,7 +1220,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
   return (
     <div className="draw-wrap">
       <svg ref={svgRef} className={`draw${drag?.k === 'pan' && drag.moved ? ' grabbing' : spaceHeld ? ' grab' : ''}`} tabIndex={0} style={{ cursor }} viewBox={`${(live.current ?? view).x} ${(live.current ?? view).y} ${(live.current ?? view).w} ${(live.current ?? view).w * ratio}`} role="application"
-        aria-label={`${house.storeys[storey]?.name} drawing canvas`} onPointerDownCapture={trackDown} onPointerDown={down} onPointerMove={move} onPointerUp={release} onPointerCancel={release}
+        aria-label={`${house.storeys[storey]?.name ?? 'Roof space'} drawing canvas`} onPointerDownCapture={trackDown} onPointerDown={down} onPointerMove={move} onPointerUp={release} onPointerCancel={release}
         onPointerLeave={() => setHover(null)} onKeyDown={key} onContextMenu={(e) => e.preventDefault()}
         onDoubleClick={() => { if (outline) closeDraft(draft); }}>
         <defs>
@@ -1351,7 +1380,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         {!zoneMode && <g opacity={lens === 'pipes' ? 1 : 0.4}>{plantLayer}</g>}
 
         {/* Heat emitters */}
-        {house.heating.emitters.filter((e) => { const r = house.rooms.find((x) => x.id === e.room); return r && r.storey === storey && !e.fromZone && (!zoneMode || (e.kind === 'ufh' && !!e.rect && band! <= house.storeys.length - 1)); }).map((e) => {
+        {house.heating.emitters.filter((e) => { const r = house.rooms.find((x) => x.id === e.room); return r && emitterStorey(house, e) === storey && !e.fromZone && (!zoneMode || (e.kind === 'ufh' && !!e.rect && band! <= house.storeys.length - 1)); }).map((e) => {
           if (e.kind === 'ufh' && e.rect) {
             // A drawn loop is its rectangle; on a floor layer it can be picked up and moved.
             const dl: Pt = drag?.k === 'em' && drag.id === e.id && drag.moved ? loopShift(drag) : [0, 0], on = sel.item?.k === 'em' && sel.item.id === e.id, a = to([e.rect.x + dl[0], e.rect.y + dl[1]]);
@@ -1432,7 +1461,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
           return <line x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={tool === 'door' ? '#8a5a2b' : '#1f6fb5'} strokeWidth={z(6)} opacity={0.55} pointerEvents="none" />;
         })()}
         {eg && <g transform={`translate(${to(eg.at)[0]} ${to(eg.at)[1]}) rotate(${eg.ang})`} opacity={0.55} pointerEvents="none">
-          <rect x={-0.5 * S} y={-0.05 * S} width={S} height={0.1 * S} fill="#9a3412" />
+          {tool === 'fancoil' ? <rect x={-0.45 * S} y={-0.05 * S} width={0.9 * S} height={0.1 * S} fill="#155e75" /> : <rect x={-0.5 * S} y={-0.05 * S} width={S} height={0.1 * S} fill="#9a3412" />}
         </g>}
         {wallGhost.map(({ box: [x0, y0, x1, y1], on }, i) => {
           // At least 6 px across, so a thin inside wall still shows over a thick outside one.
@@ -1505,7 +1534,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
               } }] : []),
               { label: 'Open room', glyph: '↗', run: () => { location.hash = href('room', r.id); } },
               ...(lens === 'pipes' ? [] : [edit('Rename', '✎', 'name')]),
-              { label: 'Add a radiator', glyph: '≣', off: r.heated ? undefined : `${r.name} is unheated; make it heated first`, run: () => placeEmitter(at) },
+              { label: 'Add a radiator', glyph: '≣', off: r.heated ? undefined : `${r.name} is unheated; make it heated first`, run: () => placeEmitter(at, 'radiator') },
               { label: r.heated ? 'Make unheated' : 'Make heated', glyph: r.heated ? '❄' : '♨', run: () => upd((h) => { const x = h.rooms.find((q) => q.id === r.id); if (x) x.heated = !x.heated; }) },
               ...(lens === 'pipes' ? [] : [{ label: 'Delete room', glyph: '✕', run: () => { upd((h) => deleteRoom(h, r.id)); setSel(NO_SEL); } }]),
             ] };
