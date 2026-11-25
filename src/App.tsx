@@ -79,7 +79,8 @@ function Routes() {
         <HouseStart
           onCancel={() => go('projects')}
           onCreate={(h, job) => {
-            createProject({ ...newProject(h), ...job }); go('buildups', 'start');
+            // No heating zones to start with: they are added by hand where wanted (rarely, with a heat pump).
+            createProject({ ...newProject({ ...h, heating: { ...h.heating, zones: [], emitters: h.heating.emitters.map((e) => ({ ...e, zone: '' })) } }), ...job }); go('buildups', 'start');
           }} />
       );
       break;

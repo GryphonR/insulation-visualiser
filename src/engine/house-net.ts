@@ -167,7 +167,8 @@ export function treeOf(pipes: Pipe[], nodes: PipeNode[], srcStorey = 0): Pipe[] 
 export function ensureNet(h: House): void {
   if ((h.heating.pipes ?? []).every((p) => p.a && p.b)) return;
   const n = netOf(h);
-  h.heating.pipes!.forEach((p, i) => { p.a = n.pipes[i].a; p.b = n.pipes[i].b; });
+  // With what each comes off and ends at as it is now, so an edit to those after this is seen.
+  h.heating.pipes!.forEach((p, i) => { p.a = n.pipes[i].a; p.b = n.pipes[i].b; p.was = fingerprint(p); });
   h.heating.nodes = n.nodes;
 }
 

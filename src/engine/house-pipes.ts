@@ -719,6 +719,32 @@ export function combineRuns(h: House, res: HouseResult = calcHouse(h), of?: Circ
   return made.length;
 }
 
+/**
+ * Undo a control plan's split: runs along the same route from the same junction (one per circuit) become one again, the runs off
+ * each coming off the one kept, and the circuit dropped from its name. Returns how many went (edits h in place).
+ */
+export function mergeCircuits(h: House): number {
+  ensureNet(h);
+  let gone = 0;
+  for (let again = true; again; ) {
+    again = false;
+    const pipes = h.heating.pipes ?? [];
+    const key = (p: Pipe) => JSON.stringify([p.a, p.leg ? p.leg.storey : null, p.leg?.pts ?? null, p.rise ?? null, p.leg ? null : p.ends?.[1] ?? null]);
+    const seen = new Map<string, Pipe>();
+    for (const p of pipes) {
+      if (!p.a || p.drop || p.emitter || /^(e:|m:|cylinder$)/.test(p.ends?.[1] ?? '')) continue;
+      const k = key(p), keep = seen.get(k);
+      if (!keep) { seen.set(k, p); continue; }
+      // The same pipe twice: what came off the copy comes off the one kept.
+      h.heating.pipes = pipes.filter((x) => x !== p).map((x) => (x.a === p.b ? { ...x, a: keep.b, parent: keep.id, ...(x.ends?.[0] === `tee:${p.id}` ? { ends: [`tee:${keep.id}`, x.ends[1]] as [string, string] } : {}) } : x));
+      gone++; again = true;
+      break;
+    }
+  }
+  for (const p of h.heating.pipes ?? []) p.name = p.name.replace(/(, (Zone \S+|No zone|Heating|Hot water))+$/, '');
+  return gone;
+}
+
 /** A shared run's name: what it feeds, each once ("Shared: Front room, Kitchen"). */
 const sharedName = (names: string[]) => `Shared: ${[...new Set(names.flatMap((n) => n.replace(/^Shared: /, '').split(', ')).map((n) => n.replace(/ e\d+$/, '')))].join(', ')}`;
 

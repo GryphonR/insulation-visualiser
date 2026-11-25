@@ -7,6 +7,7 @@ import { COOLING_DEFAULT, canCool, coolEer, coolingOn, dewPoint, emitterCool, em
 import { PLANS, applyPlan, controlChecks, isCylRun, modeSummary, modesOf, openRuns, passes, posOf, pureRoots, reach, runUse, served, teeOf } from './house-controls';
 import type { Mode, PlanKind, Valve } from './house-controls';
 import { autoPipes, combineRuns, sizePipes } from './house-pipes';
+import { syncNet } from './house-net';
 import { simulate, verdict, yearRes } from './house-sim';
 
 /** The 1950s semi: a heat pump, three radiator zones and a piped cylinder. */
@@ -193,6 +194,26 @@ describe('control plans', () => {
     expect(h.heating.controls!.modes.some((m) => m.id === 'both')).toBe(false);
     mode(h, 'heat').valves.V1 = 'AB';
     expect(controlChecks(h).some((c) => c.text.includes('no mid position'))).toBe(true);
+  });
+
+  it('removing the valves gives back the runs as laid, and a plan applied after another starts from them too', () => {
+    for (const plan of ['s', 'splus', 'hp', 'y', 'w'] as const) {
+      const h = semi();
+      // A zoned house, so zoned plans split the trunks per zone as well.
+      h.heating.emitters.forEach((e, i) => { e.zone = h.heating.zones[i % 2]?.id ?? ''; });
+      const before = syncNet(h), shape = (x: House) => x.heating.pipes!.filter((p) => !p.header).map((p) => [p.name, p.leg?.pts ?? null, p.rise ?? null]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+      const x = structuredClone(before);
+      applyPlan(x, plan);
+      expect(x.heating.pipes!.length).toBeGreaterThanOrEqual(before.heating.pipes!.length);
+      applyPlan(x, null);
+      const after = syncNet(x);
+      expect(shape(after)).toEqual(shape(before));
+      expect(after.heating.pipes!.some((p) => p.loose || p.loop)).toBe(false);
+      // A 3-port at the cylinder's tee then fits: one run on each port.
+      applyPlan(after, 'w');
+      const v = after.heating.controls!.valves.find((q) => q.kind === 'three')!;
+      expect(teeOf(after, v)).not.toBeNull();
+    }
   });
 
   it('a 3-port plan on shared trunks splits hot water and heating into their own runs, so the valve sits at one tee', () => {

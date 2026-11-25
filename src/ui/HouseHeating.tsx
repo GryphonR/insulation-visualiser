@@ -212,7 +212,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                   <input className="h-text" value={z.name} aria-label="Zone name" onChange={(e) => setZ(z.id, { name: e.target.value })} />
                   <label className="small"><input type="checkbox" checked={z.on} onChange={(e) => setZ(z.id, { on: e.target.checked })} /> On</label>
                   <span className="small mono">{z.kind === 'ufh' ? 'UFH' : 'RAD'} · {fmt(load)} W · {fmt(lpm(load, c.dT), 1)} l/min</span>
-                  <button type="button" className="btn-link" onClick={() => upd((h) => { h.heating.zones = h.heating.zones.filter((x) => x.id !== z.id); h.heating.emitters.forEach((e) => { if (e.zone === z.id) e.zone = ''; }); })}>Delete</button>
+                  <button type="button" className="btn-link" onClick={() => { if (z.kind === 'ufh' && z.manifold?.storey != null && !confirm(`${z.name} is a manifold on the plan: deleting it takes it off the plan, and its loops are piped one by one. Delete it?`)) return; upd((h) => { h.heating.zones = h.heating.zones.filter((x) => x.id !== z.id); h.heating.emitters.forEach((e) => { if (e.zone === z.id) e.zone = ''; }); }); }}>Delete</button>
                 </div>
                 <p className="small muted">{ems.length ? ems.map((e) => `${roomName(e.room)} ${e.kind === 'ufh' ? 'loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}`).join(', ') : 'No emitters yet: pick this zone in the emitter table.'}</p>
                 {z.kind === 'ufh' && (

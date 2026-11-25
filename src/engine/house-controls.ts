@@ -3,7 +3,7 @@
 // Which runs carry water in a mode follows from the valves on the way from the heat source.
 import type { House } from './house';
 import type { Pipe } from './house-pipes';
-import { splitCircuits } from './house-pipes';
+import { mergeCircuits, splitCircuits } from './house-pipes';
 import type { Emitter } from './house-heating';
 import { canCool, coolingOn, zonePart } from './house-heating';
 
@@ -181,6 +181,8 @@ export function applyPlan(h: House, plan: PlanKind | null): string | null {
   if (plan && (plan === 'y' || plan === 's' || plan === 'w') && !hasCyl) return `The ${PLANS[plan].name} switches a hot water cylinder: place and pipe the cylinder first, or choose S plan plus, Heat pump or Combi.`;
   if (plan === 'combi' && hasCyl) return 'A combi has no cylinder: take the cylinder off the plan, or choose another plan.';
   stripHeaders(h);
+  // Any earlier plan's runs per circuit become one again, so removing the valves gives back the pipework as drawn.
+  mergeCircuits(h);
   if (!plan) { delete h.heating.controls; return null; }
   const V: Valve[] = [];
   const valve = (v: Omit<Valve, 'id'>) => { const x = { id: `V${V.length + 1}`, ...v }; V.push(x); return x; };
