@@ -22,11 +22,48 @@ export async function deleteUser(db: D1Database, userId: string) {
       db.prepare('DELETE FROM admins WHERE email = ?').bind(u.email.toLowerCase()),
     ] : []),
     db.prepare('DELETE FROM items WHERE user_id = ?').bind(userId),
+    db.prepare('DELETE FROM shares WHERE user_id = ?').bind(userId),
     db.prepare('DELETE FROM consent WHERE user_id = ?').bind(userId),
     db.prepare('DELETE FROM session WHERE userId = ?').bind(userId),
     db.prepare('DELETE FROM account WHERE userId = ?').bind(userId),
     db.prepare('DELETE FROM user WHERE id = ?').bind(userId),
   ]);
+}
+
+export const MAX_SHARES = 50;
+
+/** Anyone with the link: a shared snapshot, read-only. */
+export async function shared(db: D1Database, id: string): Promise<Response> {
+  const r = await db.prepare('SELECT name, body, created FROM shares WHERE id = ?').bind(id).first();
+  return r ? json(r) : json({ error: 'not found' }, 404);
+}
+
+/** The signed-in user's shared links: make one from a snapshot, list a project's, or stop one. */
+async function shares(req: Request, db: D1Database, userId: string, path: string): Promise<Response> {
+  const id = path.match(/^\/api\/shares\/([\w-]{1,64})$/)?.[1];
+  if (id && req.method === 'DELETE') {
+    await db.prepare('DELETE FROM shares WHERE id = ? AND user_id = ?').bind(id, userId).run();
+    return json({ ok: true });
+  }
+  if (path !== '/api/shares') return json({ error: 'not found' }, 404);
+  if (req.method === 'GET') {
+    const project = new URL(req.url).searchParams.get('project') ?? '';
+    const { results } = await db.prepare('SELECT id, name, created FROM shares WHERE user_id = ? AND project_id = ? ORDER BY created DESC').bind(userId, project).all();
+    return json(results);
+  }
+  if (req.method !== 'POST') return json({ error: 'method' }, 405);
+  const text = await req.text();
+  if (new TextEncoder().encode(text).length > MAX_BODY) return json({ error: 'too large' }, 413);
+  const b = (() => { try { return JSON.parse(text); } catch { return null; } })() as { project?: unknown; name?: unknown; body?: unknown } | null;
+  const name = typeof b?.name === 'string' ? b.name.trim().slice(0, 120) : '';
+  if (typeof b?.project !== 'string' || !/^[\w-]{1,64}$/.test(b.project) || !name || typeof b.body !== 'string') return json({ error: 'project, name and body required' }, 400);
+  try { if (typeof JSON.parse(b.body) !== 'object') throw new Error(); } catch { return json({ error: 'body must be JSON' }, 400); }
+  const c = await db.prepare('SELECT COUNT(*) AS n FROM shares WHERE user_id = ?').bind(userId).first<{ n: number }>();
+  if (c && c.n >= MAX_SHARES) return json({ error: 'limit' }, 403);
+  const share = { id: crypto.randomUUID(), name, created: Date.now() };
+  await db.prepare('INSERT INTO shares (id, user_id, project_id, name, body, created) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(share.id, userId, b.project, name, b.body, share.created).run();
+  return json(share);
 }
 
 export async function api(req: Request, db: D1Database, userId: string, path: string): Promise<Response> {
@@ -49,6 +86,8 @@ export async function api(req: Request, db: D1Database, userId: string, path: st
   }
   // Nothing is stored for an account until its holder has accepted the terms.
   if (!(await consent())) return json({ error: 'terms' }, 403);
+
+  if (path.startsWith('/api/shares')) return shares(req, db, userId, path);
 
   const m = path.match(/^\/api\/(projects|data)(?:\/([\w-]{1,64}))?$/);
   if (!m) return json({ error: 'not found' }, 404);

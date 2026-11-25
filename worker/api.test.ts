@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { api, MAX_BODY } from './api';
+import { api, MAX_BODY, shared } from './api';
 import { testDb } from './d1-shim';
 import { MAX_PROJECTS, MAX_SCENARIOS } from '../src/engine/limits';
 
@@ -88,5 +88,22 @@ describe('sync API', () => {
     expect((await call('alice', 'DELETE', '/api/account')).status).toBe(200);
     expect((await db.prepare("SELECT user_id FROM items UNION ALL SELECT user_id FROM consent").all()).results).toEqual([{ user_id: 'bob' }, { user_id: 'bob' }]);
     expect((await db.prepare('SELECT id FROM verification').all()).results).toEqual([{ id: 'v2' }]);
+  });
+
+  it('shares a snapshot by link: anyone reads it, only its owner lists or stops it', async () => {
+    const post = (user: string, b: unknown) => api(new Request('http://x/api/shares', { method: 'POST', body: JSON.stringify(b) }), db, user, '/api/shares');
+    expect((await post('carol', { project: 'p1', name: 'A', body: '{}' })).status).toBe(403); // no terms
+    expect((await post('alice', { project: 'p1', name: ' ', body: '{}' })).status).toBe(400);
+    expect((await post('alice', { project: 'p1', name: 'A', body: 'nope' })).status).toBe(400);
+    const s = await (await post('alice', { project: 'p1', name: 'House in M14', body: '{"v":1}' })).json();
+    expect(s.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await (await shared(db, s.id)).json()).toMatchObject({ name: 'House in M14', body: '{"v":1}' });
+    const list = (user: string) => api(new Request('http://x/api/shares?project=p1'), db, user, '/api/shares').then((r) => r.json());
+    expect(await list('alice')).toEqual([{ id: s.id, name: 'House in M14', created: s.created }]);
+    expect(await list('bob')).toEqual([]);
+    await call('bob', 'DELETE', `/api/shares/${s.id}`); // not his
+    expect((await shared(db, s.id)).status).toBe(200);
+    await call('alice', 'DELETE', `/api/shares/${s.id}`);
+    expect((await shared(db, s.id)).status).toBe(404);
   });
 });

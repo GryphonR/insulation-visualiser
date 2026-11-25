@@ -5,6 +5,7 @@ import { go, href } from './route';
 import { useProject } from './project';
 import { fmt } from './hform';
 import { Account } from './Account';
+import { PROJECT_LIMIT_MSG } from '../engine/limits';
 
 export const SECTIONS = [
   { n: 1, id: 'buildups', label: 'Build-ups', to: 'buildups', routes: ['buildups', 'library', 'materials', 'compare-buildups', 'wall'] },
@@ -41,7 +42,7 @@ const Arrow = ({ flip }: { flip?: boolean }) => (
 );
 
 export function Shell({ route, children }: { route: string; children: ReactNode }) {
-  const { project, active, house, res, ordered, depth, setProject, undo, redo, canUndo, canRedo, saveOk, basis, setBasis } = useProject();
+  const { project, active, house, res, ordered, depth, setProject, undo, redo, canUndo, canRedo, saveOk, basis, setBasis, shared, viewShared, createProject, canAddProject } = useProject();
   const sec = sectionOf(route);
   const sub = sec ? SUBNAV[sec] : undefined;
   const issues = heatingIssues(res, house.heating.emitters.length);
@@ -105,6 +106,13 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
           <Account />
         </div>
       </header>
+      {shared && (
+        <p className="shared-bar" role="status">
+          <span>Viewing <b>{shared.name}</b>: a read-only shared snapshot. Make your own copy to change it.</span>
+          <button type="button" className="btn-link" disabled={!canAddProject} title={canAddProject ? undefined : PROJECT_LIMIT_MSG} onClick={() => { createProject(project); go('plan'); }}>Make my own copy</button>
+          <button type="button" className="btn-link" onClick={() => { viewShared(null); go('projects'); }}>Close</button>
+        </p>
+      )}
       {!saveOk && (
         <p className="save-fail" role="alert">
           Not saved: this browser's storage is full. <a href={href('report')}>Export the project</a> to keep your work, then delete old projects or traced plan images.

@@ -2,7 +2,7 @@
 import { betterAuth } from 'better-auth';
 import { magicLink } from 'better-auth/plugins/magic-link';
 import { admin, ownerList, roleOf } from './admin';
-import { api } from './api';
+import { api, shared } from './api';
 import { signInEmail } from './email';
 
 export interface Env {
@@ -62,6 +62,9 @@ export default {
     }
     if (url.pathname.startsWith('/api/auth/')) return a.handler(req);
     if (url.pathname === '/api/config') return Response.json({ google: !!env.GOOGLE_CLIENT_ID });
+    // Shared snapshots are public: the link's random id is the only key.
+    const sh = url.pathname.match(/^\/api\/shared\/([\w-]{1,64})$/);
+    if (sh && req.method === 'GET') return shared(env.DB, sh[1]);
     // Writes must come from the app's own pages (cookies alone would let another site's form try).
     const origin = req.headers.get('Origin');
     if (req.method !== 'GET' && origin && origin !== new URL(env.BETTER_AUTH_URL).origin) return Response.json({ error: 'origin' }, { status: 403 });

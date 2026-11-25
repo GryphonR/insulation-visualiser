@@ -29,6 +29,7 @@ import { go, href, useRoute } from './ui/route';
 import { PROJECT_LIMIT_MSG } from './engine/limits';
 import { sanitizeProject } from './engine/house-scenarios';
 import { addImportedMaterials } from './engine/data';
+import { fetchShared } from './engine/share';
 import './ui/house.css';
 
 // Three.js is big: load the 3D view only when it is opened.
@@ -118,7 +119,22 @@ function Routes() {
     case 'scenarios': case 'compare': page = <ScenariosPage key={route} initial={route === 'compare' ? 'compare' : 'changes'} />; break;
     case 'learn': page = <LearnPage section={arg} />; break;
     case 'admin': page = <AdminPage />; break;
+    case 'shared': page = <SharedOpen id={arg ?? ''} />; break;
     default: page = <PlanPage />;
   }
   return <Shell route={route}>{page}</Shell>;
+}
+
+/** A shared link (#/shared/<id>): fetch the snapshot and show it read-only, on the plan. */
+function SharedOpen({ id }: { id: string }) {
+  const { viewShared } = useProject();
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    let live = true;
+    fetchShared(id).then((s) => { if (live) { viewShared({ ...s, id }); go('plan'); } }, (e) => live && setErr((e as Error).message));
+    return () => { live = false; };
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  return err
+    ? <section className="card panel"><h2>Can't open this shared project</h2><p>{err}</p><div className="chips"><a className="btn-primary as-btn" href={href('projects')}>Go to projects</a></div></section>
+    : <p className="muted small">Opening the shared project…</p>;
 }

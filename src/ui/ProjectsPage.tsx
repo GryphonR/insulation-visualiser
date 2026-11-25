@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Wordmark } from './Wordmark';
 import { STEPS } from './steps';
-import { CLOUD } from '../engine/sync';
+import { CLOUD, syncInfo } from '../engine/sync';
+import { createShare, deleteShare, listShares, shareUrl } from '../engine/share';
+import type { Share } from '../engine/share';
+import { postcodeDistrict } from '../engine/climate-mcs';
 import type { ReactNode } from 'react';
 import { DEMOS } from '../engine/house-demos';
 import { parseProjectFile, projectFileText, readStored } from '../engine/projects';
@@ -53,11 +56,59 @@ function DetailsModal({ info, onSave, onClose }: { info: ProjectInfo; onSave: (d
   );
 }
 
+/** Share a read-only snapshot by link, under a name the user picks; and stop links made before. */
+function ShareModal({ info, onClose }: { info: ProjectInfo; onClose: () => void }) {
+  const p = readStored(info.id);
+  const district = postcodeDistrict(p?.scenarios[0]?.house.climate.postcode ?? '');
+  const [name, setName] = useState(district ? `House in ${district}` : 'Shared house');
+  const [links, setLinks] = useState<Share[] | null>(null);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const signedIn = !['off', 'signed-out'].includes(syncInfo().status);
+  const fail = (e: unknown) => setMsg(`Couldn't do that: ${(e as Error).message}.`);
+  useEffect(() => { if (signedIn) listShares(info.id).then(setLinks, fail); }, [info.id, signedIn]);
+  const make = async () => {
+    if (!p || !name.trim()) return;
+    setBusy(true); setMsg('');
+    try { const s = await createShare(info.id, p, name.trim()); setLinks((l) => [s, ...(l ?? [])]); copy(s.id); } catch (e) { fail(e); }
+    setBusy(false);
+  };
+  const copy = (id: string) => navigator.clipboard?.writeText(shareUrl(id)).then(() => setMsg('Link copied.'), () => {});
+  const stop = (id: string) => deleteShare(id).then(() => setLinks((l) => l?.filter((x) => x.id !== id) ?? null), fail);
+  return (
+    <Modal title="Share a read-only link" onClose={onClose}
+      actions={<><button type="button" className="btn-secondary" onClick={onClose}>Close</button>
+        {signedIn && <button type="button" className="btn-primary" disabled={busy || !p || !name.trim()} onClick={make}>Create link</button>}</>}>
+      {!signedIn ? <p style={{ margin: 0 }}>Sign in to share a project by link.</p> : <>
+        <p className="small muted" style={{ margin: 0 }}>
+          Anyone with the link can view a snapshot of the project as it is now; later changes aren't shown. The postcode is cut to {district ? <b>{district}</b> : 'its first half'}, and the customer, address, job number and traced plan images are left out.
+        </p>
+        <label className="hf"><span className="eyebrow">Name it shows</span>
+          <input className="h-text" value={name} autoFocus maxLength={120} onChange={(e) => setName(e.target.value)} />
+        </label>
+        {msg && <p className="small" role="status">{msg}</p>}
+        {links && links.length > 0 && <>
+          <div className="eyebrow">Links to this project</div>
+          <ul className="share-list">
+            {links.map((s) => (
+              <li key={s.id} className="small">
+                <a href={shareUrl(s.id)} target="_blank" rel="noreferrer">{s.name}</a> <span className="muted">· {when(s.created)}</span>{' '}
+                <button type="button" className="btn-link inline" onClick={() => copy(s.id)}>Copy</button>{' · '}
+                <button type="button" className="btn-link inline" onClick={() => stop(s.id)}>Stop sharing</button>
+              </li>
+            ))}
+          </ul>
+        </>}
+      </>}
+    </Modal>
+  );
+}
+
 /** The screen the app opens on: what it does and how to start, beside every project saved in this browser. */
 export function ProjectsPage() {
   const { projects, projectId, openProject, deleteProject, createProject, canAddProject, editProject } = useProject();
   const [menu, setMenu] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<{ kind: 'demo' } | { kind: 'details' | 'delete'; p: ProjectInfo } | null>(null);
+  const [dialog, setDialog] = useState<{ kind: 'demo' } | { kind: 'details' | 'delete' | 'share'; p: ProjectInfo } | null>(null);
   const [msg, setMsg] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const close = () => setDialog(null);
@@ -115,7 +166,7 @@ export function ProjectsPage() {
             const now = p.id === projectId;
             return (
               <li key={p.id} className={now ? 'on' : ''}>
-                <button type="button" className="proj-main" onClick={() => (now ? go('plan') : open(p.id))}>
+                <button type="button" className="proj-main" onClick={() => open(p.id)}>
                   <span className="proj-title"><b>{p.name}</b>{p.number && <span className="proj-no mono">{p.number}</span>}{now && <span className="proj-now">Open</span>}</span>
                   <span className="small">{[p.customer, p.address?.replace(/\s*\n\s*/g, ', '), p.postcode?.toUpperCase()].filter(Boolean).join(' · ')}</span>
                   <span className="small muted">{p.rooms} room{p.rooms === 1 ? '' : 's'} · {p.scenarios} scenario{p.scenarios === 1 ? '' : 's'} · saved {when(p.updated)}</span>
@@ -126,7 +177,7 @@ export function ProjectsPage() {
                     <>
                       <div className="menu-scrim" onMouseDown={() => setMenu(null)} />
                       <div className="menu" role="menu" onKeyDown={(e) => { if (e.key === 'Escape') setMenu(null); }}>
-                        {([['Edit details…', () => setDialog({ kind: 'details', p })], ['Export file', () => exportOne(p)], ['Delete…', () => setDialog({ kind: 'delete', p })]] as const).map(([l, f]) => (
+                        {([['Edit details…', () => setDialog({ kind: 'details', p })], ['Export file', () => exportOne(p)], ...(CLOUD ? [['Share link…', () => setDialog({ kind: 'share', p })] as const] : []), ['Delete…', () => setDialog({ kind: 'delete', p })]] as const).map(([l, f]) => (
                           <button key={l} type="button" role="menuitem" autoFocus={l === 'Edit details…'} className={l === 'Delete…' ? 'danger' : ''} onClick={() => { setMenu(null); f(); }}>{l}</button>
                         ))}
                       </div>
@@ -162,6 +213,7 @@ export function ProjectsPage() {
             };
           })} />
       )}
+      {dialog?.kind === 'share' && <ShareModal info={dialog.p} onClose={close} />}
       {dialog?.kind === 'delete' && (
         <Modal title="Delete project" onClose={close}
           actions={<><button type="button" className="btn-secondary" autoFocus onClick={close}>Keep it</button><button type="button" className="btn-danger" onClick={() => { deleteProject(dialog.p.id); close(); }}>Delete for good</button></>}>

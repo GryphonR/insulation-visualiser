@@ -54,6 +54,9 @@ interface Ctx {
   editProject: (id: string, fn: (p: Project) => Project) => void;
   /** False once the browser has refused to store the latest edit. */
   saveOk: boolean;
+  /** A shared snapshot on show instead of the user's own project: nothing can be edited or saved until it is closed. */
+  shared: { name: string; id: string } | null;
+  viewShared: (s: { name: string; id: string; project: Project } | null) => void;
 }
 
 // Houses are never mutated (edits go to a copy), so a scenario left untouched by an edit keeps its result, and so does undo.
@@ -94,22 +97,28 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
   const [first] = useState(loadActive);
   const [projectId, setProjectId] = useState(first.id);
   const [hist, setHist] = useState<{ past: Project[]; now: Project; future: Project[] }>(() => ({ past: [], now: netted(first.project), future: [] }));
-  const project = hist.now;
+  // A shared snapshot shown read-only: edits, undo and saving all leave the user's own project (hist) alone.
+  const [view, setView] = useState<{ name: string; id: string; project: Project } | null>(null);
+  const viewing = useRef(false);
+  viewing.current = !!view;
+  const project = view?.project ?? hist.now;
   // A first visit shows the start screen, so the demo house loaded behind it isn't saved until something changes; a project just opened needn't be saved again.
   const skipSave = useRef<Project | null>(hasSaved() ? null : project);
   const [ver, bump] = useState(0);
-  const setProject: Ctx['setProject'] = (fn) =>
-    setHist((h) => {
+  const setProject: Ctx['setProject'] = (fn) => viewing.current
+    // Read-only, but picking another scenario to look at is allowed.
+    ? setView((v) => v && { ...v, project: { ...v.project, active: (typeof fn === 'function' ? fn(v.project) : fn).active } })
+    : setHist((h) => {
       const next = typeof fn === 'function' ? fn(h.now) : fn;
       return next === h.now ? h : { past: [...h.past.slice(-49), h.now], now: next, future: [] };
     });
-  const undo = () => setHist((h) => (h.past.length ? { past: h.past.slice(0, -1), now: h.past[h.past.length - 1], future: [h.now, ...h.future] } : h));
-  const redo = () => setHist((h) => (h.future.length ? { past: [...h.past, h.now], now: h.future[0], future: h.future.slice(1) } : h));
+  const undo = () => !viewing.current && setHist((h) => (h.past.length ? { past: h.past.slice(0, -1), now: h.past[h.past.length - 1], future: [h.now, ...h.future] } : h));
+  const redo = () => !viewing.current && setHist((h) => (h.future.length ? { past: [...h.past, h.now], now: h.future[0], future: h.future.slice(1) } : h));
   const [saveOk, setSaveOk] = useState(true);
-  useEffect(() => { if (project !== skipSave.current) setSaveOk(saveProject(projectId, project)); }, [project, projectId]);
-  const show = (id: string, p0: Project) => { const p = netted(p0); skipSave.current = p; setProjectId(id); setHist({ past: [], now: p, future: [] }); bump((n) => n + 1); };
+  useEffect(() => { if (hist.now !== skipSave.current) setSaveOk(saveProject(projectId, hist.now)); }, [hist.now, projectId]);
+  const show = (id: string, p0: Project) => { setView(null); const p = netted(p0); skipSave.current = p; setProjectId(id); setHist({ past: [], now: p, future: [] }); bump((n) => n + 1); };
   const openProject = (id: string) => {
-    if (id === projectId) return;
+    if (id === projectId) { setView(null); return; }
     const p = openStored(id);
     if (p) { setSaveOk(true); show(id, p); return; }
     const raw = rawStored(id);
@@ -182,8 +191,9 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
   const projects = useMemo(() => listProjects(), [project, projectId, hist, ver]);
   const value: Ctx = {
     project, setProject, active, house: active.house, setHouse, upd, res: pick(best), best, results, basis, setBasis, pick, ordered, depth,
-    undo, redo, canUndo: hist.past.length > 0, canRedo: hist.future.length > 0, customStackups, setCustomStackups,
+    undo, redo, canUndo: !view && hist.past.length > 0, canRedo: !view && hist.future.length > 0, customStackups, setCustomStackups,
     projects, projectId, openProject, createProject, canAddProject: projects.length < MAX_PROJECTS, deleteProject, editProject, saveOk,
+    shared: view && { name: view.name, id: view.id }, viewShared: (s) => setView(s && { ...s, project: netted(s.project) }),
   };
   return <C.Provider value={value}>{children}</C.Provider>;
 }
