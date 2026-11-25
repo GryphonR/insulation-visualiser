@@ -48,6 +48,9 @@ export const kInsert = (pipe: number, fit: number) => { const a = Math.min(1, (f
 /** Pressure drop across an emitter and its valves, Pa. */
 const EMITTER_DP = 5000;
 
+/** Where a run is laid on its storey (see `Pipe.via`). */
+export type Level = 'floor' | 'room' | 'ceiling';
+
 export interface Pipe {
   id: string; name: string;
   /** Upstream run, or null for the run leaving the heat pump. */
@@ -59,8 +62,11 @@ export interface Pipe {
   leg?: PipeLeg; ends?: [string, string]; rise?: number;
   /** The length was typed in, so it no longer follows the route. */
   typed?: boolean;
-  /** Laid in the floor or the ceiling of its storey; unset, it follows the run it comes off on the same floor (else the floor). */
-  via?: 'floor' | 'ceiling';
+  /**
+   * Its level: under its storey's floor, in the room (boxed in or on the wall), or in its ceiling, which is the floor void of the storey
+   * above. Set on every drawn run (`syncNet` sets it on older ones from the run they came off).
+   */
+  via?: Level;
   /** A short header a control plan put in so one valve shuts several runs; it goes when the plan is changed. */
   header?: boolean;
   /** The junction nodes at its start and far end (see house-net): what it is joined to. Its parent, ends and direction are worked out from these. */
@@ -286,9 +292,9 @@ function planPipes(h: House, route: PipeRoute): Pipe[] {
     // Runs on the source's own floor leave from the first tee; another floor's come off its branch.
     const branch = other ? `P${++n}` : 'P1';
     if (other) out.push({ id: branch, name: `To ${s?.name.toLowerCase() ?? `storey ${si}`}${f.riser ? ' (up the riser)' : other ? ' (through the floor)' : ''}`, parent: 'P1', size: 'Cu 22 mm', length: m1(f.run),
-      ends: ['source', hub], rise: f.rise, ...(f.legs[0] ? { leg: f.legs[0] } : {}) });
+      ends: ['source', hub], rise: f.rise, ...(f.legs[0] ? { leg: f.legs[0], via: defaultLevel(h, f.legs[0].storey) } : {}) });
     for (const t of route.tails.filter((x) => x.storey === si)) {
-      const e = h.heating.emitters.find((x) => x.id === t.emitter), at = { leg: t.leg, ends: [hub, e ? `e:${e.id}` : t.manifold ? `m:${t.manifold}` : 'cylinder'] as [string, string] };
+      const e = h.heating.emitters.find((x) => x.id === t.emitter), at = { leg: t.leg, via: defaultLevel(h, t.leg.storey), ends: [hub, e ? `e:${e.id}` : t.manifold ? `m:${t.manifold}` : 'cylinder'] as [string, string] };
       if (t.manifold) { out.push({ id: `P${++n}`, name: manifoldName(h, t.manifold), parent: branch, size: 'Cu 22 mm', length: m1(t.run), ...at }); continue; }
       if (!e) { out.push({ id: `P${++n}`, name: 'Hot water cylinder coil', parent: branch, size: 'Cu 22 mm', length: m1(t.run), ...at }); continue; }
       const room = h.rooms.find((r) => r.id === e.room)?.name ?? e.room;
@@ -380,7 +386,7 @@ export function fittingsDp(h: House, p: Pipe, v: number, pipeDp: number): number
 /** Height of radiator valves above the floor, m. */
 const VALVE = 0.15;
 /** Where a run is laid: as set, else as the run it comes off on the same floor, else in the floor. */
-export function viaOf(h: House, p: Pipe): 'floor' | 'ceiling' {
+export function viaOf(h: House, p: Pipe): Level {
   for (let cur: Pipe | undefined = p, n = 0; cur?.leg && cur.leg.storey === p.leg?.storey && n < 50; n++) {
     if (cur.via) return cur.via;
     const up: string | null = cur.parent;
@@ -389,9 +395,21 @@ export function viaOf(h: House, p: Pipe): 'floor' | 'ceiling' {
   return 'floor';
 }
 /** The void a run lies in: void s is under storey s, so a storey's ceiling and the floor of the one above are the same void. -1 with no route. */
-export const voidOf = (h: House, p: Pipe): number => (p.leg ? p.leg.storey + (viaOf(h, p) === 'ceiling' ? 1 : 0) : -1);
+export const voidOf = (h: House, p: Pipe): number => (p.leg ? p.leg.storey + LEVEL_AT[viaOf(h, p)] : -1);
+/** Where each level is, as a void number: void s is under storey s, so storey s's ceiling is void s + 1; its rooms are in between. */
+const LEVEL_AT: Record<Level, number> = { floor: 0, room: 0.5, ceiling: 1 };
+/** The level on storey `s` that is void `v`. */
+export const levelIn = (s: number, v: number): Level => (v === s + 1 ? 'ceiling' : v === s + 0.5 ? 'room' : 'floor');
+/** True for a void storey `s`'s plan shows: under its floor, its rooms, its ceiling. */
+export const onPlan = (s: number, v: number) => v >= s && v <= s + 1;
+/** Where a new run on storey `s` goes by default: under the floor, unless that is the solid floor of the bottom storey (then the ceiling, or the room in a one-storey house). */
+export function defaultLevel(h: House, s: number): Level {
+  if (s > 0 || h.buildups.find((b) => b.id === h.defaults.groundFloor)?.floorType === 'suspended') return 'floor';
+  return h.storeys.length > 1 ? 'ceiling' : 'room';
+}
 /** A void described by the storeys either side of it. */
 export function voidName(h: House, v: number): string {
+  if (v % 1) return `in the ${h.storeys[Math.floor(v)]?.name.toLowerCase() ?? 'storey'} rooms`;
   const below = h.storeys[v - 1]?.name.toLowerCase(), above = h.storeys[v]?.name.toLowerCase();
   return !below ? `under the ${above}` : !above ? `above the ${below}, in the roof space` : `between the ${below} and ${above}`;
 }
@@ -400,8 +418,9 @@ export function voidName(h: House, v: number): string {
  * The pipe from the void to a radiator's valves, m: from the middle of the floor void up to the valves, or from the middle of the
  * ceiling void (the floor zone above, or 0.2 m under a roof) down the wall to them. UFH is fed at floor level either way.
  */
-export function valveTail(h: House, storey: number, via: 'floor' | 'ceiling', kind: string): number {
-  if (kind === 'ufh') return 0;
+export function valveTail(h: House, storey: number, via: Level, kind: string): number {
+  // In the room, it runs along the wall to the valves.
+  if (kind === 'ufh' || via === 'room') return 0;
   const s = h.storeys[storey];
   if (!s) return 0;
   return via === 'ceiling' ? s.h - VALVE + (h.storeys[storey + 1]?.zone ?? 0.2) / 2 : VALVE + s.zone / 2;
@@ -820,8 +839,9 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
   if ('run' in a) {
     // A run in this floor's void or its ceiling void (the floor void of the storey above) can be teed into from this plan.
     const Y = all.find((p) => p.id === a.run), yv = Y ? voidOf(h, Y) : -1;
-    if (Y && yv !== storey && yv !== storey + 1) return { error: 'That run is not under this floor or in its ceiling.' };
-    if (Y?.leg && Y.leg.storey !== storey) via = yv === storey ? 'floor' : 'ceiling';
+    if (Y && !onPlan(storey, yv)) return { error: 'That run is not under this floor, in its rooms or in its ceiling.' };
+    // Off a run, it is laid where that run is.
+    if (Y?.leg) via = levelIn(storey, yv);
     const t = Y ? teeAt(h, a.run, a.at) : null;
     if (!t) return { error: 'That run is gone.' };
     ({ start, parent, T: P0 } = t);
@@ -846,7 +866,7 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
     let br = all.find((p) => p.ends?.[0] === 'source' && p.ends[1] === a.id && Math.abs((p.rise ?? -1) - v) < 1e-6);
     if (!br) {
       br = { id: nextId(all), name: `To ${h.storeys[storey]?.name.toLowerCase() ?? `storey ${storey}`}${riser ? ' (up the riser)' : ' (through the floor)'}`, parent: root, size: usable(h, 'Cu 22 mm'),
-        length: m1((riser ? runOf(src.at, at) : 0) + v), ends: ['source', a.id], rise: v, ...(riser ? { leg: { storey: src.storey, pts: ell(h, src.storey, src.at, at) } } : {}) };
+        length: m1((riser ? runOf(src.at, at) : 0) + v), ends: ['source', a.id], rise: v, ...(riser ? { leg: { storey: src.storey, pts: ell(h, src.storey, src.at, at) }, via: defaultLevel(h, src.storey) } : {}) };
       all.push(br);
     }
     start = a.id; parent = br.id; P0 = at;
@@ -857,7 +877,8 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
   if (into) {
     const Y = all.find((p) => p.id === into.run), yv = Y ? voidOf(h, Y) : -1;
     if (!Y) return { error: 'That run is gone.' };
-    if (yv !== storey && yv !== storey + 1) return { error: 'That run is not under this floor or in its ceiling.' };
+    if (!onPlan(storey, yv)) return { error: 'That run is not under this floor, in its rooms or in its ceiling.' };
+    via ??= levelIn(storey, yv);
     J = nodeOn(h, into.run, into.at);
     if (!J) return { error: 'That run is gone.' };
     T = J.at;
@@ -877,7 +898,7 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
   all.push({ id, parent, leg: { storey, pts }, ends: [start, B?.id ?? ''], length: m1(pathLen(pts)), ...(J ? { b: J.id } : {}),
     name: e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}` : B?.id.startsWith('m:') ? manifoldName(h, B.id.slice(2)) : toRiser ? `To riser ${(h.heating.risers ?? []).findIndex((r) => r.id === B!.id) + 1}` : B ? 'Hot water cylinder coil' : 'Main',
     size: usable(h, e ? (e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : storey === src.storey || storey === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)') : 'Cu 22 mm'),
-    ...(e ? { emitter: e.id } : {}), ...(via ? { via } : {}) });
+    ...(e ? { emitter: e.id } : {}), via: via ?? defaultLevel(h, storey) });
   // Its floor or ceiling is fixed before it changes parent: following a run upstream stops at a change of floor.
   // The riser's branches to other floors now come off this run, up or down from its floor.
   // One with nothing on it yet goes: it is made again when a run is drawn off the riser on that floor.

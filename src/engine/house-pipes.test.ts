@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { calcHouse } from './house';
 import { defaultHouse } from './house-default';
 import { emitterOut, lpm, roomOut, shareIn } from './house-heating';
-import { PIPE_SIZES, PIPE_WALL, attachments, drawRun, moveOpenEnd, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, fitSize, fittingsDp, joinRun, joints, kInsert, sizesOn, usable, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitCircuits, splitSegment, squareInto } from './house-pipes';
+import { PIPE_SIZES, PIPE_WALL, attachments, defaultLevel, drawRun, moveOpenEnd, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, fitSize, fittingsDp, joinRun, joints, kInsert, sizesOn, usable, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitCircuits, splitSegment, squareInto } from './house-pipes';
 
 /** Place a heater so its pipes connect at `p` (its valve end, for a radiator). */
 const put = (h: ReturnType<typeof defaultHouse>, e: ReturnType<typeof defaultHouse>['heating']['emitters'][number], p: [number, number]) => {
@@ -236,8 +236,11 @@ describe('floor or ceiling, and what a run carries', () => {
     const run = h.heating.pipes.find((p) => p.emitter && h.heating.emitters.find((e) => e.id === p.emitter)?.kind === 'radiator')!;
     // From the floor void up to the valves (0.15 m + half the floor zone); from the ceiling void down the wall to them.
     const s = run.leg!.storey, st = h.storeys[s], route = runLength(h, { ...run, emitter: undefined });
-    // Lengths are rounded to 0.1 m, each separately.
+    // Lengths are rounded to 0.1 m, each separately. In the room, it runs along the wall to the valves.
+    run.via = 'floor';
     expect(Math.abs(runLength(h, run) - (route + 0.15 + st.zone / 2))).toBeLessThan(0.11);
+    run.via = 'room';
+    expect(Math.abs(runLength(h, run) - route)).toBeLessThan(0.11);
     run.via = 'ceiling';
     expect(Math.abs(runLength(h, run) - (route + st.h - 0.15 + (h.storeys[s + 1]?.zone ?? 0.2) / 2))).toBeLessThan(0.11);
     const r = sizePipes(h, calcHouse(h));
@@ -285,24 +288,27 @@ describe('Pa/m cap', () => {
 });
 
 describe('floor or ceiling follows the run upstream', () => {
-  it('a run off a ceiling run on the same floor is in the ceiling unless set', () => {
+  it('a run saved without a level takes it from the run it comes off, once, and keeps it', () => {
     const h = defaultHouse();
     h.heating.source = { at: [0, 0], storey: 0 };
     h.heating.risers = [{ id: 'rs1', at: [2, 0] }];
     h.heating.pipes = autoPipes(h);
     combineRuns(h);
+    for (const p of h.heating.pipes!) delete p.via;
     const kid = h.heating.pipes!.find((p) => p.emitter && p.leg?.storey === 0 && h.heating.pipes!.find((q) => q.id === p.parent)?.name.startsWith('Shared'))!;
     const trunk = h.heating.pipes!.find((q) => q.id === kid.parent)!;
     expect(viaOf(h, kid)).toBe('floor');
     trunk.via = 'ceiling';
     expect(viaOf(h, kid)).toBe('ceiling');
-    kid.via = 'floor';
-    expect(viaOf(h, kid)).toBe('floor');
     // Not across floors: the riser branch's runs upstairs start in their own floor.
     const up = h.heating.pipes!.find((p) => p.leg?.storey === 1 && p.emitter)!;
-    for (const p of h.heating.pipes!) if (p.leg?.storey === 0) p.via = 'ceiling';
     expect(viaOf(h, up)).toBe('floor');
+    // Read into the net, each keeps the level it had, whatever it comes off afterwards.
+    const n = syncNet(h);
+    expect(n.heating.pipes!.find((p) => p.id === kid.id)!.via).toBe('ceiling');
+    expect(n.heating.pipes!.filter((p) => p.leg).every((p) => p.via)).toBe(true);
   });
+
 });
 
 describe('the void between floors', () => {
@@ -390,6 +396,25 @@ describe('drawing runs by hand', () => {
     expect(s.leg!.pts).toEqual([[0.5, 0.5], [2.5, 0.5]]);
     expect(h.heating.pipes!.find((p) => p.id === main.id)!.parent).toBe(s.id);
     expect(livePath(h, x)![0]).toEqual([2.5, 0.5]);
+  });
+
+  it('new runs go under a suspended floor, else in the ceiling; one off another run is laid where that run is', () => {
+    const h = blank(), gf = h.buildups.find((b) => b.id === h.defaults.groundFloor)!;
+    gf.floorType = 'solid';
+    const a = drawRun(h, 0, { id: 'source' }, [[3, 0.5], [3, 3]], null) as { id: string };
+    expect(h.heating.pipes!.find((p) => p.id === a.id)!.via).toBe('ceiling');
+    gf.floorType = 'suspended';
+    const b = drawRun(h, 0, { id: 'source' }, [[0.5, 3]], null) as { id: string };
+    expect(h.heating.pipes!.find((p) => p.id === b.id)!.via).toBe('floor');
+    expect(defaultLevel(h, 1)).toBe('floor'); // upper floors always have a floor void
+    // On the first floor, a run off the ground floor's ceiling run is in the same void: the floor of the first floor.
+    const e = em(h, 1), r = drawRun(h, 1, { run: a.id, at: [3, 2] }, [], { id: `e:${e.id}` }) as { id: string };
+    const R = h.heating.pipes!.find((p) => p.id === r.id)!;
+    expect(R.via).toBe('floor');
+    expect(voidOf(h, R)).toBe(voidOf(h, h.heating.pipes!.find((p) => p.id === a.id)!));
+    // From the ground floor plan, a run off it in the ceiling stays in the ceiling.
+    const g = drawRun(h, 0, { run: a.id, at: [3, 1] }, [[4, 1]], null) as { id: string };
+    expect(h.heating.pipes!.find((p) => p.id === g.id)!.via).toBe('ceiling');
   });
 
   it('a run finished on another run feeds it from there on, and never in a loop', () => {

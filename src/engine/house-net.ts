@@ -5,7 +5,7 @@
 import type { Pt } from './geom';
 import type { House } from './house';
 import { emitterStorey } from './house-heating';
-import { livePath, rise } from './house-pipes';
+import { livePath, rise, viaOf } from './house-pipes';
 import type { Pipe } from './house-pipes';
 
 export interface PipeNode {
@@ -175,9 +175,11 @@ export function addNode(h: House, n: Omit<PipeNode, 'id'>): string {
 }
 
 /** The runs re-read from their net after an edit (see `treeOf`). Returns `h` itself when nothing changes, else a changed copy. */
-export function syncNet(h: House): House {
-  if (!h.heating.pipes?.length) return h;
+export function syncNet(h0: House): House {
+  if (!h0.heating.pipes?.length) return h0;
+  // A run without a level of its own takes the one it has now, from the run it comes off, before the walk can change what that is.
+  const h = h0.heating.pipes.some((p) => p.leg && !p.via) ? { ...h0, heating: { ...h0.heating, pipes: h0.heating.pipes.map((p) => (p.leg && !p.via ? { ...p, via: viaOf(h0, p) } : p)) } } : h0;
   const { pipes, nodes } = netOf(h), tree = treeOf(pipes, nodes, h.heating.source?.storey ?? 0);
-  if (JSON.stringify(tree) === JSON.stringify(h.heating.pipes) && JSON.stringify(nodes) === JSON.stringify(h.heating.nodes ?? [])) return h;
+  if (JSON.stringify(tree) === JSON.stringify(h0.heating.pipes) && JSON.stringify(nodes) === JSON.stringify(h0.heating.nodes ?? [])) return h0;
   return { ...h, heating: { ...h.heating, pipes: tree, nodes } };
 }

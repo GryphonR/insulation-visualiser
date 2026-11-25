@@ -9,7 +9,7 @@ import type { Pt } from '../engine/geom';
 import { OPEN_DOORWAY, addEmitter, addFloorZone, addStairwell, OPEN_STAIRWELL, ensureOpenDoorway, joinRooms, addRoomAt, cutPlan, deleteRoom, emitterPose, flushDelta, parallelSnap, innerDoorAt, innerWallThickness, insertCorner, isOutside, joinedCorners, mapCorners, turnToWall, mergeRooms, moveCorners, nearestWall, openingCentre, pieceAlign, pieceGap, pieceKeys, pieceSeg, pieceThickness, problems, removeCorner, roomAt, splitRoom, splitWall, stretchAtWall, wallGhosts, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
 import type { WallPiece } from '../engine/house-draw';
 import { planBounds } from './HousePlan';
-import { attachments, dragSegment, drawRun, ell, feedsFrom, joinRun, livePath, moveNode, moveOpenEnd, manifoldName, manifolds, removeRun, routePipes, splitSegment, squareInto, unpiped, voidName, voidOf, wallSnap } from '../engine/house-pipes';
+import { attachments, dragSegment, drawRun, ell, feedsFrom, joinRun, livePath, moveNode, moveOpenEnd, onPlan, manifoldName, manifolds, removeRun, routePipes, splitSegment, squareInto, unpiped, voidName, voidOf, wallSnap } from '../engine/house-pipes';
 import { placedManifold } from '../engine/house-controls';
 import type { Attach } from '../engine/house-pipes';
 import type { Emitter, Heating, Plant } from '../engine/house-heating';
@@ -506,7 +506,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     if (port) return { a: { id: port.x.id }, at: port.x.at, label: port.x.label };
     let best: { a: Attach; at: Pt; label: string } | null = null, bd = r;
     for (const x of house.heating.pipes ?? []) {
-      const v = voidOf(house, x), q = v === storey || v === storey + 1 ? livePath(house, x) : null;
+      const v = voidOf(house, x), q = onPlan(storey, v) ? livePath(house, x) : null;
       for (let i = 0; q && i + 1 < q.length; i++) {
         const a = q[i], b = q[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
         const at: Pt = [a[0] + dx * t, a[1] + dy * t], d = Math.hypot(at[0] - p[0], at[1] - p[1]);
@@ -1116,7 +1116,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     const ends: Array<{ x: (typeof runs)[number]; end: Pt }> = [];
     // Where each free junction on this plan is, from the runs that meet there.
     const free = new Set((hs0.nodes ?? []).filter((n) => !n.on).map((n) => n.id)), junctions = new Map<string, Pt>();
-    const runLines = runs.filter((x) => { const v = voidOf(house, x); return v === storey || v === storey + 1; }).map((x) => {
+    const runLines = runs.filter((x) => onPlan(storey, voidOf(house, x))).map((x) => {
       const live = livePath(house, x) ?? x.leg!.pts, endDrag = drag?.k === 'pend' && drag.moved && drag.id === x.id ? drag : null;
       const pts = pipeDrag?.id === x.id ? dragSegment(pipeDrag.base, pipeDrag.seg, loopShift(pipeDrag))
         : endDrag ? [...live.slice(0, -1), ...ell(house, storey, live[live.length - 2] ?? live[0], endDrag.cur).slice(1)] : live;

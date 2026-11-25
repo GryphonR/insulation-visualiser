@@ -10,7 +10,8 @@ import { OPEN_DOORWAY, addBasement, addStoreyAbove, bandName, canAddBasement, ca
 import { polyArea } from '../engine/geom';
 import { Num, fmt, uid, NumInput } from './hform';
 import { NO_SEL, plantName, plantOf, removePlant } from './DrawCanvas';
-import { MAX_V, PIPE_SIZES, joints, maxFlow, pipeFamily, sizesOn, resetRun, runLength, setBranchRiser, sizePipes, valveTail, viaOf, voidName } from '../engine/house-pipes';
+import { MAX_V, PIPE_SIZES, joints, maxFlow, pipeFamily, sizesOn, resetRun, runLength, setBranchRiser, sizePipes, valveTail, viaOf, voidName, voidOf } from '../engine/house-pipes';
+import type { Level } from '../engine/house-pipes';
 import type { Lens, OpPick, Sel, Tool } from './DrawCanvas';
 import { href } from './route';
 import { RoofSectionFields, newRoof } from './HouseRoof';
@@ -472,8 +473,6 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
     const family = sizesOn(house).filter((k) => pipeFamily(k) === pipeFamily(p.size)).sort((a, b) => PIPE_SIZES[a] - PIPE_SIZES[b]);
     const fits = family.find((k) => maxFlow(PIPE_SIZES[k], pr.paMax) >= flowL);
     const st = p.leg ? house.storeys[p.leg.storey]?.name.toLowerCase() : '';
-    // The run it comes off, when that is on the same floor: it can follow its floor or ceiling.
-    const upSame = house.heating.pipes?.find((x) => x.id === p.parent && x.leg && x.leg.storey === p.leg?.storey);
     const em = p.emitter ? house.heating.emitters.find((x) => x.id === p.emitter) : undefined, tail = em && p.leg ? valveTail(house, p.leg.storey, viaOf(house, p), em.kind) : 0;
     const emName = (id: string) => { const e = house.heating.emitters.find((x) => x.id === id); return e ? `${house.rooms.find((r) => r.id === e.room)?.name ?? e.room} ${e.kind === 'ufh' ? 'UFH' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : 'radiator'}` : id; };
     const setRun = (patch: Partial<typeof p>) => upd((h) => { const x = h.heating.pipes?.find((q) => q.id === p.id); if (x) Object.assign(x, patch); });
@@ -484,11 +483,11 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
           <label className="hf"><span className="eyebrow">Pipe size</span>
             <select className="select" value={p.size} onChange={(e) => setRun({ size: e.target.value })}>{[...new Set([...sizesOn(house), p.size])].map((k) => <option key={k}>{k}</option>)}</select>
           </label>
-          {p.leg && <label className="hf"><span className="eyebrow">Runs in the</span>
-            <select className="select" name="via" value={p.via ?? (upSame ? 'same' : 'floor')} onChange={(e) => setRun({ via: e.target.value === 'same' ? undefined : (e.target.value as 'floor' | 'ceiling') })}>
-              {upSame && <option value="same">{viaOf(house, upSame)}, as the run it comes off</option>}
-              <option value="floor">floor: void {voidName(house, p.leg.storey)}</option><option value="ceiling">ceiling: void {voidName(house, p.leg.storey + 1)}</option>
+          {p.leg && <label className="hf"><span className="eyebrow">Runs</span>
+            <select className="select" name="via" value={viaOf(house, p)} onChange={(e) => setRun({ via: e.target.value as Level })}>
+              <option value="floor">Under the floor</option><option value="room">In the room</option><option value="ceiling">In the ceiling</option>
             </select>
+            <span className="small muted">{voidName(house, voidOf(house, p)).replace(/^./, (c) => c.toUpperCase())}</span>
           </label>}
         </div>
         {served.length > 0 && (
