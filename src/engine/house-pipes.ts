@@ -75,6 +75,8 @@ export interface Pipe {
   loose?: true; loop?: true;
   /** Its id, parent and ends as `syncNet` last worked them out: an edit that changes them has its nodes read from them again. */
   was?: string;
+  /** A drop: a vertical run at this point between two levels (its nodes say which), as long as its `rise`. */
+  drop?: { at: Pt };
 }
 
 export interface PipeRow {
@@ -475,6 +477,59 @@ export function moveNode(h: House, id: string, at: Pt): void {
   }
 }
 
+/** Height of a level's pipes above the bottom storey's floor, m: the middle of a floor void, or just off the floor in a room. */
+export function levelZ(h: House, v: number): number {
+  const s = Math.floor(v);
+  let z = 0;
+  for (let k = 0; k < s; k++) z += (h.storeys[k]?.h ?? 2.5) + (h.storeys[k + 1]?.zone ?? 0.25);
+  return v % 1 ? z + VALVE : z - (h.storeys[s]?.zone ?? 0.25) / 2;
+}
+
+const LEVEL_SHORT: Record<Level, string> = { floor: 'under the floor', room: 'the room', ceiling: 'the ceiling' };
+/** A drop: a vertical run at `at` between junction `a` (at void `va`) and `b` (at void `vb`), as long as the height between them (edits h in place). */
+function addDrop(h: House, a: string, b: string, storey: number, at: Pt, va: number, vb: number, size: string): string {
+  const pipes = h.heating.pipes!, id = nextId(pipes), height = +Math.abs(levelZ(h, vb) - levelZ(h, va)).toFixed(3);
+  for (const [n, v] of [[a, va], [b, vb]] as const) { const x = h.heating.nodes?.find((q) => q.id === n); if (x && !x.on) { x.v ??= v; x.at ??= at; } }
+  pipes.push({ id, name: `Drop: ${LEVEL_SHORT[levelIn(storey, va)]} to ${LEVEL_SHORT[levelIn(storey, vb)]}`, parent: null, size, length: m1(height), rise: height, a, b, drop: { at } });
+  return id;
+}
+
+/**
+ * Drawing at one level and switching to another: the run drawn so far (through `mid`, if it has any corners) ends at its last corner,
+ * or with none, at the point it started from; a drop there joins it to a new junction at the same place on level `to`. Returns that
+ * junction, to carry on drawing from (edits h in place).
+ */
+export function dropAt(h: House, storey: number, from: Attach, mid: Pt[], at0: Level, to: Level): { node: string; at: Pt } | { error: string } {
+  let K: string, at: Pt, l0 = at0, size = usable(h, 'Cu 22 mm');
+  if (mid.length) {
+    const r = drawRun(h, storey, from, mid, null, true, at0);
+    if ('error' in r) return r;
+    ensureNet(h);
+    const R = h.heating.pipes!.find((p) => p.id === r.id)!;
+    K = R.b!; at = R.leg!.pts[R.leg!.pts.length - 1]; l0 = R.via ?? at0; size = R.size;
+  } else if ('run' in from) {
+    const Y = h.heating.pipes?.find((p) => p.id === from.run), J = Y && nodeOn(h, from.run, from.at);
+    if (!Y || !J) return { error: 'That run is gone.' };
+    K = J.id; at = J.at; l0 = levelIn(storey, voidOf(h, Y)); size = Y.size;
+  } else if ('node' in from) {
+    const N = h.heating.nodes?.find((x) => x.id === from.node);
+    if (!N?.at) return { error: 'That drop is gone.' };
+    K = N.id; at = N.at;
+    if (N.v != null) l0 = levelIn(storey, N.v);
+  } else {
+    // At the heat source (or the cylinder): a drop from its own pinned junction.
+    const p = endPoint(h, from.id);
+    if (!p || !feedsFrom(from)) return { error: 'Start from the heat source, a run or a drop.' };
+    ensureNet(h);
+    K = `${from.id}@${storey}`; at = p;
+    if (!h.heating.nodes!.some((x) => x.id === K)) h.heating.nodes!.push({ id: K, on: from.id, storey });
+  }
+  if (l0 === to) return { error: 'That is the level it is on already.' };
+  const N1 = addNode(h, { storey, at, v: storey + LEVEL_AT[to] });
+  addDrop(h, K, N1, storey, at, storey + LEVEL_AT[l0], storey + LEVEL_AT[to], size);
+  return { node: N1, at };
+}
+
 /**
  * The junction at `at` on run `id`: its start or far end within 15 cm of either, else a new junction there, which splits the run in
  * two (the stretch before it a run of its own). Null if the run is gone (edits h in place).
@@ -704,7 +759,8 @@ export function joinRun(h: House, id: string, res?: HouseResult): boolean {
 // --- Drawing runs by hand ------------------------------------------------------------------------
 
 /** Where a drawn run starts or ends: an attachment (see endPoint: 'source', 'cylinder', a riser id, 'e:' + emitter), or a point on an existing run. */
-export type Attach = { id: string } | { run: string; at: Pt };
+/** Where a drawn run starts or ends: an attachment, a point on an existing run, or one end of a drop (its junction on this plan's level). */
+export type Attach = { id: string } | { run: string; at: Pt } | { node: string };
 /** How far a pipe drawn along a wall sits off it, m (clips, and room for the plaster). */
 export const PIPE_WALL = 0.1;
 
@@ -808,7 +864,7 @@ const isRiser = (h: House, id: string) => !!h.heating.risers?.some((r) => r.id =
 export const riserFeed = (h: House, id: string) => h.heating.pipes?.find((p) => p.ends?.[1] === id && p.rise == null && !!p.leg && isRiser(h, id));
 
 /** True for what a run can come from: the source, a riser or another run (not a heater or the cylinder). */
-export const feedsFrom = (a: Attach) => 'run' in a || !(a.id === 'cylinder' || a.id.startsWith('e:') || a.id.startsWith('m:'));
+export const feedsFrom = (a: Attach) => 'run' in a || 'node' in a || !(a.id === 'cylinder' || a.id.startsWith('e:') || a.id.startsWith('m:'));
 
 /**
  * A run drawn on storey `storey`'s plan through the corners `mid`, from `a` to `b` (an open end, for teeing off later, if null).
@@ -824,24 +880,30 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
   if (!src) return { error: 'Place the boiler or heat pump first.' };
   if (b && !feedsFrom(a) && feedsFrom(b)) { [a, b] = [b, a]; mid = [...mid].reverse(); }
   if (!feedsFrom(a)) return { error: 'A run comes from the boiler or heat pump, a riser or another run: start or finish on one.' };
-  const into = b && 'run' in b ? b : null;
+  const into = b && 'run' in b ? b : null, toNode = b && 'node' in b ? b : null;
   // Finished on a riser, a run becomes that riser's feed: the runs on other floors off the riser come off it.
-  const toRiser = !!b && !into && isRiser(h, (b as { id: string }).id);
-  if (b && feedsFrom(b) && !into && !toRiser) return { error: 'Finish on a radiator, fan coil, UFH manifold, the cylinder, a riser or another run, or press Enter to leave the end open for teeing off later.' };
+  const toRiser = !!b && 'id' in b && isRiser(h, b.id);
+  if (b && feedsFrom(b) && !into && !toNode && !toRiser) return { error: 'Finish on a radiator, fan coil, UFH manifold, the cylinder, a riser or another run, or press Enter to leave the end open for teeing off later.' };
   if (into && 'run' in a && a.run === into.run) return { error: 'Finish on a different run from the one it starts on.' };
-  if (toRiser && !('run' in a) && a.id === (b as { id: string }).id) return { error: 'Finish on a different riser from the one it starts on.' };
+  if (toRiser && 'id' in a && b && 'id' in b && a.id === b.id) return { error: 'Finish on a different riser from the one it starts on.' };
   if (!b && mid.length < 1) return { error: 'Draw at least one stretch.' };
   const pipes = (h.heating.pipes ??= []);
-  if (!('run' in a) && a.id !== 'source' && storey === src.storey && !riserFeed(h, a.id)) return { error: 'On the floor with the heat source, start from the heat source itself, or draw a run to this riser first.' };
-  const B = into ? null : (b as { id: string } | null);
+  if ('id' in a && a.id !== 'source' && storey === src.storey && !riserFeed(h, a.id)) return { error: 'On the floor with the heat source, start from the heat source itself, or draw a run to this riser first.' };
+  const B = b && 'id' in b ? b : null;
   // The heater's old run goes, so it is not counted twice.
   // A manifold's run replaces its own old one and any to the loops it now feeds.
   const fed = B?.id.startsWith('m:') ? runEmitters(h, { id: '', name: '', parent: null, size: '', length: 0, ends: ['', B.id] }) : [];
   if (B) for (const old of pipes.filter((p) => (toRiser ? p === riserFeed(h, B.id) : B.id === 'cylinder' || B.id.startsWith('m:') ? p.ends?.[1] === B.id : p.emitter === B.id.slice(2)) || (!!p.emitter && fed.includes(p.emitter)))) removeRun(h, old.id);
   const all = h.heating.pipes!, root = all.find((p) => p.parent === null && !p.leg)?.id ?? null;
-  let start: string, parent: string | null, P0: Pt;
+  let start: string, parent: string | null, P0: Pt, from: string | undefined;
   let via: Pipe['via'];
-  if ('run' in a) {
+  if ('node' in a) {
+    // Off the end of a drop on this plan: at that level, joined there.
+    const N = h.heating.nodes?.find((x) => x.id === a.node), D = all.find((p) => p.a === a.node || p.b === a.node);
+    if (!N?.at || !D) return { error: 'That drop is gone.' };
+    start = `tee:${D.id}`; parent = D.id; P0 = N.at; from = N.id;
+    if (N.v != null) via = levelIn(storey, N.v);
+  } else if ('run' in a) {
     // A run in this floor's void or its ceiling void (the floor void of the storey above) can be teed into from this plan.
     const Y = all.find((p) => p.id === a.run), yv = Y ? voidOf(h, Y) : -1;
     if (Y && !onPlan(storey, yv)) return { error: 'That run is not under this floor, in its rooms or in its ceiling.' };
@@ -894,16 +956,23 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
     for (let q = parent ? all.find((p) => p.id === parent) : undefined; q; q = q.parent ? all.find((p) => p.id === q!.parent) : undefined)
       if (mine.has(q.id)) return { error: 'That would feed the riser from itself: start from the heat source, another riser or a run not fed up this one.' };
   }
+  const N1 = toNode ? h.heating.nodes?.find((x) => x.id === toNode.node) : undefined;
+  if (toNode && !N1?.at) return { error: 'That drop is gone.' };
+  if (N1?.at) { T = N1.at; J = { id: N1.id, at: N1.at }; if (N1.v != null) via ??= level ?? levelIn(storey, N1.v); }
   const end = T ?? (B ? endPoint(h, B.id)! : mid[mid.length - 1]);
   const raw = tidy([P0, ...(b ? mid : mid.slice(0, -1)), end]);
   const n = raw.length, pts = square && b && n > 1 ? tidy([...raw.slice(0, -1), ...squareInto(h, storey, raw[n - 3], raw[n - 2], raw[n - 1]).slice(1)]) : raw;
   if (pts.length < 2) return { error: 'Draw at least one stretch.' };
   const e = B?.id.startsWith('e:') ? h.heating.emitters.find((x) => x.id === B.id.slice(2)) : undefined, room = e && h.rooms.find((r) => r.id === e.room)?.name;
-  const id = nextId(all), M = B?.id.startsWith('m:');
-  all.push({ id, parent, leg: { storey, pts }, ends: [start, B?.id ?? ''], length: m1(pathLen(pts)), ...(J ? { b: J.id } : {}),
+  const id = nextId(all), M = B?.id.startsWith('m:'), lv = via ?? level ?? defaultLevel(h, storey);
+  // Finishing on a run (or a drop's end) at another level: it ends here at its own level, and a drop joins it to that one.
+  const Y2 = into ? all.find((p) => p.id === into.run) : undefined, jv = Y2 ? voidOf(h, Y2) : N1?.v;
+  const K = J && jv != null && jv >= 0 && levelIn(storey, jv) !== lv ? addNode(h, { storey, at: J.at, v: storey + LEVEL_AT[lv] }) : undefined;
+  all.push({ id, parent, leg: { storey, pts }, ends: [start, B?.id ?? ''], length: m1(pathLen(pts)), ...(J ? { b: K ?? J.id } : {}), ...(from ? { a: from } : {}),
     name: e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}` : B?.id.startsWith('m:') ? manifoldName(h, B.id.slice(2)) : toRiser ? `To riser ${(h.heating.risers ?? []).findIndex((r) => r.id === B!.id) + 1}` : B ? 'Hot water cylinder coil' : 'Main',
     size: usable(h, e ? (e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : storey === src.storey || storey === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)') : 'Cu 22 mm'),
-    ...(e ? { emitter: e.id } : {}), via: via ?? level ?? defaultLevel(h, storey) });
+    ...(e ? { emitter: e.id } : {}), via: lv });
+  if (K && J) addDrop(h, K, J.id, storey, J.at, storey + LEVEL_AT[lv], jv!, all.find((p) => p.id === id)!.size);
   // Its floor or ceiling is fixed before it changes parent: following a run upstream stops at a change of floor.
   // The riser's branches to other floors now come off this run, up or down from its floor.
   // One with nothing on it yet goes: it is made again when a run is drawn off the riser on that floor.
@@ -934,7 +1003,7 @@ export function moveOpenEnd(h: House, id: string, b: Attach | null, to: Pt, squa
     X.length = m1(pathLen(X.leg.pts)); delete X.typed;
     return { id };
   }
-  if ('run' in b ? b.run === id : b.id === 'source') return { error: 'Drop it on a radiator, fan coil, UFH manifold, the cylinder, a riser or another run.' };
+  if ('run' in b ? b.run === id : 'id' in b && b.id === 'source') return { error: 'Drop it on a radiator, fan coil, UFH manifold, the cylinder, a riser or another run.' };
   // Drawn again through its corners on a copy, so a refusal leaves the house as it was.
   const t = structuredClone(h), s0 = X.ends[0], a: Attach = s0.startsWith('tee:') ? { run: s0.slice(4), at: pts[0] } : { id: s0 };
   removeRun(t, id);

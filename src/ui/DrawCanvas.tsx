@@ -9,7 +9,7 @@ import type { Pt } from '../engine/geom';
 import { OPEN_DOORWAY, addEmitter, addFloorZone, addStairwell, OPEN_STAIRWELL, ensureOpenDoorway, joinRooms, addRoomAt, cutPlan, deleteRoom, emitterPose, flushDelta, parallelSnap, innerDoorAt, innerWallThickness, insertCorner, isOutside, joinedCorners, mapCorners, turnToWall, mergeRooms, moveCorners, nearestWall, openingCentre, pieceAlign, pieceGap, pieceKeys, pieceSeg, pieceThickness, problems, removeCorner, roomAt, splitRoom, splitWall, stretchAtWall, wallGhosts, wallIndex, wallKeys, wallPieces } from '../engine/house-draw';
 import type { WallPiece } from '../engine/house-draw';
 import { planBounds } from './HousePlan';
-import { LEVEL_AT, LEVELS, attachments, defaultLevel, dragSegment, drawRun, ell, feedsFrom, joinRun, levelDash, levelIn, livePath, moveNode, moveOpenEnd, onPlan, viaOf, manifoldName, manifolds, removeRun, routePipes, splitSegment, squareInto, unpiped, voidName, voidOf, wallSnap } from '../engine/house-pipes';
+import { LEVEL_AT, LEVELS, attachments, defaultLevel, dragSegment, drawRun, dropAt, ell, feedsFrom, joinRun, levelDash, levelIn, livePath, moveNode, moveOpenEnd, onPlan, viaOf, manifoldName, manifolds, removeRun, routePipes, splitSegment, squareInto, unpiped, voidName, voidOf, wallSnap } from '../engine/house-pipes';
 import { placedManifold } from '../engine/house-controls';
 import type { Attach, Level } from '../engine/house-pipes';
 import type { Emitter, Heating, Plant } from '../engine/house-heating';
@@ -506,6 +506,12 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     const r = Math.max(0.3, z(14 * hs) / S);
     const port = attachments(house, storey).map((x) => ({ x, d: Math.hypot(x.at[0] - p[0], x.at[1] - p[1]) })).filter((q) => q.d < r).sort((a, b) => a.d - b.d)[0];
     if (port) return { a: { id: port.x.id }, at: port.x.at, label: port.x.label };
+    // A drop's end on this plan: while drawing, the end at the level being drawn in.
+    for (const d of house.heating.pipes ?? []) if (d.drop) for (const id of [d.a, d.b]) {
+      const n = id ? house.heating.nodes?.find((x) => x.id === id) : undefined;
+      if (!n?.at || n.v == null || !onPlan(storey, n.v) || (tool === 'pipe' && levelIn(storey, n.v) !== level)) continue;
+      if (Math.hypot(n.at[0] - p[0], n.at[1] - p[1]) < r) return { a: { node: n.id }, at: n.at, label: `${d.name}: ${voidName(house, n.v)}` };
+    }
     let best: { a: Attach; at: Pt; label: string } | null = null, bd = r;
     for (const x of house.heating.pipes ?? []) {
       // While drawing, only the runs on the level being drawn in can be joined.
@@ -530,8 +536,9 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     const x = pipeHit(p);
     if (!x || !pipeFrom) return null;
     if (feedsFrom(x.a) !== feedsFrom(pipeFrom)) return x;
-    // A run from the source, a riser or a run can finish on (another) riser, and feeds it.
-    if (!('run' in x.a) && x.a.id !== 'source' && feedsFrom(pipeFrom) && !(!('run' in pipeFrom) && pipeFrom.id === x.a.id)) return x;
+    // A run can finish on a drop's end, or on a riser (it then feeds it).
+    if ('node' in x.a) return 'node' in pipeFrom && pipeFrom.node === x.a.node ? null : x;
+    if ('id' in x.a && x.a.id !== 'source' && feedsFrom(pipeFrom) && !('id' in pipeFrom && pipeFrom.id === x.a.id)) return x;
     return 'run' in x.a && !('run' in pipeFrom && pipeFrom.run === x.a.run) ? { ...x, label: x.label.replace('Tee off', 'Feed') } : null;
   };
   /** The next corner of the pipe being drawn: square to the last one, stopping just short of a wall across its way (Shift: free). */
@@ -550,6 +557,19 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
     setSel({ ...NO_SEL, item: { k: 'pipe', id: test.id } });
     setDraft([]); setPipeFrom(null); setNote('');
     if (!sticky) setTool('select');
+  };
+
+  /** Pick the level new runs go in. Part way through drawing one, a drop goes in at its last corner (or where it started) and it carries on from there. */
+  const pickLevel = (l: Level) => {
+    if (l === level) return;
+    if (tool === 'pipe' && pipeFrom && draft.length) {
+      const mid = draft.slice(1), test = dropAt(structuredClone(house), storey, pipeFrom, mid, level, l);
+      if ('error' in test) { setNote(test.error); return; }
+      upd((h) => { dropAt(h, storey, pipeFrom, mid, level, l); });
+      setPipeFrom({ node: test.node }); setDraft([test.at]);
+      setNote(`A drop goes in here; carry on ${LEVELS.find(([x]) => x === l)![1].toLowerCase()}.`);
+    }
+    setLevel(l);
   };
 
   /** A new room (or, on a floor or ceiling layer, a zone; with the UFH tool, an underfloor heating zone in this floor) with this outline. */
@@ -1171,6 +1191,16 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
         {/* Routes are measured from the saved positions, so they are hidden while something is dragged. */}
         {!plantDrag && legs.map((l, i) => <polyline key={`pl${i}`} points={pts(l.pts)} fill="none" stroke="#c0392b" strokeOpacity={0.75} strokeWidth={z(2)} strokeDasharray={`${z(6)} ${z(3)}`} strokeLinejoin="round" pointerEvents="none" />)}
         {!plantDrag && runLines}
+        {/* A drop between levels: shown on each plan that shows either of its ends. */}
+        {!plantDrag && (hs0.pipes ?? []).filter((d) => d.drop && [d.a, d.b].some((id) => { const v = hs0.nodes?.find((x) => x.id === id)?.v; return v != null && onPlan(storey, v); })).map((d) => {
+          const c = to(d.drop!.at), on = sel.item?.k === 'pipe' && sel.item.id === d.id;
+          return <g key={`drop${d.id}`} style={{ cursor: pipeSel ? 'pointer' : undefined }} pointerEvents={pipeSel ? undefined : 'none'}
+            onPointerDown={pipeSel ? (ev) => { ev.stopPropagation(); setSel({ ...NO_SEL, item: { k: 'pipe', id: d.id } }); } : undefined}>
+            <title>{d.name} · {d.size} · {d.length.toFixed(1)} m{d.loose ? ' · not joined to the heat source' : ''}</title>
+            <circle cx={c[0]} cy={c[1]} r={z(8)} fill="#fff" stroke={on ? '#c2410c' : d.loose ? '#8a9199' : '#c0392b'} strokeWidth={z(on ? 2.5 : 1.8)} />
+            <path d={`M${c[0]} ${c[1] - z(5)} v${z(10)} M${c[0] - z(2.5)} ${c[1] - z(2.5)} l${z(2.5)} ${-z(2.5)} l${z(2.5)} ${z(2.5)} M${c[0] - z(2.5)} ${c[1] + z(2.5)} l${z(2.5)} ${z(2.5)} l${z(2.5)} ${-z(2.5)}`} stroke={d.loose ? '#8a9199' : '#c0392b'} strokeWidth={z(1.5)} fill="none" />
+          </g>;
+        })}
         {/* A junction where two or more runs meet: drag it to move them all. */}
         {!plantDrag && pipeSel && [...junctions].filter(([id]) => (hs0.pipes ?? []).filter((p) => p.a === id || p.b === id).length > 1).map(([id, at]) => {
           const c = drag?.k === 'node' && drag.id === id && drag.moved ? to(drag.cur) : to(at);
@@ -1506,7 +1536,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       {/* The level new runs go in, and the key to the line styles. */}
       {lens === 'pipes' && <div className="level-switch" role="group" aria-label="Level new runs are drawn in" onMouseDown={(e) => e.preventDefault()}>
         {LEVELS.map(([l, name]) => (
-          <button key={l} type="button" className={level === l ? 'chip on' : 'chip'} aria-pressed={level === l} onClick={() => setLevel(l)} title={`New runs: ${voidName(house, storey + LEVEL_AT[l]).toLowerCase()}`}>
+          <button key={l} type="button" className={level === l ? 'chip on' : 'chip'} aria-pressed={level === l} onClick={() => pickLevel(l)} title={`New runs: ${voidName(house, storey + LEVEL_AT[l]).toLowerCase()}`}>
             <svg width="24" height="8" aria-hidden="true"><line x1="2" y1="4" x2="22" y2="4" stroke="#c0392b" strokeWidth="2" strokeDasharray={levelDash(l, 1)} strokeLinecap={l === 'room' ? 'round' : undefined} /></svg>{name}
           </button>
         ))}

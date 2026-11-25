@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { calcHouse } from './house';
 import { defaultHouse } from './house-default';
 import { emitterOut, lpm, roomOut, shareIn } from './house-heating';
-import { PIPE_SIZES, PIPE_WALL, attachments, defaultLevel, drawRun, moveOpenEnd, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, fitSize, fittingsDp, joinRun, joints, kInsert, sizesOn, usable, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitCircuits, splitSegment, squareInto } from './house-pipes';
+import { PIPE_SIZES, PIPE_WALL, attachments, defaultLevel, dropAt, drawRun, moveOpenEnd, emitterPort, pipeRest, unpiped, wallSnap, autoPipes, combineRuns, dragSegment, fitSize, fittingsDp, joinRun, joints, kInsert, sizesOn, usable, maxFlow, paBudget, viaOf, voidName, voidOf, livePath, pipeFlow, removeRun, resetRun, routePipes, runLength, setBranchRiser, sizePipes, splitCircuits, splitSegment, squareInto } from './house-pipes';
 
 /** Place a heater so its pipes connect at `p` (its valve end, for a radiator). */
 const put = (h: ReturnType<typeof defaultHouse>, e: ReturnType<typeof defaultHouse>['heating']['emitters'][number], p: [number, number]) => {
@@ -720,3 +720,48 @@ describe('runs between risers', () => {
   });
 });
 
+
+describe('drops between levels', () => {
+  const house = () => {
+    const h = defaultHouse();
+    h.heating.source = { at: [0.5, 0.5], storey: 0 };
+    h.heating.pipes = [];
+    const rad = (s: number) => h.heating.emitters.find((x) => x.kind === 'radiator' && h.rooms.find((r) => r.id === x.room)?.storey === s)!;
+    return { h, rad };
+  };
+  const zone = (h: ReturnType<typeof defaultHouse>, s: number) => h.storeys[s]?.zone ?? 0.25;
+
+  it('switching level part way through a run ends it there, with a drop to carry on from at the new level', () => {
+    const { h, rad } = house(), e = rad(0), e1 = rad(1);
+    const top = dropAt(h, 0, { id: 'source' }, [[3, 0.5]], 'floor', 'ceiling') as { node: string; at: [number, number] };
+    expect(top.at).toEqual([3, 0.5]);
+    const r = drawRun(h, 0, { node: top.node }, [[3, 3]], { id: `e:${e.id}` }) as { id: string };
+    expect(h.heating.pipes!.find((p) => p.id === r.id)!.via).toBe('ceiling');
+    const n = syncNet(h), d = n.heating.pipes!.find((p) => p.drop)!;
+    expect(n.heating.pipes!.some((p) => p.loose || p.loop)).toBe(false);
+    expect(n.heating.pipes!.find((p) => p.id === r.id)!.parent).toBe(d.id);
+    // From the middle of the ground floor's floor void to the middle of its ceiling void.
+    expect(d.rise).toBeCloseTo(h.storeys[0].h + zone(h, 1) / 2 + zone(h, 0) / 2, 2);
+    expect(Math.abs(runLength(n, d) - d.rise!)).toBeLessThanOrEqual(0.05 + 1e-9); // lengths are kept to 0.1 m
+    // That ceiling is the first floor's floor void: a run upstairs can start from the top of the drop.
+    const up = drawRun(n, 1, { node: top.node }, [[3, 4]], { id: `e:${e1.id}` }) as { id: string };
+    const n2 = syncNet(n);
+    expect(n2.heating.pipes!.find((p) => p.id === up.id)).toMatchObject({ parent: d.id, via: 'floor' });
+    const s = sizePipes(n2, calcHouse(n2));
+    expect(s.rows.find((x) => x.pipe.id === d.id)!.loadW).toBeCloseTo(s.emitterW.get(e.id)! + s.emitterW.get(e1.id)!, 0);
+  });
+
+  it('finishing on a run at another level ends at this level, with a drop into that run', () => {
+    const { h } = house();
+    const a = drawRun(h, 0, { id: 'source' }, [[3, 0.5], [3, 3]], null, true, 'ceiling') as { id: string };
+    const r = drawRun(h, 0, { id: 'source' }, [[0.5, 2]], { run: a.id, at: [3, 2] }, true, 'floor') as { id: string };
+    const n = syncNet(h), R = n.heating.pipes!.find((p) => p.id === r.id)!, d = n.heating.pipes!.find((p) => p.drop)!;
+    expect(R.via).toBe('floor');
+    expect([d.a, d.b]).toContain(R.b);
+    expect(d.rise).toBeCloseTo(h.storeys[0].h + zone(h, 1) / 2 + zone(h, 0) / 2, 2);
+    // On the same level there is no drop.
+    const x = drawRun(n, 0, { id: 'source' }, [[1, 4]], { run: a.id, at: [3, 2.5] }, true, 'ceiling');
+    expect('id' in x).toBe(true);
+    expect(n.heating.pipes!.filter((p) => p.drop).length).toBe(1);
+  });
+});

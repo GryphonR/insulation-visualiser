@@ -28,7 +28,6 @@ const GROUPS: Array<{ id: string; label: string; tools: ToolDef[]; list?: 'glazi
   { id: 'heat', label: 'Heating', tools: [['radiator', 'Radiator', '≣'], ['fancoil', 'Fan coil', '✣'], ['ufh', 'UFH zone', '▦'], ['manifold', 'UFH manifold', '▤']] },
   { id: 'source', label: 'Boiler / heat pump', tools: [['source', 'Boiler / heat pump', '♨']] },
   { id: 'cylinder', label: 'Hot water cylinder', tools: [['cylinder', 'Hot water cylinder', '◍']] },
-  { id: 'riser', label: 'Pipe riser', tools: [['riser', 'Pipe riser', '↕']] },
   { id: 'pipe', label: 'Draw a pipe run', tools: [['pipe', 'Draw a pipe run', '⌐']] },
 ];
 const HINT: Record<Tool, string> = {
@@ -47,7 +46,7 @@ const HINT: Record<Tool, string> = {
   cylinder: 'Click where the hot water cylinder goes, if there is one. Clicking again moves it.',
   manifold: 'Click where a UFH manifold goes. Draw one pipe run to it, and it feeds every UFH loop on it: the underfloor zones on this floor are put on it, and you can move them between manifolds in its panel.',
   riser: 'Click where pipes pass up or down through the floors, such as a cupboard or boxing in a corner. Pipes to other floors go up whichever riser makes the runs shortest; with no riser they go straight up from the boiler.',
-  pipe: 'Click a green ring (the boiler or heat pump, a riser, a radiator, a UFH manifold or the cylinder) or an existing run to start, click the corners, then click what it feeds to finish: a heater, the cylinder, a riser (the runs on other floors up or down that riser then come off it), or another run, which it then feeds from that point on. Stretches run square to the grid or to a nearby wall, even one at an angle, and stop 10 cm short of a wall across their way, so the next one runs along it. Hold Shift (or turn snapping off) to draw at any angle. Enter leaves the end open, to tee off later; Backspace undoes a corner. A heater that already had a run gets the new one instead.',
+  pipe: 'Click a green ring (the boiler or heat pump, a riser, a radiator, a UFH manifold or the cylinder) or an existing run to start, click the corners, then click what it feeds to finish: a heater, the cylinder, a riser (the runs on other floors up or down that riser then come off it), or another run, which it then feeds from that point on. Stretches run square to the grid or to a nearby wall, even one at an angle, and stop 10 cm short of a wall across their way, so the next one runs along it. Hold Shift (or turn snapping off) to draw at any angle. Enter leaves the end open, to tee off later; Backspace undoes a corner. A heater that already had a run gets the new one instead. To change level part way, pick Under the floor, In the room or In the ceiling at the top: a drop (↕) goes in at your last corner, and you carry on at the new level. Finishing on a run at another level adds a drop there.',
   ufh: "Drag out a rectangle, or click corners for any shape, to draw an underfloor heating zone. Every heated room it covers gets UFH for its part of the zone; set each room's covering and pipe spacing under Emitters. Drag the zone by its tag.",
 };
 
@@ -69,7 +68,8 @@ const PIPE_SELECT_HINT = 'Click an emitter, an underfloor zone tag or a pipe run
 
 /** The drawing menu: a slim column of tool icons (names on hover) that floats over the canvas; groups open to the right. */
 /** The heating and cooling lens's tools; the rest are the floor plan's. UFH zones are also drawn in a floor layer, which is plan only. */
-const PIPE_TOOLS: Tool[] = ['select', 'radiator', 'fancoil', 'ufh', 'source', 'cylinder', 'riser', 'manifold', 'pipe'];
+// Pipes change level through drops, put in as they are drawn, so there is no riser tool.
+const PIPE_TOOLS: Tool[] = ['select', 'radiator', 'fancoil', 'ufh', 'source', 'cylinder', 'manifold', 'pipe'];
 export function DrawMenu({ house, band, tool, setTool, sticky, setSticky, snapOn, setSnapOn, lens = 'plan', opPick, setOpPick }: {
   house: House;
   /** On a floor or ceiling layer: only zones and (on floors) heated-floor loops can be drawn. */

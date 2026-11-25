@@ -17,6 +17,8 @@ export interface PipeNode {
   on?: string; storey?: number;
   /** A free junction's or open end's place on the plan, m. */
   at?: Pt;
+  /** The level a drop's end is on, as a void number (see house-pipes `voidOf`). */
+  v?: number;
 }
 
 const pinId = (on: string, storey: number) => `${on}@${storey}`;
@@ -38,7 +40,8 @@ export function netOf(h: House): { pipes: Pipe[]; nodes: PipeNode[] } {
   const pin = (on: string, storey: number) => { const id = pinId(on, storey); if (!nodes.has(id)) nodes.set(id, { id, on, storey }); return id; };
   const storeyOf = (id: string) => nodes.get(id)?.storey ?? src;
   const kept = (p: Pipe, id: string | undefined) => {
-    if (!id || !old.has(id) || (p.was && p.was !== fingerprint(p))) return undefined;
+    // A drop is only ever joined by its nodes.
+    if (!id || !old.has(id) || (p.was && p.was !== fingerprint(p) && !p.drop)) return undefined;
     if (!nodes.has(id)) nodes.set(id, { ...old.get(id)! });
     return id;
   };
