@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { calcBoth, mcsOf } from '../engine/house';
 import { syncUfh } from '../engine/house-draw';
 import { syncNet } from '../engine/house-net';
+import { tidyUnvalved } from '../engine/house-controls';
 import { yearRes } from '../engine/house-sim';
 import { useYearSims } from './useYearSim';
 import type { Basis, House, HouseResult } from '../engine/house';
@@ -83,8 +84,8 @@ export const useProject = (): Ctx => {
   return c;
 };
 
-/** Every scenario's pipe runs read from their net (see house-net), as a project is opened. */
-const netted = (p: Project): Project => { const s = p.scenarios.map((x) => ({ ...x, house: syncNet(x.house) })); return s.every((x, i) => x.house === p.scenarios[i].house) ? p : { ...p, scenarios: s }; };
+/** Every scenario's pipe runs read from their net (see house-net), as a project is opened; with no valves, a plan's leftovers tidied away. */
+const netted = (p: Project): Project => { const s = p.scenarios.map((x) => ({ ...x, house: syncNet(tidyUnvalved(x.house)) })); return s.every((x, i) => x.house === p.scenarios[i].house) ? p : { ...p, scenarios: s }; };
 
 export function ProjectProvider({ customStackups, setCustomStackups, children }: {
   customStackups: Stackup[]; setCustomStackups: Ctx['setCustomStackups']; children: ReactNode;
@@ -154,7 +155,7 @@ export function ProjectProvider({ customStackups, setCustomStackups, children }:
 
   const active = project.scenarios.find((s) => s.id === project.active) ?? project.scenarios[0];
   const setHouse: Ctx['setHouse'] = (fn) =>
-    setProject((p) => ({ ...p, scenarios: p.scenarios.map((s) => (s.id === p.active ? { ...s, house: syncNet(syncUfh(fn(s.house))) } : s)) }));
+    setProject((p) => ({ ...p, scenarios: p.scenarios.map((s) => (s.id === p.active ? { ...s, house: syncNet(tidyUnvalved(syncUfh(fn(s.house)))) } : s)) }));
   const upd: Ctx['upd'] = (fn) => setHouse((prev) => { const n = structuredClone(prev); fn(n); return n; });
   const houses = useMemo(() => project.scenarios.map((s) => s.house), [project.scenarios]);
   const sims = useYearSims(houses);

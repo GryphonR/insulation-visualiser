@@ -4,7 +4,7 @@ import type { House } from './house';
 import { defaultHouse } from './house-default';
 import { DEMOS, fiftiesSemi } from './house-demos';
 import { COOLING_DEFAULT, canCool, coolEer, coolingOn, dewPoint, emitterCool, emitterOut } from './house-heating';
-import { PLANS, applyPlan, controlChecks, isCylRun, modeSummary, modesOf, openRuns, passes, posOf, pureRoots, reach, runUse, served, teeOf } from './house-controls';
+import { PLANS, applyPlan, controlChecks, tidyUnvalved, isCylRun, modeSummary, modesOf, openRuns, passes, posOf, pureRoots, reach, runUse, served, teeOf } from './house-controls';
 import type { Mode, PlanKind, Valve } from './house-controls';
 import { autoPipes, combineRuns, sizePipes } from './house-pipes';
 import { syncNet } from './house-net';
@@ -214,6 +214,22 @@ describe('control plans', () => {
       const v = after.heating.controls!.valves.find((q) => q.kind === 'three')!;
       expect(teeOf(after, v)).not.toBeNull();
     }
+  });
+
+  it('with every valve gone, the plan’s pipes laid one on another (and its headers) tidy away', () => {
+    const h = semi();
+    h.heating.emitters.forEach((e, i) => { e.zone = h.heating.zones[i % 2]?.id ?? ''; });
+    const before = syncNet(h), shape = (x: House) => x.heating.pipes!.filter((p) => !p.header).map((p) => [p.name, p.leg?.pts ?? null, p.rise ?? null]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    expect(tidyUnvalved(before)).toBe(before);
+    const x = structuredClone(before);
+    applyPlan(x, 'splus');
+    expect(x.heating.pipes!.length).toBeGreaterThan(before.heating.pipes!.length);
+    // While its valves are there, the copies stay: each valve needs its own pipe.
+    expect(tidyUnvalved(x)).toBe(x);
+    x.heating.controls!.plan = 'custom'; x.heating.controls!.valves = [];
+    const after = syncNet(tidyUnvalved(x));
+    expect(shape(after)).toEqual(shape(before));
+    expect(after.heating.pipes!.some((p) => p.header || p.loose || p.loop)).toBe(false);
   });
 
   it('a 3-port plan on shared trunks splits hot water and heating into their own runs, so the valve sits at one tee', () => {

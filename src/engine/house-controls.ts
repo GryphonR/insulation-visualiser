@@ -162,6 +162,23 @@ function header(h: House, runs: string[], name: string): string[] {
 }
 
 /** Take out the headers a plan put in; the runs off them go back to the run before (edits h in place). */
+/**
+ * With no valves, a control plan's headers and its copies of runs per circuit (pipes laid one on another along a route) do nothing:
+ * they are tidied away, so the pipework is as drawn. Returns `h` itself when there is nothing to tidy, else a tidied copy.
+ */
+export function tidyUnvalved(h: House): House {
+  const pipes = h.heating.pipes ?? [];
+  if (h.heating.controls?.valves.length || !pipes.length) return h;
+  // Quick look first, so most edits copy nothing: a header, a circuit in a name, or two runs on one route.
+  const routes = pipes.filter((p) => p.leg && !p.drop).map((p) => JSON.stringify([p.leg!.storey, p.leg!.pts]));
+  if (!pipes.some((p) => p.header || CIRCUIT.test(p.name)) && new Set(routes).size === routes.length) return h;
+  const x = structuredClone(h);
+  stripHeaders(x);
+  mergeCircuits(x);
+  return JSON.stringify(x.heating.pipes) === JSON.stringify(h.heating.pipes) ? h : x;
+}
+const CIRCUIT = /, (Zone \S+|No zone|Heating|Hot water)$/;
+
 function stripHeaders(h: House): void {
   const pipes = h.heating.pipes ?? [], hs = new Map(pipes.filter((p) => p.header).map((p) => [p.id, p]));
   if (!hs.size) return;
