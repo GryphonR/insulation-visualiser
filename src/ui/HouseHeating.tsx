@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { MONTHS } from '../engine/data';
 import { SOURCE_LABEL, effText, isHeatPump, roomArea } from '../engine/house';
 import type { House } from '../engine/house';
-import { COOLING_DEFAULT, COVERS, ZONE_COLOURS, given, RAD_LABEL, canCool, dewPoint, emitterCool, UFH_SPACINGS, autoEmitters, emitterOut, loopLength, loopMax, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
+import { COOLING_DEFAULT, COVERS, fanCoilName, ZONE_COLOURS, given, RAD_LABEL, canCool, dewPoint, emitterCool, UFH_SPACINGS, autoEmitters, emitterOut, loopLength, loopMax, lpm, ratedOf, roomSchedule, systemFlow } from '../engine/house-heating';
 import type { Emitter, RadType, Zone } from '../engine/house-heating';
 import { Chip } from './controls';
 import { HouseUfh } from './HouseUfh';
@@ -214,7 +214,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                   <span className="small mono">{z.kind === 'ufh' ? 'UFH' : 'RAD'} · {fmt(load)} W · {fmt(lpm(load, c.dT), 1)} l/min</span>
                   <button type="button" className="btn-link" onClick={() => { if (z.kind === 'ufh' && z.manifold?.storey != null && !confirm(`${z.name} is a manifold on the plan: deleting it takes it off the plan, and its loops are piped one by one. Delete it?`)) return; upd((h) => { h.heating.zones = h.heating.zones.filter((x) => x.id !== z.id); h.heating.emitters.forEach((e) => { if (e.zone === z.id) e.zone = ''; }); }); }}>Delete</button>
                 </div>
-                <p className="small muted">{ems.length ? ems.map((e) => `${roomName(e.room)} ${e.kind === 'ufh' ? 'loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}`).join(', ') : 'No emitters yet: pick this zone in the emitter table.'}</p>
+                <p className="small muted">{ems.length ? ems.map((e) => e.kind === 'fancoil' ? fanCoilName(house, e) : `${roomName(e.room)} ${e.kind === 'ufh' ? 'loop' : e.kind === 'towel' ? 'towel rail' : e.id}`).join(', ') : 'No emitters yet: pick this zone in the emitter table.'}</p>
                 {z.kind === 'ufh' && (
                   <label className="small">Loop water:{' '}
                     <select className="h-sel" value={z.blend} onChange={(e) => setZ(z.id, { blend: Number(e.target.value) })}>
@@ -266,7 +266,7 @@ export function HouseHeating({ house, setHouse, section }: { house: House; setHo
                           onChange={(e) => setP({ length: Math.max(0, Number(e.target.value) || 0), typed: true })} />
                           {p.leg && p.typed && <button type="button" className="btn-link small" title="Measure along the route on the plan again" onClick={() => setP({ typed: undefined })}>plan</button>}</td>
                         <td><select className="h-sel" value={p.emitter ?? ''} aria-label="Emitter at the end" onChange={(e) => setP({ emitter: e.target.value || undefined })}>
-                          <option value="">— (branch)</option>{c.emitters.map((e) => <option key={e.id} value={e.id}>{roomName(e.room)} {e.kind === 'ufh' ? 'UFH' : e.kind === 'fancoil' ? 'fan coil' : e.kind === 'towel' ? 'towel rail' : e.id}</option>)}
+                          <option value="">— (branch)</option>{c.emitters.map((e) => <option key={e.id} value={e.id}>{e.kind === 'fancoil' ? fanCoilName(house, e) : `${roomName(e.room)} ${e.kind === 'ufh' ? 'UFH' : e.kind === 'towel' ? 'towel rail' : e.id}`}</option>)}
                         </select></td>
                         <td className="n mono">{fmt(r.loadW)}</td>
                         <td className="n mono">{fmt(r.flowLpm, 1)}</td>

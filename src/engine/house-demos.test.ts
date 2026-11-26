@@ -5,7 +5,7 @@ import { calcHouse, maxWallGap, onStorey, roomEdges, roomPoly } from './house';
 import { OPEN_STAIRWELL, innerDoorAt, partyKeys } from './house-draw';
 import { controlChecks } from './house-controls';
 import { DEMOS } from './house-demos';
-import { flowNeeded } from './house-heating';
+import { fanCoilName, flowNeeded } from './house-heating';
 import { sizePipes } from './house-pipes';
 import { simulate } from './house-sim';
 import { runMoisture } from './moisture';
@@ -26,6 +26,10 @@ describe('demo projects', () => {
   it('Passivhaus: fan coils cool the living room and bedrooms in summer, the radiators are shut off', () => {
     const h = DEMOS.find((d) => d.id === 'passivhaus')!.make().scenarios[0].house;
     expect(h.heating.emitters.filter((e) => e.kind === 'fancoil').map((e) => e.room).sort()).toEqual(['bed1', 'bed2', 'living']);
+    // Unnamed fan coils are numbered like manifolds, not named after their room; a typed name wins.
+    const fcs = h.heating.emitters.filter((e) => e.kind === 'fancoil');
+    expect(fcs.map((e) => fanCoilName(h, e))).toEqual(['Fan coil 1', 'Fan coil 2', 'Fan coil 3']);
+    expect(fanCoilName(h, { ...fcs[1], name: 'Loft unit' })).toBe('Loft unit');
     expect(h.heating.controls!.modes.some((m) => m.water === 'chilled')).toBe(true);
     expect(simulate(h, 'summer').coolKWh).toBeGreaterThan(0);
   });

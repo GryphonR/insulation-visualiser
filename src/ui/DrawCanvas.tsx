@@ -744,7 +744,7 @@ export function DrawCanvas({ house, storey, tool, setTool, sel, setSel, upd, fil
       addEmitter(h, at.room.id, kind, id);
       const e = h.heating.emitters[h.heating.emitters.length - 1];
       e.at = at.at; e.ang = at.ang;
-      if (kind === 'fancoil') e.rated = 2000;
+      if (kind === 'fancoil') { e.rated = 2000; e.name = `Fan coil ${h.heating.emitters.filter((x) => x.kind === 'fancoil').length}`; }
       if (roofSpace) e.storey = storey;
     });
     setSel({ room: at.room.id, walls: [], item: null });

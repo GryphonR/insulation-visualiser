@@ -5,7 +5,7 @@ import { pointInPoly } from './geom';
 import type { Pt } from './geom';
 import { calcHouse, onStorey, roomEdges, roomPoly } from './house';
 import { emitterPose } from './house-draw';
-import { canCool, emitterCool, emitterOut, emitterStorey, lpm, shareIn, zonePart } from './house-heating';
+import { canCool, fanCoilName, emitterCool, emitterOut, emitterStorey, lpm, shareIn, zonePart } from './house-heating';
 import { addNode, ensureNet } from './house-net';
 import { isCylRun, modesOf, openRuns, placedManifold, runEmitters } from './house-controls';
 import type { Emitter } from './house-heating';
@@ -277,7 +277,7 @@ export function autoPipes(h: House): Pipe[] {
     out.push({ id: branch, name: `To ${s.name.toLowerCase()}`, parent: 'P1', size: 'Cu 22 mm', length: 6 + 3 * si });
     for (const e of ems) {
       const room = h.rooms.find((r) => r.id === e.room)?.name ?? e.room;
-      out.push({ id: `P${++n}`, name: `${room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}`, parent: branch,
+      out.push({ id: `P${++n}`, name: e.kind === 'fancoil' ? fanCoilName(h, e) : `${room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.id}`, parent: branch,
         size: e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : si === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)', length: e.kind === 'ufh' ? 3 : 5, emitter: e.id });
     }
   });
@@ -300,7 +300,7 @@ function planPipes(h: House, route: PipeRoute): Pipe[] {
       if (t.manifold) { out.push({ id: `P${++n}`, name: manifoldName(h, t.manifold), parent: branch, size: 'Cu 22 mm', length: m1(t.run), ...at }); continue; }
       if (!e) { out.push({ id: `P${++n}`, name: 'Hot water cylinder coil', parent: branch, size: 'Cu 22 mm', length: m1(t.run), ...at }); continue; }
       const room = h.rooms.find((r) => r.id === e.room)?.name ?? e.room;
-      out.push({ id: `P${++n}`, name: `${room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}`, parent: branch,
+      out.push({ id: `P${++n}`, name: e.kind === 'fancoil' ? fanCoilName(h, e) : `${room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.id}`, parent: branch,
         size: e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : si === src.storey || si === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)', length: m1(t.run), emitter: e.id, ...at });
     }
   }
@@ -757,7 +757,7 @@ export function runRoute(h: House, p: Pipe): string {
   const pipes = h.heating.pipes ?? [], byId = (id: string | null | undefined) => (id ? pipes.find((x) => x.id === id) : undefined);
   const heater = (id: string) => {
     const e = h.heating.emitters.find((x) => x.id === id), room = e && h.rooms.find((r) => r.id === e.room)?.name;
-    return e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : 'radiator'}` : 'a heater';
+    return e ? (e.kind === 'fancoil' ? fanCoilName(h, e) : `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : 'radiator'}`) : 'a heater';
   };
   const plant = (id: string) => id === 'source' ? (h.hp.source === 'ashp' || h.hp.source === 'gshp' ? 'the heat pump' : 'the boiler')
     : id === 'cylinder' ? 'the hot water cylinder' : id.startsWith('m:') ? manifoldName(h, id.slice(2)) : id.startsWith('e:') ? `the ${heater(id.slice(2))}`
@@ -872,7 +872,7 @@ export function attachments(h: House, storey: number): Array<{ id: string; at: P
   for (const z of manifolds(h)) if (z.manifold!.storey === storey) out.push({ id: `m:${z.id}`, at: [z.manifold!.x, z.manifold!.y], label: manifoldName(h, z.id) });
   for (const e of hs.emitters) {
     const r = h.rooms.find((x) => x.id === e.room), at = emitterStorey(h, e) === storey && !fedByManifold(h, e) && !zonePart(h, e) ? emitterPort(h, e) ?? undefined : undefined;
-    if (r && at) out.push({ id: `e:${e.id}`, at, label: `${r.name} ${e.kind === 'ufh' ? 'UFH manifold' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : 'radiator'}` });
+    if (r && at) out.push({ id: `e:${e.id}`, at, label: e.kind === 'fancoil' ? fanCoilName(h, e) : `${r.name} ${e.kind === 'ufh' ? 'UFH manifold' : e.kind === 'towel' ? 'towel rail' : 'radiator'}` });
   }
   return out;
 }
@@ -1075,7 +1075,7 @@ export function drawRun(h: House, storey: number, a: Attach, mid: Pt[], b: Attac
   const Y2 = into ? all.find((p) => p.id === into.run) : undefined, jv = Y2 ? voidOf(h, Y2) : N1?.v;
   const K = J && jv != null && jv >= 0 && levelIn(storey, jv) !== lv ? addNode(h, { storey, at: J.at, v: storey + LEVEL_AT[lv] }) : undefined;
   all.push({ id, parent, leg: { storey, pts }, ends: [start, B?.id ?? ''], length: m1(pathLen(pts)), ...(J ? { b: K ?? J.id } : {}), ...(from ? { a: from } : {}),
-    name: e ? `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : e.id}` : B?.id.startsWith('m:') ? manifoldName(h, B.id.slice(2)) : toRiser ? `To riser ${(h.heating.risers ?? []).findIndex((r) => r.id === B!.id) + 1}` : B ? 'Hot water cylinder coil' : 'Main',
+    name: e ? (e.kind === 'fancoil' ? fanCoilName(h, e) : `${room ?? e.room} ${e.kind === 'ufh' ? 'UFH loop' : e.kind === 'towel' ? 'towel rail' : e.id}`) : B?.id.startsWith('m:') ? manifoldName(h, B.id.slice(2)) : toRiser ? `To riser ${(h.heating.risers ?? []).findIndex((r) => r.id === B!.id) + 1}` : B ? 'Hot water cylinder coil' : 'Main',
     size: usable(h, e ? (e.kind === 'ufh' ? `PEX ${e.pipe ?? 16} mm` : storey === src.storey || storey === 0 ? 'Cu 15 mm' : 'Cu 10 mm (microbore)') : 'Cu 22 mm'),
     ...(e ? { emitter: e.id } : {}), via: lv });
   if (K && J) addDrop(h, K, J.id, storey, J.at, storey + LEVEL_AT[lv], jv!, all.find((p) => p.id === id)!.size);

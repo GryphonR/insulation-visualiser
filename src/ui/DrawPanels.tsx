@@ -4,7 +4,7 @@ import { CIBSE_ACH, SHADING, buildupLabel, buildupU, SOURCE_LABEL, setSource, de
 import type { Buildup, BuildupKind, HeatSource, House, HouseResult, Room, RoomType } from '../engine/house';
 import { useProject } from './project';
 import { ADD_BUILDUP, ADD_BUILDUP_LABEL, useAddBuildup } from './AddBuildupFlow';
-import { EMITTER_NAME, RAD_LABEL, UFH_PIPES, UFH_SPACINGS, loopLength, loopMax, servedBy, zonePart } from '../engine/house-heating';
+import { EMITTER_NAME, fanCoilName, RAD_LABEL, UFH_PIPES, UFH_SPACINGS, loopLength, loopMax, servedBy, zonePart } from '../engine/house-heating';
 import type { RadType } from '../engine/house-heating';
 import { OPEN_DOORWAY, addBasement, addStoreyAbove, bandName, canAddBasement, canRemoveBasement, canRemoveTop, copyRooms, deleteRoom, flipRooms, innerDoorAt, isOutside, narrowAtWall, openingCentre, partyKeys, pieceGap, pieceKeys, pieceThickness, removeBasement, removeTop, rotateRooms, setWallLength, splitStoreys, wallIndex, wallKeys } from '../engine/house-draw';
 import { polyArea } from '../engine/geom';
@@ -474,7 +474,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
     const fits = family.find((k) => maxFlow(PIPE_SIZES[k], pr.paMax) >= flowL);
     const st = p.leg ? house.storeys[p.leg.storey]?.name.toLowerCase() : '';
     const em = p.emitter ? house.heating.emitters.find((x) => x.id === p.emitter) : undefined, tail = em && p.leg ? valveTail(house, p.leg.storey, viaOf(house, p), em.kind) : 0;
-    const emName = (id: string) => { const e = house.heating.emitters.find((x) => x.id === id); return e ? `${house.rooms.find((r) => r.id === e.room)?.name ?? e.room} ${e.kind === 'ufh' ? 'UFH' : e.kind === 'towel' ? 'towel rail' : e.kind === 'fancoil' ? 'fan coil' : 'radiator'}` : id; };
+    const emName = (id: string) => { const e = house.heating.emitters.find((x) => x.id === id); return e ? (e.kind === 'fancoil' ? fanCoilName(house, e) : `${house.rooms.find((r) => r.id === e.room)?.name ?? e.room} ${e.kind === 'ufh' ? 'UFH' : e.kind === 'towel' ? 'towel rail' : 'radiator'}`) : id; };
     const setRun = (patch: Partial<typeof p>) => upd((h) => { const x = h.heating.pipes?.find((q) => q.id === p.id); if (x) Object.assign(x, patch); });
     return (
       <>
@@ -577,6 +577,7 @@ export function Inspector({ house, res, storey, sel, setSel, upd }: {
     return (
       <>
         <div className="eyebrow">{EMITTER_NAME[e.kind]} · {e.storey != null && e.storey > house.storeys.length - 1 ? 'roof space over ' : ''}{house.rooms.find((r) => r.id === e.room)?.name}</div>
+        {e.kind === 'fancoil' && <input className="h-text" value={e.name ?? fanCoilName(house, e)} aria-label="Fan coil name" onChange={(ev) => set({ name: ev.target.value })} />}
         {e.kind !== 'ufh' && <label className="hf"><span className="eyebrow">Kind</span>
           <select className="select" value={e.kind} onChange={(ev) => { const k = ev.target.value as typeof e.kind; set(k === 'fancoil' && e.kind !== 'fancoil' ? { kind: k, rated: 2000 } : { kind: k }); }}>
             {(['radiator', 'towel', 'fancoil'] as const).map((k) => <option key={k} value={k}>{EMITTER_NAME[k]}</option>)}

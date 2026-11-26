@@ -43,6 +43,8 @@ export interface Emitter {
   feeds?: string[];
   /** The level it is placed on when that is not its room's: one above the top storey is the roof space (over its room). */
   storey?: number;
+  /** Fan coil: its own name, like a manifold's, as it can sit in a cupboard or roof space and feed other rooms. */
+  name?: string;
 }
 export interface Zone {
   id: string; name: string; kind: 'rad' | 'ufh'; color: string; on: boolean;
@@ -107,6 +109,8 @@ export const coolingOn = (h: Pick<House, 'hp' | 'heating'>) => (h.hp.source === 
 export const coolEer = (c: Cooling, Te: number) => (given(c.eer) ? c.eer : NaN) * Math.min(1.6, Math.max(0.5, 1 + 0.025 * (35 - Te)));
 /** Emitters that can cool: underfloor loops and fan coils. Radiators and towel rails only sweat. */
 export const canCool = (e: Pick<Emitter, 'kind'>) => e.kind === 'ufh' || e.kind === 'fancoil';
+/** A fan coil's name: its own, else numbered in the order fan coils were added. */
+export const fanCoilName = (h: Pick<House, 'heating'>, e: Pick<Emitter, 'id' | 'name'>) => e.name || `Fan coil ${h.heating.emitters.filter((x) => x.kind === 'fancoil').findIndex((x) => x.id === e.id) + 1}`;
 export const EMITTER_NAME: Record<Emitter['kind'], string> = { radiator: 'Radiator', towel: 'Towel rail', ufh: 'Underfloor loop', fancoil: 'Fan coil' };
 
 /**

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { SOURCE_LABEL, isHeatPump } from '../engine/house';
 import type { House } from '../engine/house';
-import { EMITTER_NAME, RAD_LABEL, coolingOn, emitterCool, given } from '../engine/house-heating';
+import { EMITTER_NAME, fanCoilName, RAD_LABEL, coolingOn, emitterCool, given } from '../engine/house-heating';
 import { PLANS, applyPlan, controlChecks, markCustom, modeSummary, modesOf, passes, posOf, reach, runUse, teeOf } from '../engine/house-controls';
 import type { Mode, PlanKind, Pos, Use, Valve, Water } from '../engine/house-controls';
 import { endsOnHeater, runLength, sizePipes } from '../engine/house-pipes';
@@ -194,7 +194,7 @@ export function HouseSchematic() {
     const zone = e && h.heating.zones.find((z) => z.id === e.zone);
     // A UFH zone's loop runs through each of its rooms.
     const parts = e?.fromZone ? h.heating.emitters.filter((x) => x.fromZone === e.fromZone) : [];
-    const what = !e ? (p.ends?.[1] === 'cylinder' ? 'Hot water cylinder coil' : p.name) : e.kind === 'ufh' ? `UFH loop · ${fmt(parts.length ? parts.reduce((a, x) => a + x.area, 0) : e.area, 1)} m² · ${e.spacing} mm${parts.length > 1 ? ` · ${parts.map((x) => roomOf(x.room)?.name ?? x.room).join(', ')}` : ''}` : e.kind === 'radiator' ? `${RAD_LABEL[e.type]} · ${e.len}×${e.height}` : `${EMITTER_NAME[e.kind]} · ${fmt(e.rated)} W at ΔT50`;
+    const what = !e ? (p.ends?.[1] === 'cylinder' ? 'Hot water cylinder coil' : p.name) : e.kind === 'ufh' ? `UFH loop · ${fmt(parts.length ? parts.reduce((a, x) => a + x.area, 0) : e.area, 1)} m² · ${e.spacing} mm${parts.length > 1 ? ` · ${parts.map((x) => roomOf(x.room)?.name ?? x.room).join(', ')}` : ''}` : e.kind === 'radiator' ? `${RAD_LABEL[e.type]} · ${e.len}×${e.height}` : `${e.kind === 'fancoil' ? fanCoilName(h, e) : EMITTER_NAME[e.kind]} · ${fmt(e.rated)} W at ΔT50`;
     const coolW = e && m.water === 'chilled' && got.emitters.has(e.id) && cool ? emitterCool(e, cool.flow, cool.setpoint, h) : 0;
     return <g fontFamily={FONT}>
       <text x={x} y={y - 6} fontSize={12} fontWeight={600} fill={INK}>{room?.name ?? (e ? e.room : what)}{storey ? <tspan fill={MUTED} fontWeight={400}> · {storey}</tspan> : null}</text>
